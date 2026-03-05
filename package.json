@@ -1,0 +1,33 @@
+{
+  "name": "@nerdvana/parism",
+  "version": "0.1.4",
+  "description": "Structured shell output wrapper for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "parism": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --watch --experimental-transform-types src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "files": [
+    "dist",
+    "prism.config.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "guard": {
+    "allowed_commands": [
+      "ls", "find", "stat", "du", "df", "tree",
+      "ps", "kill",
+      "ping", "curl", "netstat", "lsof", "ss", "dig",
+      "grep", "wc", "head", "tail", "cat",
+      "git",
+      "env", "pwd", "which",
+      "free", "uname", "id",
+      "echo", "date", "hostname",
+      "npm", "node", "npx",
+      "dir", "tasklist", "ipconfig", "systeminfo"
+    ],
+    "allowed_paths": [],
+    "timeout_ms": 10000,
+    "block_patterns": [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
+    "command_arg_restrictions": {
+      "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
+      "npx":  { "blocked_flags": ["--yes", "-y"] }
+    },
+    "env_secret_patterns": [
+      "TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"
+    ]
+  }
+}
