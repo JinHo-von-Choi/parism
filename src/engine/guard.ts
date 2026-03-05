@@ -1,3 +1,4 @@
+import path from "path";
 import type { PrismConfig } from "../config/loader.js";
 
 /**
@@ -66,9 +67,13 @@ export function checkGuard(
   }
 
   if (guard.allowed_paths.length > 0) {
-    const normalizedCwd = cwd.endsWith("/") ? cwd : cwd + "/";
+    // path.resolve()로 ../를 포함한 모든 경로 순회 패턴을 정규화한 뒤 비교.
+    // 단순 문자열 startsWith()는 /home/user/../../etc 형태로 우회 가능.
+    const resolvedCwd = path.resolve(cwd);
+    const normalizedCwd = resolvedCwd.endsWith("/") ? resolvedCwd : resolvedCwd + "/";
     const allowed = guard.allowed_paths.some((p) => {
-      const normalizedP = p.endsWith("/") ? p : p + "/";
+      const resolvedP = path.resolve(p);
+      const normalizedP = resolvedP.endsWith("/") ? resolvedP : resolvedP + "/";
       return normalizedCwd.startsWith(normalizedP);
     });
 

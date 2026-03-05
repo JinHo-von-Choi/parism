@@ -40,6 +40,12 @@ describe("checkGuard()", () => {
       .toThrow(GuardError);
   });
 
+  it("../ 경로 순회로 allowed_paths 우회를 차단한다", () => {
+    const cfg2 = { ...cfg, guard: { ...cfg.guard, allowed_paths: ["/home/user"] } };
+    expect(() => checkGuard("ls", [], "/home/user/../../etc", cfg2))
+      .toThrow(GuardError);
+  });
+
   it("node -e는 arg_not_allowed로 차단된다", () => {
     const cfg2 = {
       ...cfg,

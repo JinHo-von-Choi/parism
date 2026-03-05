@@ -172,7 +172,7 @@ npx @nerdvana/parism
 ### Local Build
 
 ```bash
-git clone https://github.com/your-org/parism
+git clone https://github.com/JinHo-von-Choi/parism
 cd parism
 npm install && npm run build
 node dist/index.js
