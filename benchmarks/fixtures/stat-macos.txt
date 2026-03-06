@@ -1,0 +1,1 @@
+16777220 2097153 -rw-r--r-- 1 user staff 0 4096 "Mar  6 09:00:42 2026" "Mar  6 09:15:23 2026" "Mar  6 09:00:42 2026" "Mar  1 14:22:00 2026" 4096 8 0x0 /home/user/project/src/index.ts

@@ -1,0 +1,8 @@
+  File: /home/user/project/src/index.ts
+  Size: 4096            Blocks: 8          IO Block: 4096   regular file
+Device: fd01h/64769d    Inode: 2097153      Links: 1
+Access: (0644/-rw-r--r--)  Uid: ( 1000/    user)   Gid: ( 1000/    user)
+Access: 2026-03-06 09:15:23.123456789 +0000
+Modify: 2026-03-06 09:00:42.987654321 +0000
+Change: 2026-03-06 09:00:42.987654321 +0000
+ Birth: 2026-03-01 14:22:00.000000000 +0000
