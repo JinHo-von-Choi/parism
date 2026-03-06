@@ -19,6 +19,36 @@ export class GuardError extends Error {
 }
 
 /**
+ * 경로 비교 시 접미 슬래시를 강제해 `/home/user` vs `/home/user2` 오탐을 방지한다.
+ */
+function normalizePathForPrefix(inputPath: string): string {
+  const resolved = path.resolve(inputPath);
+  return resolved.endsWith("/") ? resolved : resolved + "/";
+}
+
+/**
+ * 대상 경로가 허용 경로 집합 중 하나의 하위 경로인지 검사한다.
+ */
+function isAllowedPath(targetPath: string, allowedPaths: string[]): boolean {
+  const normalizedTarget = normalizePathForPrefix(targetPath);
+  return allowedPaths.some((allowedPath) => {
+    const normalizedAllowed = normalizePathForPrefix(allowedPath);
+    return normalizedTarget.startsWith(normalizedAllowed);
+  });
+}
+
+/**
+ * 명령 인자 중 실제 파일시스템 경로로 해석 가능한 값만 추출한다.
+ */
+function getPathLikeArgs(args: string[]): string[] {
+  return args.filter((arg) =>
+    arg.startsWith("/") ||
+    arg.startsWith("./") ||
+    arg.startsWith("../")
+  );
+}
+
+/**
  * 명령 실행 허용 여부를 검사한다. 차단 조건 충족 시 GuardError를 던진다.
  *
  * 검사 순서:
@@ -67,21 +97,24 @@ export function checkGuard(
   }
 
   if (guard.allowed_paths.length > 0) {
-    // path.resolve()로 ../를 포함한 모든 경로 순회 패턴을 정규화한 뒤 비교.
-    // 단순 문자열 startsWith()는 /home/user/../../etc 형태로 우회 가능.
     const resolvedCwd = path.resolve(cwd);
-    const normalizedCwd = resolvedCwd.endsWith("/") ? resolvedCwd : resolvedCwd + "/";
-    const allowed = guard.allowed_paths.some((p) => {
-      const resolvedP = path.resolve(p);
-      const normalizedP = resolvedP.endsWith("/") ? resolvedP : resolvedP + "/";
-      return normalizedCwd.startsWith(normalizedP);
-    });
 
-    if (!allowed) {
+    if (!isAllowedPath(resolvedCwd, guard.allowed_paths)) {
       throw new GuardError(
         `Working directory '${cwd}' is outside allowed paths`,
         "path_not_allowed",
       );
+    }
+
+    const pathLikeArgs = getPathLikeArgs(args);
+    for (const arg of pathLikeArgs) {
+      const resolvedArgPath = path.resolve(cwd, arg);
+      if (!isAllowedPath(resolvedArgPath, guard.allowed_paths)) {
+        throw new GuardError(
+          `Path argument '${arg}' resolves outside allowed paths`,
+          "path_not_allowed",
+        );
+      }
     }
   }
 }

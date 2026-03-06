@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildRunResult, buildPagedResult } from "../src/server.js";
+import { readFile } from "node:fs/promises";
+import { buildRunResult, buildPagedResult, PACKAGE_VERSION } from "../src/server.js";
 import { DEFAULT_CONFIG } from "../src/config/loader.js";
 
 describe("buildRunResult()", () => {
@@ -46,5 +47,15 @@ describe("buildPagedResult()", () => {
       await buildPagedResult("echo", ["hello"], process.cwd(), 0, 5, DEFAULT_CONFIG),
     );
     expect(result.stdout.parsed).toBeNull();
+  });
+});
+
+describe("PACKAGE_VERSION", () => {
+  it("package.json version과 일치한다", async () => {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const raw     = await readFile(pkgPath, "utf-8");
+    const pkg     = JSON.parse(raw) as { version: string };
+
+    expect(PACKAGE_VERSION).toBe(pkg.version);
   });
 });

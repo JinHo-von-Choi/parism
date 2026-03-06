@@ -1,6 +1,6 @@
 {
   "name": "@nerdvana/parism",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Structured shell output wrapper for AI agents",
   "type": "module",
   "main": "dist/index.js",

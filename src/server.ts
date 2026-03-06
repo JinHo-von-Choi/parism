@@ -7,7 +7,7 @@ import { defaultRegistry }        from "./parsers/index.js";
 import { paginateLines }          from "./engine/paginator.js";
 import type { PrismConfig }       from "./config/loader.js";
 
-const PACKAGE_VERSION = "0.1.4";
+export const PACKAGE_VERSION = "0.1.6";
 
 /**
  * Guard 검사 → 실행 → JSON 직렬화까지의 파이프라인.

@@ -20,6 +20,8 @@ export interface PrismConfig {
   guard: PrismGuardConfig;
 }
 
+type PartialPrismGuardConfig = Partial<PrismGuardConfig>;
+
 export const DEFAULT_CONFIG: PrismConfig = {
   guard: {
     allowed_commands: [
@@ -48,6 +50,23 @@ export const DEFAULT_CONFIG: PrismConfig = {
 };
 
 /**
+ * guard 설정을 기본값과 병합한다.
+ * command_arg_restrictions는 하위 키 기준으로 깊은 병합하여 기본 보안 제한 유실을 방지한다.
+ */
+function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig {
+  const mergedCommandArgRestrictions = {
+    ...DEFAULT_CONFIG.guard.command_arg_restrictions,
+    ...(userGuard.command_arg_restrictions ?? {}),
+  };
+
+  return {
+    ...DEFAULT_CONFIG.guard,
+    ...userGuard,
+    command_arg_restrictions: mergedCommandArgRestrictions,
+  };
+}
+
+/**
  * 지정된 경로에서 prism.config.json을 로드한다.
  * 파일이 없거나 파싱 실패 시 DEFAULT_CONFIG를 반환한다.
  */
@@ -57,7 +76,7 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
     const json = JSON.parse(raw) as Partial<PrismConfig>;
 
     return {
-      guard: { ...DEFAULT_CONFIG.guard, ...(json.guard ?? {}) },
+      guard: mergeGuardConfig(json.guard ?? {}),
     };
   } catch {
     return DEFAULT_CONFIG;

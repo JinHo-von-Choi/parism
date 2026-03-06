@@ -214,6 +214,28 @@ Claude Code (Linux):
 
 ---
 
+## Cursor 연동
+
+전역 설정: `~/.cursor/mcp.json`
+
+프로젝트별 설정: 프로젝트 루트 `.cursor/mcp.json` (이 프로젝트를 열었을 때만 parism 사용)
+
+```json
+{
+  "mcpServers": {
+    "parism": {
+      "command": "node",
+      "args": ["/home/nirna/job/nerdvana-prism/dist/index.js"],
+      "cwd": "/home/nirna/job/nerdvana-prism"
+    }
+  }
+}
+```
+
+빌드 후 위 설정을 `~/.cursor/mcp.json`의 `mcpServers`에 병합하거나, `.cursor/mcp.json`을 프로젝트 루트에 생성한다. Cursor 재시작 후 parism 도구가 사용 가능해진다.
+
+---
+
 ## Tools
 
 ### run

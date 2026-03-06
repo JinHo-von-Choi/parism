@@ -29,3 +29,6 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Planning documents
+docs/plans/
