@@ -6,6 +6,7 @@ export interface ExtractionResult {
   data:      unknown;
   timeMs:    number;
   errorMsg?: string;
+  accuracy?: number;  // 0~1. undefined = not measured. 1.0 = all items correct.
 }
 
 /**
@@ -26,6 +27,14 @@ export interface ScenarioResult {
   // 추출 신뢰성
   rawExtraction:     ExtractionResult;
   jsonExtraction:    ExtractionResult;
+
+  rawAccuracy:  number;  // 0~1. 1.0 if no expectedNames provided (assume correct)
+  jsonAccuracy: number;  // 0~1. 1.0 if parsed !== null, 0 otherwise
+
+  // Projected real cost assuming 1 retry on failure/inaccuracy
+  // Formula: TOTAL × (1 + (1 - accuracy))
+  rawProjectedCost:  number;
+  jsonProjectedCost: number;
 }
 
 /**
@@ -63,4 +72,10 @@ export interface Scenario {
 
   /** Optional args passed to the Parism parser registry. Needed for subcommand-based parsers (e.g., git log → ["log"]) */
   parserArgs?: string[];
+  /**
+   * Ground truth: expected extracted item names for accuracy validation.
+   * If provided, runner computes accuracy by comparing extractRaw result
+   * against this list.
+   */
+  expectedNames?: string[];
 }

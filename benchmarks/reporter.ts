@@ -46,6 +46,18 @@ function printScenario(r: ScenarioResult): void {
     r.rawExtraction.success === r.jsonExtraction.success ? "(same)" : "← DIFF",
   ));
   console.log(row(
+    "Accuracy (vs ground truth)",
+    r.rawAccuracy < 1 ? `${(r.rawAccuracy * 100).toFixed(0)}%` : "n/a",
+    r.jsonAccuracy < 1 ? `${(r.jsonAccuracy * 100).toFixed(0)}%` : "100%",
+    r.rawAccuracy < 1 ? "← accuracy gap" : "",
+  ));
+  console.log(row(
+    "Projected cost w/ 1 retry",
+    String(r.rawProjectedCost),
+    String(r.jsonProjectedCost),
+    formatDelta(r.rawProjectedCost, r.jsonProjectedCost),
+  ));
+  console.log(row(
     "Extract time (ms)",
     String(r.rawExtraction.timeMs),
     String(r.jsonExtraction.timeMs),
@@ -86,6 +98,24 @@ export function printReport(report: BenchmarkReport): void {
     `${(s.rawSuccessRate  * 100).toFixed(0)}%`,
     `${(s.jsonSuccessRate * 100).toFixed(0)}%`,
     s.jsonSuccessRate > s.rawSuccessRate ? "← Parism wins" : "(same)",
+  ));
+
+  const avgRawAccuracy     = report.scenarios.reduce((a, r) => a + r.rawAccuracy,  0) / report.scenarios.length;
+  const avgJsonAccuracy    = report.scenarios.reduce((a, r) => a + r.jsonAccuracy, 0) / report.scenarios.length;
+  const totalRawProjected  = report.scenarios.reduce((a, r) => a + r.rawProjectedCost,  0);
+  const totalJsonProjected = report.scenarios.reduce((a, r) => a + r.jsonProjectedCost, 0);
+
+  console.log(row(
+    "Avg accuracy",
+    `${(avgRawAccuracy  * 100).toFixed(0)}%`,
+    `${(avgJsonAccuracy * 100).toFixed(0)}%`,
+    avgJsonAccuracy > avgRawAccuracy ? "← Parism wins" : "(same)",
+  ));
+  console.log(row(
+    "Projected cost w/ retries",
+    String(totalRawProjected),
+    String(totalJsonProjected),
+    formatDelta(totalRawProjected, totalJsonProjected),
   ));
   console.log("\n  Interpretation:");
   console.log("  • 'Output tokens' measures what the LLM sees in context.");

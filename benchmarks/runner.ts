@@ -10,10 +10,38 @@ import path                                from "node:path";
 import { fileURLToPath }                   from "node:url";
 import { countTokens, countJsonTokens }    from "./tokenizer.js";
 import { defaultRegistry }                 from "../src/parsers/index.js";
-import type { Scenario, ScenarioResult }   from "./types.js";
+import type { Scenario, ScenarioResult, ExtractionResult } from "./types.js";
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.join(__dirname, "fixtures");
+
+/**
+ * Computes accuracy by comparing extracted names against expected names.
+ * Extracted names come from result.data — tries entries[].name pattern.
+ * Returns 1.0 if no expectedNames (unvalidated = assumed correct).
+ */
+function computeAccuracy(
+  result: ExtractionResult,
+  expectedNames: string[] | undefined,
+): number {
+  if (!expectedNames || expectedNames.length === 0) return 1.0;
+  if (!result.success || !result.data) return 0.0;
+
+  // Try to extract names from the data array
+  const data = result.data as Array<{ name?: string } | null>;
+  if (!Array.isArray(data)) return 1.0;
+
+  const extractedNames = data
+    .filter(Boolean)
+    .map(e => e?.name)
+    .filter((n): n is string => typeof n === "string");
+
+  const correctCount = expectedNames.filter(expected =>
+    extractedNames.includes(expected)
+  ).length;
+
+  return correctCount / expectedNames.length;
+}
 
 /**
  * 단일 시나리오를 실행하고 비교 결과를 반환한다.
@@ -42,6 +70,10 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
   // WITHOUT Parism: regex 기반 raw 추출 (LLM 텍스트 파싱 시뮬레이션)
   const rawExtraction = scenario.extractRaw(raw);
 
+  // Accuracy against ground truth (if expectedNames provided)
+  const rawAccuracy      = computeAccuracy(rawExtraction, scenario.expectedNames);
+  rawExtraction.accuracy = rawAccuracy;
+
   // WITH Parism: 파서가 null이면 실패
   const jsonStart      = Date.now();
   const jsonExtraction = {
@@ -50,6 +82,15 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
     timeMs:   Date.now() - jsonStart,
     errorMsg: parsed === null ? "parser returned null" : undefined,
   };
+  const jsonAccuracy      = parsed !== null ? 1.0 : 0.0;
+  jsonExtraction.accuracy = jsonAccuracy;  // satisfy ExtractionResult.accuracy
+
+  // Projected cost assuming 1 retry on failure/inaccuracy
+  // Formula: TOTAL × (1 + (1 - accuracy))
+  const totalRaw  = rawOutputTokens  + rawContextTokens;
+  const totalJson = jsonOutputTokens + jsonContextTokens;
+  const rawProjectedCost  = Math.round(totalRaw  * (1 + (1 - rawAccuracy)));
+  const jsonProjectedCost = Math.round(totalJson * (1 + (1 - jsonAccuracy)));
 
   return {
     name:        scenario.name,
@@ -60,5 +101,9 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
     jsonContextTokens,
     rawExtraction,
     jsonExtraction,
+    rawAccuracy,
+    jsonAccuracy,
+    rawProjectedCost,
+    jsonProjectedCost,
   };
 }

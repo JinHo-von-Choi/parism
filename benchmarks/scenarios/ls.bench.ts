@@ -73,6 +73,15 @@ export const lsSpacesScenario: Scenario = {
   description: "공백 포함 파일명 — raw split이 파일명을 잘라내는 구조적 취약점 시연",
   fixturePath: "ls-spaces.txt",
   extractRaw:  extractRawLs,  // 공백 포함 파일명에서 파일명이 잘림
+  expectedNames: [
+    ".",
+    "..",
+    "my report 2026.pdf",
+    "config final (2).json",
+    "project files backup",
+    "notes - draft v3.txt",
+    ".env",
+  ],
 
   rawContextPrompt: `ls -la 명령 출력을 파싱하세요.
 형식: [권한] [링크수] [소유자] [그룹] [크기] [월] [일] [시각] [파일명]
