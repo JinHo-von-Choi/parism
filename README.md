@@ -99,11 +99,11 @@ Parism이 개입하는 것은 두 번째와 세 번째 사이다. 한 번 버려
 
 **화이트리스트**: `allowed_commands`에 없는 명령어는 실행되지 않는다. 프로세스를 만들지도 않는다. 설명 없이 거절한다.
 
-**경로 제한**: `allowed_paths`를 설정하면, 그 바깥의 경로를 참조하는 명령은 차단된다. 에이전트가 `/etc`를 건드리는 일이 없어진다.
+**경로 제한**: `allowed_paths`를 설정하면 `cwd`뿐 아니라 경로형 인자(`/`, `./`, `../` 시작)도 검사한다. 허용 경로 밖을 참조하면 차단된다.
 
-**인젝션 패턴 차단**: `;`, `$(`, `` ` ``, `&&`, `||`, `|`가 인자에 포함되면 실행하지 않는다. 에이전트가 의도했든 아니든.
+**인젝션 패턴 차단**: `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, `<`가 인자에 포함되면 실행하지 않는다.
 
-**명령별 인자 제한** *(v0.1.2)*: 명령마다 차단할 플래그를 지정할 수 있다. `node -e`와 `node --eval`은 임의 코드 실행 경로이므로 기본 차단된다. `npx --yes`는 인터넷에서 패키지를 설치하므로 마찬가지다.
+**명령별 인자 제한**: 명령마다 차단할 플래그를 지정할 수 있다. `node -e`, `node --eval`, `node --input-type`은 기본 차단된다. `npx --yes`도 기본 차단된다.
 
 차단된 명령은 이런 응답을 반환한다.
 
@@ -121,7 +121,7 @@ Parism이 개입하는 것은 두 번째와 세 번째 사이다. 한 번 버려
 
 ---
 
-## 지원 명령어 — 31종 내장 파서
+## 지원 명령어 — 34종 내장 파서
 
 | 카테고리 | 명령어 | 파싱 결과 |
 |---|---|---|
@@ -146,6 +146,9 @@ Parism이 개입하는 것은 두 번째와 세 번째 사이다. 한 번 버려
 | Git | `git log --oneline` | `commits[]` — hash, message |
 | Git | `git diff` | `files_changed[]` |
 | Git | `git branch -vv` | `branches[]` — 이름, current, upstream, ahead/behind |
+| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]` — 상태, 재시도, 이벤트 사유/메시지 |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`/`stats[]` — 이미지, 상태, CPU/MEM/IO |
+| DevOps | `gh pr list` | `pull_requests[]` — 번호, 제목, 상태, 작성자, 라벨 |
 | 환경 | `env` | `vars{}` — 키-값 맵 |
 | 환경 | `pwd` | `path` |
 | 환경 | `which` | `paths[]` |
@@ -282,13 +285,15 @@ Claude Code (Linux):
     "allowed_commands": ["ls", "git", "find", "grep", "env", "ps"],
     "allowed_paths": ["/home/user/projects"],
     "timeout_ms": 10000,
-    "block_patterns": [";", "$(", "`", "&&", "||", "|"],
+    "max_output_bytes": 102400,
+    "max_items": 500,
+    "default_page_size": 100,
+    "block_patterns": [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
     "command_arg_restrictions": {
-      "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print"] },
+      "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
       "npx":  { "blocked_flags": ["--yes", "-y"] }
     },
-    "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "CREDENTIAL"],
-    "default_page_size": 100
+    "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
   }
 }
 ```
@@ -296,6 +301,8 @@ Claude Code (Linux):
 `allowed_paths`가 비어 있으면 경로 제한 없이 실행된다. 판단은 당신 몫이다.
 
 `env_secret_patterns`에 일치하는 환경 변수는 실행 전 자식 프로세스에서 제거된다. `env` 명령 실행 시 해당 변수가 노출되지 않는다.
+
+`command_arg_restrictions`는 기본값과 병합된다. 일부 명령만 override해도 나머지 기본 제한은 유지된다.
 
 ---
 

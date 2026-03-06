@@ -32,6 +32,7 @@ export const DEFAULT_CONFIG: PrismConfig = {
       "git",
       "env", "pwd", "which",
       "echo", "date", "uname", "hostname",
+      "kubectl", "docker", "gh",
     ],
     allowed_paths:    [],
     timeout_ms:       10000,

@@ -8,6 +8,7 @@ import { parseGitStatus, parseGitLog, parseGitDiff, parseGitBranch }  from "./gi
 import { parseEnv, parsePwd, parseWhich }                             from "./env/index.js";
 import { parseFree, parseUname, parseId }                             from "./system/index.js";
 import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./windows/index.js";
+import { parseKubectl, parseDocker, parseGh }                         from "./devops/index.js";
 
 /**
  * 전역 싱글턴 Parser Registry. 서버 시작 시 한 번 초기화된다.
@@ -43,6 +44,9 @@ defaultRegistry.register("dir",        parseDir);
 defaultRegistry.register("tasklist",   parseTasklist);
 defaultRegistry.register("ipconfig",   parseIpconfig);
 defaultRegistry.register("systeminfo", parseSysteminfo);
+defaultRegistry.register("kubectl",    parseKubectl);
+defaultRegistry.register("docker",     parseDocker);
+defaultRegistry.register("gh",         parseGh);
 
 // git은 서브커맨드 기반 — args[0]으로 파서를 선택
 defaultRegistry.register("git", (cmd, args, raw) => {

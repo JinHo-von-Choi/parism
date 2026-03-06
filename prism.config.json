@@ -10,7 +10,8 @@
       "free", "uname", "id",
       "echo", "date", "hostname",
       "npm", "node", "npx",
-      "dir", "tasklist", "ipconfig", "systeminfo"
+      "dir", "tasklist", "ipconfig", "systeminfo",
+      "kubectl", "docker", "gh"
     ],
     "allowed_paths": [],
     "timeout_ms": 10000,

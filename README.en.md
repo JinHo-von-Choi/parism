@@ -99,11 +99,11 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, commands referencing paths outside it are blocked. The agent cannot touch `/etc`.
+**Path Restriction**: When `allowed_paths` is set, Guard validates both `cwd` and path-like args (starting with `/`, `./`, `../`). Anything outside allowed paths is blocked.
 
-**Injection Pattern Blocking**: If `;`, `$(`, `` ` ``, `&&`, `||`, or `|` appear in any argument, the command is not executed. Regardless of agent intent.
+**Injection Pattern Blocking**: If `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<` appear in any argument, the command is not executed.
 
-**Per-Command Argument Restrictions** *(v0.1.2)*: Specific flags can be blocked per command. `node -e` and `node --eval` allow arbitrary code execution — they are blocked by default. `npx --yes` silently installs packages from the internet — also blocked.
+**Per-Command Argument Restrictions**: Specific flags can be blocked per command. `node -e`, `node --eval`, and `node --input-type` are blocked by default. `npx --yes` is also blocked.
 
 A blocked command returns this:
 
@@ -121,7 +121,7 @@ The agent receives the block reason in the same envelope structure as any other 
 
 ---
 
-## Supported Commands — 31 Built-in Parsers
+## Supported Commands — 34 Built-in Parsers
 
 | Category | Command | Parsed Output |
 |---|---|---|
@@ -146,6 +146,9 @@ The agent receives the block reason in the same envelope structure as any other 
 | Git | `git log --oneline` | `commits[]` — hash, message |
 | Git | `git diff` | `files_changed[]` |
 | Git | `git branch -vv` | `branches[]` — name, current, upstream, ahead/behind |
+| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]` — status, restarts, reasons, messages |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]` — image, status, CPU/MEM/IO |
+| DevOps | `gh pr list` | `pull_requests[]` — number, title, state, author, labels |
 | Env | `env` | `vars{}` — key-value map (secrets filtered) |
 | Env | `pwd` | `path` |
 | Env | `which` | `paths[]` |
@@ -210,7 +213,37 @@ Claude Code (Linux):
 }
 ```
 
-Once connected, a single `run` tool is exposed. The agent uses it to execute commands and receive JSON.
+Once connected, two tools are exposed: `run` and `run_paged`.
+
+`run` is the default command runner with structured parsing when available.
+`run_paged` returns paginated stdout for large output and includes `page_info`.
+
+---
+
+## Tools
+
+### run
+
+Default tool for most commands. Use when output is small or structured parsing is needed.
+
+Parameters:
+- `cmd` — command name (e.g. `ls`, `git`)
+- `args` — argument array (default: `[]`)
+- `cwd` — working directory (default: current directory)
+
+### run_paged
+
+Use for large stdout (`ps aux`, `find`, `grep -r`).
+
+Parameters:
+- `cmd`, `args`, `cwd` — same as `run`
+- `page` — 0-indexed page number (default: `0`)
+- `page_size` — lines per page (default: `default_page_size`, 100 by default)
+
+Extra fields:
+- `page_info.total_lines` — total line count
+- `page_info.has_next` — whether next page exists
+- `stdout.parsed` — always `null` (partial output cannot be safely parsed)
 
 ---
 
@@ -224,12 +257,15 @@ Place `prism.config.json` in the project root to control Guard behavior.
     "allowed_commands": ["ls", "git", "find", "grep", "env", "ps"],
     "allowed_paths": ["/home/user/projects"],
     "timeout_ms": 10000,
-    "block_patterns": [";", "$(", "`", "&&", "||", "|"],
+    "max_output_bytes": 102400,
+    "max_items": 500,
+    "default_page_size": 100,
+    "block_patterns": [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
     "command_arg_restrictions": {
-      "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print"] },
+      "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
       "npx":  { "blocked_flags": ["--yes", "-y"] }
     },
-    "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "CREDENTIAL"]
+    "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
   }
 }
 ```
@@ -237,6 +273,8 @@ Place `prism.config.json` in the project root to control Guard behavior.
 `allowed_paths` being empty means no path restriction. That decision is yours.
 
 `env_secret_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them.
+
+`command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
 
 ---
 
