@@ -30,7 +30,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
   const cmd = path.basename(scenario.fixturePath).split("-")[0] ?? "unknown";
 
   // Parism JSON 파싱
-  const parsed     = defaultRegistry.parse(cmd, [], raw, { maxItems: 0 });
+  const parsed     = defaultRegistry.parse(cmd, scenario.parserArgs ?? [], raw, { maxItems: 0 });
   const jsonOutput = { stdout: { raw, parsed } };
 
   // 토큰 측정

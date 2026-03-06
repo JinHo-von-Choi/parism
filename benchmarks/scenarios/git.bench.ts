@@ -22,6 +22,7 @@ export const gitLogScenario: Scenario = {
   description: "커밋 해시와 메시지 추출",
   fixturePath: "git-log.txt",
   extractRaw:  extractRawGitLog,
+  parserArgs:  ["log"],
 
   rawContextPrompt: `git log --oneline 출력을 파싱하세요.
 형식: [7자리 해시] [커밋 메시지]

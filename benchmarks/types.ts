@@ -60,4 +60,7 @@ export interface Scenario {
 
   /** JSON 사용 시 LLM에 전달하는 컨텍스트 안내 프롬프트 */
   jsonContextPrompt: string;
+
+  /** Optional args passed to the Parism parser registry. Needed for subcommand-based parsers (e.g., git log → ["log"]) */
+  parserArgs?: string[];
 }
