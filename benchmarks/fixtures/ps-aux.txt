@@ -1,0 +1,9 @@
+USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root         1  0.0  0.1  22548  1836 ?        Ss   Mar05   0:02 /sbin/init
+root       412  0.0  0.0  17060   900 ?        Ss   Mar05   0:00 /usr/sbin/sshd
+user      1023  0.2  1.4 612400 58124 ?        Sl   09:00   0:05 node dist/index.js
+user      1024  0.0  0.3 199048 12288 pts/0    Ss   09:01   0:00 bash
+user      2048  5.2  2.1 987654 86016 pts/1    R+   09:15   0:12 node --watch src/index.ts
+postgres  3001  0.0  0.8 312456 33792 ?        Ss   Mar05   0:44 postgres: checkpointer
+postgres  3002  0.0  0.5 311984 21504 ?        Ss   Mar05   0:30 postgres: background writer
+user      9999  0.0  0.1  12345  4096 pts/0    R+   09:30   0:00 ps aux

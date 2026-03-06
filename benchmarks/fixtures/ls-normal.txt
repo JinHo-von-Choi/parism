@@ -1,0 +1,11 @@
+total 48
+drwxr-xr-x  8 user group  4096 Mar 06 09:00 .
+drwxr-xr-x 12 user group  4096 Mar 05 18:30 ..
+-rw-r--r--  1 user group  1234 Mar 06 08:45 README.md
+-rw-r--r--  1 user group   891 Mar 06 09:00 package.json
+drwxr-xr-x  5 user group  4096 Mar 06 08:50 src
+drwxr-xr-x  4 user group  4096 Mar 06 08:55 tests
+-rw-r--r--  1 user group   512 Mar 01 14:22 tsconfig.json
+lrwxrwxrwx  1 user group    10 Mar 01 14:00 latest -> ./dist/index.js
+-rw-r--r--  1 user group 98304 Mar 06 09:00 package-lock.json
+drwxr-xr-x  2 user group  4096 Mar 06 08:00 dist

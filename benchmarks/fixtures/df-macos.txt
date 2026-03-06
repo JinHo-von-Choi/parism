@@ -1,0 +1,4 @@
+Filesystem     1024-blocks      Used Available Capacity  Mounted on
+/dev/disk1s1    976762584 456123456 312456789      60%   /
+devfs                 413       413         0     100%   /dev
+/dev/disk1s2    976762584   4194304 312456789       1%   /System/Volumes/Data

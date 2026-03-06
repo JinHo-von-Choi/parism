@@ -1,0 +1,7 @@
+d870c2f feat(parsers): add kubectl/docker/gh devops parsers
+3e036dc release: v0.1.6
+58456ca chore: bump version to 0.1.5
+6f36b85 fix(security): resolve path traversal bypass in guard allowed_paths check
+f4b629b chore: add license field to package.json
+7554124 chore: add MIT license
+58fbe1e feat: initial commit - Parism MCP server v0.1.4
