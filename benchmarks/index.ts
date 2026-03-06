@@ -6,6 +6,10 @@ import { psScenario }                from "./scenarios/ps.bench.js";
 import { gitLogScenario }            from "./scenarios/git.bench.js";
 import { dfLinuxScenario,
          dfMacosScenario }           from "./scenarios/df.bench.js";
+import { statLinuxScenario,
+         statMacosScenario }         from "./scenarios/stat.bench.js";
+import { netstatLinuxScenario,
+         netstatMacosScenario }      from "./scenarios/netstat.bench.js";
 import type { BenchmarkReport }      from "./types.js";
 
 const SCENARIOS = [
@@ -15,6 +19,10 @@ const SCENARIOS = [
   gitLogScenario,
   dfLinuxScenario,
   dfMacosScenario,
+  statLinuxScenario,
+  statMacosScenario,
+  netstatLinuxScenario,
+  netstatMacosScenario,
 ];
 
 async function main(): Promise<void> {
