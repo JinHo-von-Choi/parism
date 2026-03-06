@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "benchmark": "node --experimental-transform-types benchmarks/index.ts"
+    "benchmark": "npx tsx benchmarks/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
