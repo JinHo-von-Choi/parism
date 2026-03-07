@@ -76,10 +76,28 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
     const raw  = await readFile(configPath, "utf-8");
     const json = JSON.parse(raw) as Partial<PrismConfig>;
 
-    return {
+    const config: PrismConfig = {
       guard: mergeGuardConfig(json.guard ?? {}),
     };
+
+    if (config.guard.allowed_paths.length === 0) {
+      console.warn(
+        "[parism] WARNING: allowed_paths is empty. " +
+        "All filesystem paths are accessible. " +
+        "Set guard.allowed_paths in prism.config.json for production use.",
+      );
+    }
+
+    return config;
   } catch {
+    if (DEFAULT_CONFIG.guard.allowed_paths.length === 0) {
+      console.warn(
+        "[parism] WARNING: allowed_paths is empty. " +
+        "All filesystem paths are accessible. " +
+        "Set guard.allowed_paths in prism.config.json for production use.",
+      );
+    }
+
     return DEFAULT_CONFIG;
   }
 }
