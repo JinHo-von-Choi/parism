@@ -8,6 +8,7 @@ import { paginateLines }          from "./engine/paginator.js";
 import type { PrismConfig }       from "./config/loader.js";
 import type { OutputFormat }      from "./parsers/registry.js";
 import { toCompact }              from "./parsers/compact.js";
+import { tryParseNativeJson }    from "./parsers/json-passthrough.js";
 
 export const PACKAGE_VERSION = "0.1.6";
 
@@ -55,7 +56,8 @@ export async function buildRunResult(
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
   );
-  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format });
+  let parsed     = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format });
+  if (parsed == null) parsed = tryParseNativeJson(envelope.stdout.raw);
   const final    = format === "compact" ? toCompact(parsed) : parsed;
   const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed: final } };
   return JSON.stringify(enriched, null, 2);
