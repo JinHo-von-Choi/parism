@@ -2,7 +2,7 @@
   "guard": {
     "allowed_commands": [
       "ls", "find", "stat", "du", "df", "tree",
-      "ps", "kill",
+      "ps",
       "ping", "curl", "netstat", "lsof", "ss", "dig",
       "grep", "wc", "head", "tail", "cat",
       "git",
@@ -11,7 +11,9 @@
       "echo", "date", "hostname",
       "npm", "node", "npx",
       "dir", "tasklist", "ipconfig", "systeminfo",
-      "kubectl", "docker", "gh"
+      "kubectl", "docker", "gh",
+      "terraform", "helm", "cargo",
+      "systemctl", "journalctl", "apt", "brew"
     ],
     "allowed_paths": [],
     "timeout_ms": 10000,

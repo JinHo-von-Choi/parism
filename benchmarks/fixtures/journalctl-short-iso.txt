@@ -1,0 +1,5 @@
+2026-03-07T21:18:08+09:00 nerdvana node[2032810]:     delay: 2000
+2026-03-07T21:18:08+09:00 nerdvana node[2032810]: [12:18:08.468] WARN: Redis client connection closed
+2026-03-07T21:18:08+09:00 nerdvana node[2032810]: [12:18:08.469] INFO: Redis client reconnecting
+2026-03-07T21:18:04+09:00 nerdvana psad[3632074]: scan detected 192.168.0.1 -> 224.0.0.1 DL: 3 total scan dsts: 1
+2026-03-07T21:18:04+09:00 nerdvana postfix/postdrop[1549111]: warning: unable to look up public/pickup: No such file or directory

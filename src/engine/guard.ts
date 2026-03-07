@@ -101,7 +101,8 @@ export function checkGuard(
 
     if (!isAllowedPath(resolvedCwd, guard.allowed_paths)) {
       throw new GuardError(
-        `Working directory '${cwd}' is outside allowed paths`,
+        `Working directory '${cwd}' is outside allowed paths. ` +
+        "Add guard.allowed_paths in prism.config.json or set [] to disable.",
         "path_not_allowed",
       );
     }
@@ -111,7 +112,8 @@ export function checkGuard(
       const resolvedArgPath = path.resolve(cwd, arg);
       if (!isAllowedPath(resolvedArgPath, guard.allowed_paths)) {
         throw new GuardError(
-          `Path argument '${arg}' resolves outside allowed paths`,
+          `Path argument '${arg}' resolves outside allowed paths. ` +
+          "Add guard.allowed_paths in prism.config.json or set [] to disable.",
           "path_not_allowed",
         );
       }

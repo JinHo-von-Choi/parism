@@ -1,7 +1,10 @@
 /**
- * 출력 형식. json=기존 객체 배열, compact=schema+rows 컬럼 기반.
+ * 출력 형식.
+ * json: 기존 객체 배열 + raw 포함.
+ * compact: schema+rows 컬럼 기반.
+ * json-no-raw: JSON 출력에서 raw 제외 (토큰 절감, 파서 신뢰 시 사용).
  */
-export type OutputFormat = "json" | "compact";
+export type OutputFormat = "json" | "compact" | "json-no-raw";
 
 /**
  * 파서가 항목 수를 제한할 때 사용하는 컨텍스트.

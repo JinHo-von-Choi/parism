@@ -1,0 +1,51 @@
+total 512
+drwxr-xr-x   2 user group  4096 Mar  6 10:00 .
+drwxr-xr-x   8 user group  4096 Mar  5 09:15 ..
+-rw-r--r--   1 user group  2048 Mar  6 09:45 README.md
+-rw-r--r--   1 user group  1024 Mar  4 14:30 package.json
+-rw-r--r--   1 user group  8192 Mar  3 11:20 package-lock.json
+-rw-r--r--   1 user group   512 Mar  2 16:45 tsconfig.json
+drwxr-xr-x   4 user group  4096 Mar  6 10:00 src
+drwxr-xr-x   3 user group  4096 Mar  5 15:30 dist
+drwxr-xr-x   2 user group  4096 Mar  4 12:00 node_modules
+-rw-r--r--   1 user group  4096 Mar  6 09:30 .env
+-rw-r--r--   1 user group   256 Mar  1 10:00 .gitignore
+-rw-r--r--   1 user group   128 Mar  1 09:00 .dockerignore
+-rw-r--r--   1 user group  3072 Mar  5 14:00 Dockerfile
+-rw-r--r--   1 user group  1536 Mar  5 13:30 docker-compose.yml
+-rw-r--r--   1 user group   768 Mar  4 11:00 .eslintrc.json
+-rw-r--r--   1 user group   384 Mar  4 10:45 .prettierrc
+-rw-r--r--   1 user group  2048 Mar  3 09:00 jest.config.ts
+-rw-r--r--   1 user group  1024 Mar  3 08:30 vitest.config.ts
+drwxr-xr-x   5 user group  4096 Mar  6 09:00 tests
+drwxr-xr-x   3 user group  4096 Mar  5 16:00 scripts
+drwxr-xr-x   2 user group  4096 Mar  4 13:00 docs
+drwxr-xr-x   2 user group  4096 Mar  3 12:00 coverage
+-rw-r--r--   1 user group  1024 Mar  2 11:00 CHANGELOG.md
+-rw-r--r--   1 user group   512 Mar  2 10:30 LICENSE
+drwxr-xr-x   4 user group  4096 Mar  5 12:00 .github
+drwxr-xr-x   6 user group  4096 Mar  5 12:00 benchmarks
+-rw-r--r--   1 user group  3584 Mar  4 16:00 biome.json
+-rw-r--r--   1 user group   896 Mar  4 15:30 tsup.config.ts
+-rw-r--r--   1 user group  1280 Mar  3 14:00 rollup.config.ts
+-rw-r--r--   1 user group   512 Mar  1 12:00 SECURITY.md
+-rw-r--r--   1 user group  1024 Mar  6 10:30 my report 2026.pdf
+-rw-r--r--   1 user group  2048 Mar  5 11:00 project brief final.docx
+-rw-r--r--   1 user group  3072 Mar  4 10:00 architecture overview.png
+-rw-r--r--   1 user group  1536 Mar  3 16:00 meeting notes March.txt
+-rw-r--r--   1 user group   768 Mar  2 15:00 config backup 2026-03.json
+-rw-r--r--   1 user group  2560 Mar  2 14:00 deployment guide v2.md
+-rw-r--r--   1 user group  4096 Mar  1 13:00 API reference v3.pdf
+-rw-r--r--   1 user group  1024 Mar  1 12:00 test data sample.csv
+-rw-r--r--   1 user group   512 Feb 28 11:00 bug report 2026-03-01.txt
+-rw-r--r--   1 user group  3072 Feb 28 10:00 performance baseline.json
+-rw-r--r--   1 user group  2048 Feb 27 16:00 security audit report.pdf
+-rw-r--r--   1 user group  1536 Feb 27 15:00 user research notes.md
+-rw-r--r--   1 user group   768 Feb 26 14:00 sprint planning 2026-03.md
+-rw-r--r--   1 user group  4096 Feb 26 13:00 database schema v4.sql
+-rw-r--r--   1 user group  2560 Feb 25 12:00 release notes v0.1.6.md
+-rw-r--r--   1 user group  1024 Feb 25 11:00 load test results.csv
+-rw-r--r--   1 user group   512 Feb 24 10:00 code review checklist.md
+-rw-r--r--   1 user group  3072 Feb 24 09:00 infrastructure diagram.drawio
+-rw-r--r--   1 user group  2048 Feb 23 16:00 onboarding guide.pdf
+-rw-r--r--   1 user group  1536 Feb 23 15:00 postmortem report.md

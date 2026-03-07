@@ -1,0 +1,21 @@
+2026-03-06T08:12:34.123Z INFO  [api-gateway] Server starting on port 8080
+2026-03-06T08:12:34.456Z INFO  [api-gateway] Connecting to database...
+2026-03-06T08:12:35.001Z INFO  [api-gateway] Database connection established (pool=10)
+2026-03-06T08:12:35.234Z INFO  [api-gateway] Loading route handlers...
+2026-03-06T08:12:35.567Z INFO  [api-gateway] Routes registered: /api/v1/users, /api/v1/sessions, /api/v1/orders
+2026-03-06T08:12:35.890Z INFO  [api-gateway] Server ready
+2026-03-06T08:13:02.341Z INFO  [api-gateway] GET /api/v1/users?page=1 200 45ms
+2026-03-06T08:13:05.123Z WARN  [api-gateway] Slow query detected: GET /api/v1/orders took 890ms
+2026-03-06T08:13:07.456Z INFO  [api-gateway] POST /api/v1/sessions 201 23ms
+2026-03-06T08:13:15.789Z ERROR [api-gateway] Database query failed: Connection timeout after 5000ms
+2026-03-06T08:13:15.901Z ERROR [api-gateway] Retrying connection (attempt 1/3)...
+2026-03-06T08:13:16.234Z INFO  [api-gateway] Connection restored
+2026-03-06T08:13:20.567Z INFO  [api-gateway] GET /api/v1/users/42 200 12ms
+2026-03-06T08:13:22.890Z WARN  [api-gateway] Rate limit approaching for client 192.168.1.45: 87/100 req/min
+2026-03-06T08:13:25.123Z INFO  [api-gateway] DELETE /api/v1/sessions/abc123 204 8ms
+2026-03-06T08:13:28.456Z ERROR [api-gateway] Failed to process request: Invalid JWT token
+2026-03-06T08:13:28.567Z INFO  [api-gateway] GET /api/v1/health 200 2ms
+2026-03-06T08:13:30.789Z INFO  [api-gateway] Metrics flushed to prometheus
+2026-03-06T08:13:35.012Z WARN  [api-gateway] Memory usage high: 1.8GB / 2GB
+2026-03-06T08:13:40.345Z INFO  [api-gateway] GC cycle completed, freed 256MB
+2026-03-06T08:14:00.000Z INFO  [api-gateway] Health check OK (uptime=108s, requests=34, errors=2)

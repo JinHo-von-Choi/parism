@@ -53,6 +53,7 @@ function extractRawDfMacos(raw: string): ExtractionResult {
 export const dfLinuxScenario: Scenario = {
   name:        "df -h: Linux",
   description: "디스크 사용량 추출 (Linux 형식)",
+  riskLevel:   "minor",
   fixturePath: "df-h.txt",
   extractRaw:  extractRawDfLinux,
 
@@ -67,6 +68,7 @@ Linux 형식 컬럼: Filesystem Size Used Avail Use% Mounted on
 export const dfMacosScenario: Scenario = {
   name:        "df: macOS (OS format edge case)",
   description: "macOS df 헤더('1024-blocks')가 달라 raw 파싱 로직이 달라야 함. 단일 파서로는 혼동 유발.",
+  riskLevel:   "minor",
   fixturePath: "df-macos.txt",
   extractRaw:  extractRawDfMacos,
 

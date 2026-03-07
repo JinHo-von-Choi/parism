@@ -78,6 +78,7 @@ function extractRawNetstatMacos(raw: string): ExtractionResult {
 export const netstatLinuxScenario: Scenario = {
   name:        "netstat: Linux format",
   description: "네트워크 연결 목록 추출 (Linux — address:port 콜론 구분)",
+  riskLevel:   "minor",
   fixturePath: "netstat-linux.txt",
   extractRaw:  extractRawNetstatLinux,
 
@@ -94,6 +95,7 @@ export const netstatLinuxScenario: Scenario = {
 export const netstatMacosScenario: Scenario = {
   name:        "netstat: macOS format (address separator edge case)",
   description: "macOS는 IP.포트 점(.) 구분 — Linux 파서 적용 시 포트 추출 완전 오동작",
+  riskLevel:   "minor",
   fixturePath: "netstat-macos.txt",
   extractRaw:  extractRawNetstatMacos,  // semantically wrong output
 

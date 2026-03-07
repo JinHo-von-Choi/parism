@@ -24,6 +24,7 @@ function extractRawPs(raw: string): ExtractionResult {
 export const psScenario: Scenario = {
   name:        "ps aux: process list",
   description: "프로세스 목록에서 PID, CPU%, COMMAND 추출",
+  riskLevel:   "major",
   fixturePath: "ps-aux.txt",
   extractRaw:  extractRawPs,
 

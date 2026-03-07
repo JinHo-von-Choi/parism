@@ -1,0 +1,26 @@
+CONTAINER ID   IMAGE                           COMMAND                  CREATED         STATUS                   PORTS                                            NAMES
+a1b2c3d4e5f6   nginx:1.25-alpine               "/docker-entrypoint.…"   3 weeks ago     Up 3 weeks               0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp         nginx-proxy
+b2c3d4e5f6a1   node:20-alpine                  "node dist/server.js"    2 weeks ago     Up 2 weeks               0.0.0.0:3001->3000/tcp                           api-service-1
+c3d4e5f6a1b2   node:20-alpine                  "node dist/server.js"    2 weeks ago     Up 2 weeks               0.0.0.0:3002->3000/tcp                           api-service-2
+d4e5f6a1b2c3   node:20-alpine                  "node dist/server.js"    2 weeks ago     Up 2 weeks               0.0.0.0:3003->3000/tcp                           api-service-3
+e5f6a1b2c3d4   node:20-alpine                  "node dist/server.js"    2 weeks ago     Up 2 weeks               0.0.0.0:3004->3000/tcp                           api-service-4
+f6a1b2c3d4e5   node:20-alpine                  "node dist/server.js"    2 weeks ago     Up 2 weeks               0.0.0.0:3005->3000/tcp                           api-service-5
+a7b8c9d0e1f2   react:18-nginx                  "/docker-entrypoint.…"   2 weeks ago     Up 2 weeks               0.0.0.0:8001->80/tcp                             web-frontend-1
+b8c9d0e1f2a7   react:18-nginx                  "/docker-entrypoint.…"   2 weeks ago     Up 2 weeks               0.0.0.0:8002->80/tcp                             web-frontend-2
+c9d0e1f2a7b8   react:18-nginx                  "/docker-entrypoint.…"   2 weeks ago     Up 2 weeks               0.0.0.0:8003->80/tcp                             web-frontend-3
+d0e1f2a7b8c9   node:20-alpine                  "node dist/auth.js"      3 weeks ago     Up 3 weeks               0.0.0.0:4001->4000/tcp                           auth-service-1
+e1f2a7b8c9d0   node:20-alpine                  "node dist/auth.js"      3 weeks ago     Up 3 weeks               0.0.0.0:4002->4000/tcp                           auth-service-2
+f2a7b8c9d0e1   postgres:15-alpine              "docker-entrypoint.s…"   1 month ago     Up 1 month               0.0.0.0:5432->5432/tcp                           postgres-primary
+a3b4c5d6e7f8   postgres:15-alpine              "docker-entrypoint.s…"   1 month ago     Up 1 month               127.0.0.1:5433->5432/tcp                         postgres-replica
+b4c5d6e7f8a3   redis:7-alpine                  "docker-entrypoint.s…"   1 month ago     Up 1 month               127.0.0.1:6379->6379/tcp                         redis-cache
+c5d6e7f8a3b4   node:20-alpine                  "node dist/worker.js…"   2 weeks ago     Up 2 weeks                                                                worker-email
+d6e7f8a3b4c5   node:20-alpine                  "node dist/worker.js…"   2 weeks ago     Up 2 weeks                                                                worker-notification
+e7f8a3b4c5d6   node:20-alpine                  "node dist/worker.js…"   2 weeks ago     Up 2 weeks                                                                worker-export
+f8a3b4c5d6e7   node:20-alpine                  "node dist/scheduler…"   2 weeks ago     Up 2 weeks                                                                celery-beat
+a9b0c1d2e3f4   mher/flower:2.0                 "flower"                 2 weeks ago     Up 2 weeks               0.0.0.0:5555->5555/tcp                           flower-monitor
+b0c1d2e3f4a9   python:3.11-slim                "uvicorn main:app --…"   1 week ago      Up 1 week                0.0.0.0:8501->8501/tcp                           ml-model-1
+c1d2e3f4a9b0   python:3.11-slim                "uvicorn main:app --…"   1 week ago      Up 6 days                0.0.0.0:8502->8501/tcp                           ml-model-2
+d2e3f4a9b0c1   prom/prometheus:v2.48.0         "/bin/prometheus --c…"   1 month ago     Up 1 month               0.0.0.0:19090->9090/tcp                          prometheus
+e3f4a9b0c1d2   grafana/grafana:10.2.0          "/run.sh"                1 month ago     Up 1 month               0.0.0.0:13000->3000/tcp                          grafana
+f4a9b0c1d2e3   minio/minio:latest              "minio server /data …"   2 weeks ago     Up 2 weeks               0.0.0.0:19000->9000/tcp, 0.0.0.0:19001->9001/tcp minio-storage
+a5b6c7d8e9f0   elastic/elasticsearch:8.11.0    "/bin/tini -- /usr/l…"   3 weeks ago     Up 3 weeks               127.0.0.1:19200->9200/tcp                        elasticsearch

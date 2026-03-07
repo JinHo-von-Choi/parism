@@ -3,29 +3,30 @@ import { GuardError, checkGuard } from "../../src/engine/guard.js";
 import { DEFAULT_CONFIG } from "../../src/config/loader.js";
 
 describe("checkGuard()", () => {
-  const cfg = DEFAULT_CONFIG;
+  const cfg   = DEFAULT_CONFIG;
+  const cwdOk = process.cwd();
 
   it("허용된 명령은 통과한다", () => {
-    expect(() => checkGuard("ls", ["-la"], "/tmp", cfg)).not.toThrow();
+    expect(() => checkGuard("ls", ["-la"], cwdOk, cfg)).not.toThrow();
   });
 
   it("허용되지 않은 명령은 GuardError를 던진다", () => {
-    expect(() => checkGuard("rm", ["-rf", "/"], "/tmp", cfg))
+    expect(() => checkGuard("rm", ["-rf", "/"], cwdOk, cfg))
       .toThrow(GuardError);
   });
 
   it("세미콜론이 포함된 인자는 차단된다", () => {
-    expect(() => checkGuard("ls", ["; rm -rf /"], "/tmp", cfg))
+    expect(() => checkGuard("ls", ["; rm -rf /"], cwdOk, cfg))
       .toThrow(GuardError);
   });
 
   it("백틱이 포함된 인자는 차단된다", () => {
-    expect(() => checkGuard("echo", ["`id`"], "/tmp", cfg))
+    expect(() => checkGuard("echo", ["`id`"], cwdOk, cfg))
       .toThrow(GuardError);
   });
 
   it("$( 서브쉘 패턴은 차단된다", () => {
-    expect(() => checkGuard("echo", ["$(cat /etc/passwd)"], "/tmp", cfg))
+    expect(() => checkGuard("echo", ["$(cat /etc/passwd)"], cwdOk, cfg))
       .toThrow(GuardError);
   });
 
@@ -62,7 +63,7 @@ describe("checkGuard()", () => {
         },
       },
     };
-    expect(() => checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], "/tmp", cfg2))
+    expect(() => checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], cwdOk, cfg2))
       .toThrow(GuardError);
   });
 
@@ -76,7 +77,7 @@ describe("checkGuard()", () => {
         },
       },
     };
-    expect(() => checkGuard("node", ["--eval=console.log(1)"], "/tmp", cfg2))
+    expect(() => checkGuard("node", ["--eval=console.log(1)"], cwdOk, cfg2))
       .toThrow(GuardError);
   });
 
@@ -90,8 +91,21 @@ describe("checkGuard()", () => {
         },
       },
     };
-    expect(() => checkGuard("npx", ["--yes", "cowsay", "hello"], "/tmp", cfg2))
+    expect(() => checkGuard("npx", ["--yes", "cowsay", "hello"], cwdOk, cfg2))
       .toThrow(GuardError);
+  });
+
+  it("curl -d는 arg_not_allowed로 차단된다", () => {
+    expect(() => checkGuard("curl", ["-d", "foo=bar", "https://example.com"], cwdOk, cfg))
+      .toThrow(GuardError);
+  });
+
+  it("curl -I는 통과한다", () => {
+    expect(() => checkGuard("curl", ["-I", "https://example.com"], cwdOk, cfg)).not.toThrow();
+  });
+
+  it("kill은 기본 허용 목록에 없어 차단된다", () => {
+    expect(() => checkGuard("kill", ["-9", "12345"], cwdOk, cfg)).toThrow(GuardError);
   });
 
   it("제한 없는 명령의 정상 인자는 통과한다", () => {
@@ -105,6 +119,6 @@ describe("checkGuard()", () => {
         },
       },
     };
-    expect(() => checkGuard("node", ["--version"], "/tmp", cfg2)).not.toThrow();
+    expect(() => checkGuard("node", ["--version"], cwdOk, cfg2)).not.toThrow();
   });
 });

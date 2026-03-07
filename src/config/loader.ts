@@ -26,15 +26,18 @@ export const DEFAULT_CONFIG: PrismConfig = {
   guard: {
     allowed_commands: [
       "ls", "find", "stat", "du", "df", "tree",
-      "ps", "kill",
+      "ps",
       "ping", "curl", "netstat",
       "grep", "wc", "head", "tail", "cat",
       "git",
       "env", "pwd", "which",
       "echo", "date", "uname", "hostname",
       "kubectl", "docker", "gh",
+      "systemctl", "journalctl",
+      "helm", "terraform", "apt", "brew",
+      "npm", "pnpm", "yarn", "cargo",
     ],
-    allowed_paths:    [],
+    allowed_paths:    [process.cwd()],
     timeout_ms:       10000,
     max_output_bytes:  102400,   // 100 KB
     max_items:         500,
@@ -43,6 +46,12 @@ export const DEFAULT_CONFIG: PrismConfig = {
     command_arg_restrictions: {
       node: { blocked_flags: ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
       npx:  { blocked_flags: ["--yes", "-y"] },
+      curl: {
+        blocked_flags: [
+          "-d", "--data", "-F", "--upload-file", "-T",
+          "-K", "--config", "-o", "--output", "-O",
+        ],
+      },
     },
     env_secret_patterns: [
       "TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL",
@@ -84,20 +93,12 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
       console.warn(
         "[parism] WARNING: allowed_paths is empty. " +
         "All filesystem paths are accessible. " +
-        "Set guard.allowed_paths in prism.config.json for production use.",
+        "Add paths to guard.allowed_paths in prism.config.json, or set [] to disable restriction.",
       );
     }
 
     return config;
   } catch {
-    if (DEFAULT_CONFIG.guard.allowed_paths.length === 0) {
-      console.warn(
-        "[parism] WARNING: allowed_paths is empty. " +
-        "All filesystem paths are accessible. " +
-        "Set guard.allowed_paths in prism.config.json for production use.",
-      );
-    }
-
     return DEFAULT_CONFIG;
   }
 }

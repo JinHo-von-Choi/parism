@@ -23,4 +23,9 @@ describe("tryParseNativeJson()", () => {
   it("빈 문자열은 null을 반환한다", () => {
     expect(tryParseNativeJson("")).toBeNull();
   });
+
+  it("파싱 실패(잘못된 JSON) 시 null을 반환한다", () => {
+    expect(tryParseNativeJson("{invalid}")).toBeNull();
+    expect(tryParseNativeJson("[1,2,]")).toBeNull();
+  });
 });

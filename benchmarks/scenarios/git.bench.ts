@@ -20,6 +20,7 @@ function extractRawGitLog(raw: string): ExtractionResult {
 export const gitLogScenario: Scenario = {
   name:        "git log --oneline",
   description: "커밋 해시와 메시지 추출",
+  riskLevel:   "minor",
   fixturePath: "git-log.txt",
   extractRaw:  extractRawGitLog,
   parserArgs:  ["log"],

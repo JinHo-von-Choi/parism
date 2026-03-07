@@ -1,0 +1,8 @@
+  UNIT                                                                                      LOAD      ACTIVE SUB     DESCRIPTION
+  accounts-daemon.service                                                                   loaded    active running Accounts Service
+  acpid.service                                                                             loaded    active exited  Save/Restore Sound Card State
+  apache2.service                                                                           loaded    active running The Apache HTTP Server
+● apparmor.service                                                                          loaded    failed failed  Load AppArmor profiles
+  avahi-daemon.service                                                                       loaded    active running Avahi mDNS/DNS-SD Stack
+  docker.service                                                                            loaded    active running Docker Application Container Engine
+  nginx.service                                                                             loaded    active running A high performance web server

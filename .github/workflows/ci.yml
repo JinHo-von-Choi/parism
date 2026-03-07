@@ -30,7 +30,7 @@ jobs:
         run: npm run build
 
       - name: Test
-        run: npm test
+        run: npm run test:coverage
 
   lint-types:
     runs-on: ubuntu-latest
@@ -49,3 +49,6 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint

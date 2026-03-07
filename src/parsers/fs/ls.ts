@@ -26,7 +26,7 @@ export function parseLs(
     if (!line || line.startsWith("total ")) continue;
 
     const m = line.match(
-      /^([d\-lbcsp])([rwx\-]{9})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(.+)$/
+      /^([dlbcsp-])([rwx-]{9})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(.+)$/,
     );
     if (!m) continue;
 

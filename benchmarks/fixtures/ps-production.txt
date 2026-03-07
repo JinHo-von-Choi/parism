@@ -1,0 +1,111 @@
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0 225488  9212 ?        Ss   Feb24   0:02 /sbin/init
+root           2  0.0  0.0      0     0 ?        S    Feb24   0:00 [kthreadd]
+root           3  0.0  0.0      0     0 ?        I<   Feb24   0:00 [rcu_gp]
+root           4  0.0  0.0      0     0 ?        I<   Feb24   0:00 [rcu_par_gp]
+root           6  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kworker/0:0H-kblockd]
+root           9  0.0  0.0      0     0 ?        I<   Feb24   0:00 [mm_percpu_wq]
+root          10  0.0  0.0      0     0 ?        S    Feb24   0:00 [ksoftirqd/0]
+root          11  0.0  0.0      0     0 ?        I    Feb24   0:03 [rcu_sched]
+root          12  0.0  0.0      0     0 ?        S    Feb24   0:00 [migration/0]
+root          13  0.0  0.0      0     0 ?        S    Feb24   0:00 [idle_inject/0]
+root          14  0.0  0.0      0     0 ?        S    Feb24   0:00 [cpuhp/0]
+root          15  0.0  0.0      0     0 ?        S    Feb24   0:00 [cpuhp/1]
+root          16  0.0  0.0      0     0 ?        S    Feb24   0:00 [idle_inject/1]
+root          17  0.0  0.0      0     0 ?        S    Feb24   0:00 [migration/1]
+root          18  0.0  0.0      0     0 ?        S    Feb24   0:00 [ksoftirqd/1]
+root          20  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kworker/1:0H-kblockd]
+root          21  0.0  0.0      0     0 ?        S    Feb24   0:00 [cpuhp/2]
+root          22  0.0  0.0      0     0 ?        S    Feb24   0:00 [idle_inject/2]
+root          23  0.0  0.0      0     0 ?        S    Feb24   0:00 [migration/2]
+root          24  0.0  0.0      0     0 ?        S    Feb24   0:00 [ksoftirqd/2]
+root          26  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kworker/2:0H]
+root          27  0.0  0.0      0     0 ?        S    Feb24   0:00 [cpuhp/3]
+root          28  0.0  0.0      0     0 ?        S    Feb24   0:00 [idle_inject/3]
+root          29  0.0  0.0      0     0 ?        S    Feb24   0:00 [migration/3]
+root          30  0.0  0.0      0     0 ?        S    Feb24   0:00 [ksoftirqd/3]
+root          31  0.0  0.0      0     0 ?        I    Feb24   0:01 [kworker/3:0]
+root          76  0.0  0.0      0     0 ?        S    Feb24   0:00 [kdevtmpfs]
+root          77  0.0  0.0      0     0 ?        I<   Feb24   0:00 [netns]
+root         131  0.0  0.0      0     0 ?        S    Feb24   0:00 [kauditd]
+root         187  0.0  0.0      0     0 ?        S    Feb24   0:00 [khungtaskd]
+root         189  0.0  0.0      0     0 ?        S    Feb24   0:00 [oom_reaper]
+root         191  0.0  0.0      0     0 ?        I<   Feb24   0:00 [writeback]
+root         196  0.0  0.0      0     0 ?        S    Feb24   0:00 [kcompactd0]
+root         249  0.0  0.0      0     0 ?        SN   Feb24   0:00 [khugepaged]
+root         489  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kblockd]
+root         497  0.0  0.0      0     0 ?        I<   Feb24   0:00 [blkcg_punt_bio]
+root         500  0.0  0.0      0     0 ?        I<   Feb24   0:00 [tpm_dev_wq]
+root         503  0.0  0.0      0     0 ?        I<   Feb24   0:00 [ata_sff]
+root         506  0.0  0.0      0     0 ?        I<   Feb24   0:00 [md]
+root         508  0.0  0.0      0     0 ?        I<   Feb24   0:00 [edac-poller]
+root         511  0.0  0.0      0     0 ?        I<   Feb24   0:00 [devfreq_wq]
+root         512  0.0  0.0      0     0 ?        S    Feb24   0:00 [watchdogd]
+root         517  0.0  0.0      0     0 ?        S    Feb24   0:00 [kswapd0]
+root         600  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kthrotld]
+root         603  0.0  0.0      0     0 ?        I<   Feb24   0:00 [acpi_thermal_pm]
+root         611  0.0  0.0      0     0 ?        I<   Feb24   0:00 [scsi_eh_0]
+root         613  0.0  0.0      0     0 ?        I<   Feb24   0:00 [scsi_tmf_0]
+root         614  0.0  0.0      0     0 ?        I<   Feb24   0:00 [scsi_eh_1]
+root         616  0.0  0.0      0     0 ?        I<   Feb24   0:00 [scsi_tmf_1]
+root         648  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kworker/u9:0]
+root         649  0.0  0.0      0     0 ?        I<   Feb24   0:00 [ipv6_addrconf]
+root         660  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kstrp]
+root         684  0.0  0.0      0     0 ?        I<   Feb24   0:00 [zswap-shrink]
+root         687  0.0  0.0      0     0 ?        I<   Feb24   0:00 [kworker/u9:1]
+root         707  0.0  0.0      0     0 ?        S    Feb24   0:00 [jbd2/sda1-8]
+root         708  0.0  0.0      0     0 ?        I<   Feb24   0:00 [ext4-rsv-conver]
+root         780  0.0  0.0  18132  4096 ?        Ss   Feb24   0:00 /lib/systemd/systemd-journald
+root         812  0.0  0.0  45216  9728 ?        Ss   Feb24   0:00 /lib/systemd/systemd-udevd
+root        1001  0.0  0.0 239536 10240 ?        Ssl  Feb24   0:00 /lib/systemd/systemd-timesyncd
+systemd+    1052  0.0  0.0  90896 12288 ?        Ssl  Feb24   0:00 /lib/systemd/systemd-resolved
+root        1054  0.0  0.0 256912 11264 ?        Ssl  Feb24   0:00 /lib/systemd/systemd-networkd
+root        1062  0.0  0.0  67944  8192 ?        Ss   Feb24   0:00 /usr/sbin/sshd -D
+root        1070  0.0  0.0  37512  6144 ?        Ss   Feb24   0:00 /usr/sbin/crond -n
+root        1075  0.0  0.0 286732 14336 ?        Ssl  Feb24   0:02 /usr/bin/dockerd -H fd://
+root        1078  0.0  0.0 125988 13312 ?        Ssl  Feb24   0:01 /usr/bin/containerd
+root        1081  0.0  0.0 191564 12288 ?        Ssl  Feb24   0:00 /usr/bin/node /opt/node-exporter/node_exporter
+www-data    1200  0.0  0.0  55024  4096 ?        Ss   Feb24   0:00 nginx: master process /usr/sbin/nginx -g daemon off;
+www-data    1201  0.1  0.1  55512  8192 ?        S    Feb24   2:14 nginx: worker process
+www-data    1202  0.1  0.1  55512  8192 ?        S    Feb24   2:11 nginx: worker process
+www-data    1203  0.1  0.1  55512  8192 ?        S    Feb24   2:09 nginx: worker process
+www-data    1204  0.1  0.1  55512  8192 ?        S    Feb24   2:13 nginx: worker process
+www-data    1205  0.1  0.1  55512  8192 ?        S    Feb24   2:10 nginx: worker process
+www-data    1206  0.1  0.1  55512  8192 ?        S    Feb24   2:12 nginx: worker process
+www-data    1207  0.1  0.1  55512  8192 ?        S    Feb24   2:08 nginx: worker process
+www-data    1208  0.1  0.1  55512  8192 ?        S    Feb24   2:15 nginx: worker process
+appuser     1400  0.2  0.8 892456 65536 ?        Ssl  Feb24   8:32 node /app/dist/server.js --cluster-master
+appuser     1401  0.4  0.9 934712 73728 ?        Sl   Feb24  16:48 node /app/dist/server.js --worker
+appuser     1402  0.4  0.9 934712 73728 ?        Sl   Feb24  16:52 node /app/dist/server.js --worker
+appuser     1403  0.4  0.9 934712 73728 ?        Sl   Feb24  16:49 node /app/dist/server.js --worker
+appuser     1404  0.4  0.9 934712 73728 ?        Sl   Feb24  16:51 node /app/dist/server.js --worker
+appuser     1405  0.4  0.9 934712 73728 ?        Sl   Feb24  16:47 node /app/dist/server.js --worker
+appuser     1406  0.4  0.9 934712 73728 ?        Sl   Feb24  16:53 node /app/dist/server.js --worker
+appuser     1407  0.4  0.9 934712 73728 ?        Sl   Feb24  16:46 node /app/dist/server.js --worker
+appuser     1408  0.4  0.9 934712 73728 ?        Sl   Feb24  16:50 node /app/dist/server.js --worker
+appuser     1409  0.3  0.7 856320 57344 ?        Sl   Feb24  12:24 node /app/dist/worker.js --queue=email
+appuser     1410  0.3  0.7 856320 57344 ?        Sl   Feb24  12:21 node /app/dist/worker.js --queue=notification
+appuser     1411  0.3  0.7 856320 57344 ?        Sl   Feb24  12:23 node /app/dist/worker.js --queue=analytics
+appuser     1412  0.3  0.7 856320 57344 ?        Sl   Feb24  12:22 node /app/dist/worker.js --queue=export
+postgres    1600  0.0  0.2 234496 18432 ?        Ss   Feb24   0:01 /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main
+postgres    1601  0.0  0.0 234496  4096 ?        Ss   Feb24   0:00 postgres: checkpointer
+postgres    1602  0.0  0.0 234496  4096 ?        Ss   Feb24   0:00 postgres: background writer
+postgres    1603  0.0  0.0 234496  4096 ?        Ss   Feb24   0:00 postgres: walwriter
+postgres    1604  0.0  0.0 235008  6144 ?        Ss   Feb24   0:01 postgres: autovacuum launcher
+postgres    1605  0.0  0.0 234496  4096 ?        Ss   Feb24   0:00 postgres: archiver
+postgres    1606  0.0  0.0 234496  4096 ?        Ss   Feb24   0:00 postgres: stats collector
+postgres    1607  0.0  0.0 235008  4096 ?        Ss   Feb24   0:00 postgres: logical replication launcher
+postgres    1700  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:23 postgres: appuser appdb 10.0.1.5(49812) idle
+postgres    1701  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:20 postgres: appuser appdb 10.0.1.6(51024) idle in transaction
+postgres    1702  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:19 postgres: appuser appdb 10.0.1.7(52198) SELECT
+postgres    1703  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:22 postgres: appuser appdb 10.0.1.8(53421) idle
+postgres    1704  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:21 postgres: appuser appdb 10.0.1.9(54633) idle
+postgres    1705  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:18 postgres: appuser appdb 10.0.1.10(55847) INSERT
+postgres    1706  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:17 postgres: appuser appdb 10.0.1.11(57012) idle
+postgres    1707  0.1  0.3 237056 24576 ?        Ss   Mar  5  1:16 postgres: appuser appdb 10.0.1.12(58226) idle
+redis       1800  0.1  0.4 124928 32768 ?        Ssl  Feb24   4:33 /usr/bin/redis-server 127.0.0.1:6379
+root        1900  0.0  0.0  72284  6144 ?        Ss   Feb24   0:00 /usr/bin/prometheus-node-exporter
+root        1901  0.0  0.0  88128  8192 ?        Ss   Feb24   0:00 /usr/bin/promtail -config.file=/etc/promtail/config.yml
+appuser     2100  0.0  0.1 182784 12288 ?        Ss   Mar  6   0:05 node /app/dist/scheduler.js
+root        2200  0.0  0.0  14428  3072 pts/0    Ss   10:00   0:00 /bin/bash
+root        2201  0.0  0.0  36892  3584 pts/0    R+   10:01   0:00 ps aux

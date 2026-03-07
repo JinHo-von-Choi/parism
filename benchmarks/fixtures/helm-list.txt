@@ -1,0 +1,4 @@
+NAME	NAMESPACE	REVISION	UPDATED	STATUS	CHART	APP VERSION
+ingress-nginx	ingress-nginx	5	2026-02-15 10:00:00	deployed	ingress-nginx-4.10.0	1.10.0
+cert-manager	cert-manager	3	2026-02-10 09:00:00	deployed	cert-manager-v1.14.0	v1.14.0
+prometheus	monitoring	2	2026-02-01 08:00:00	deployed	prometheus-25.1.0	2.53.0

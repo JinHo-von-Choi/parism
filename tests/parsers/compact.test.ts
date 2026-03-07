@@ -52,4 +52,33 @@ describe("toCompact()", () => {
   it("null 입력은 null을 반환한다", () => {
     expect(toCompact(null)).toBeNull();
   });
+
+  it("중첩 배열 필드는 |로 결합된 문자열로 변환한다", () => {
+    const input = {
+      items: [
+        { name: "a", tags: ["x", "y"], args: ["-v", "--help"] },
+        { name: "b", tags: ["z"], args: [] },
+      ],
+    };
+    const result = toCompact(input);
+    expect(result).toEqual({
+      items: {
+        schema: ["name", "tags", "args"],
+        rows:  [["a", "x|y", "-v|--help"], ["b", "z", ""]],
+      },
+    });
+  });
+
+  it("중첩 객체 필드는 JSON 문자열로 변환한다", () => {
+    const input = {
+      items: [{ id: 1, meta: { a: 1, b: 2 } }],
+    };
+    const result = toCompact(input);
+    expect(result).toEqual({
+      items: {
+        schema: ["id", "meta"],
+        rows:  [[1, '{"a":1,"b":2}']],
+      },
+    });
+  });
 });

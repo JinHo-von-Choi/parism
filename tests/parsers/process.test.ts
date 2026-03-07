@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { parsePs } from "../../src/parsers/process/ps.js";
+import { parsePs }  from "../../src/parsers/process/ps.js";
+import { parseKill } from "../../src/parsers/process/kill.js";
+
+describe("parseKill()", () => {
+  it("raw를 그대로 반환한다", () => {
+    const result = parseKill("kill", ["-l"], "");
+    expect(result).toEqual({ raw: "" });
+  });
+});
 
 describe("parsePs()", () => {
   const psOutput = [
@@ -13,5 +21,19 @@ describe("parsePs()", () => {
     expect(result.processes).toHaveLength(2);
     expect(result.processes[1].pid).toBe(1234);
     expect(result.processes[1].command).toContain("node");
+  });
+
+  it("maxItems 초과 시 _summary와 truncation을 반환한다", () => {
+    const many = Array.from({ length: 10 }, (_, i) =>
+      `user ${i} ${1000 + i} 0.0 0.0 0 0 ? S 00:00 0:00 proc${i}`,
+    ).join("\n");
+    const raw = "USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n" + many;
+    const result = parsePs("ps", ["aux"], raw, { maxItems: 3, format: "json" }) as {
+      processes: unknown[];
+      _summary: { total: number; shown: number; truncated: boolean };
+    };
+    expect(result.processes).toHaveLength(3);
+    expect(result._summary.total).toBe(10);
+    expect(result._summary.truncated).toBe(true);
   });
 });

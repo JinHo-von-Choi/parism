@@ -1,6 +1,5 @@
-import { McpServer }              from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport }   from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z }                      from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z }         from "zod";
 import { execute }                from "./engine/executor.js";
 import { checkGuard, GuardError } from "./engine/guard.js";
 import { defaultRegistry }        from "./parsers/index.js";
@@ -56,10 +55,14 @@ export async function buildRunResult(
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
   );
-  let parsed     = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format });
+  const parseFormat = format === "json-no-raw" ? "json" : format;
+  let parsed       = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: parseFormat });
   if (parsed == null) parsed = tryParseNativeJson(envelope.stdout.raw);
-  const final    = format === "compact" ? toCompact(parsed) : parsed;
-  const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed: final } };
+  const final      = parseFormat === "compact" ? toCompact(parsed) : parsed;
+  const stdout     = format === "json-no-raw"
+    ? { raw: "", parsed: final }
+    : { ...envelope.stdout, parsed: final };
+  const enriched   = { ...envelope, stdout };
   return JSON.stringify(enriched, null, 2);
 }
 
@@ -99,14 +102,39 @@ export async function buildPagedResult(
   return JSON.stringify(enriched, null, 2);
 }
 
+const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
+
+When to use Parism:
+- File listing (ls, find): Get entries[] with name, type, size, permissions — no raw parsing.
+- Git state (status, log, diff): Structured branch, modified[], commits[], hunks — code review ready.
+- Process/container (ps, docker ps): Structured processes[]/containers[] — filter by PID, status.
+- Disk/network (df, netstat): Structured filesystems[]/connections[] — no column alignment guess.
+- System (systemctl list-units, journalctl -o short-iso): units[]/entries[] — service status, logs.
+- DevOps (helm list, terraform plan): releases[]/summary — deployments, plan changes.
+- Packages (apt list, brew list, npm list, cargo tree): packages[]/dependencies[]/crates[].
+- When output has spaces in filenames or OS-specific format: Parism parses deterministically, CFR 0%.
+- When you need to count, filter, or compare: Use parsed.entries.length, parsed.files_changed, etc.
+
+When NOT to use: Simple one-line output (pwd, echo), or when you need pipe/redirect (Guard blocks).
+
+Tools:
+- run: Execute command, get structured JSON. format: json|compact|json-no-raw.
+- run_paged: Paginated stdout for large output (ps aux, find, grep -r). parsed is always null.
+
+Usage:
+1. Prefer run when output is small. Use format=compact for token savings.
+2. For large output: run_paged(page=0) first, check page_info.total_lines, then fetch needed pages.
+3. Guard blocks disallowed commands. Check result.ok and result.guard_error on failure.
+4. stdout.parsed has structured data; stdout.raw is fallback. Schema varies by command.`;
+
 /**
  * MCP 서버를 생성하고 `run` 도구를 등록한다.
  */
 export function createServer(config: PrismConfig): McpServer {
-  const server = new McpServer({
-    name:    "parism",
-    version: PACKAGE_VERSION,
-  });
+  const server = new McpServer(
+    { name: "parism", version: PACKAGE_VERSION },
+    { instructions: MCP_INSTRUCTIONS },
+  );
 
   server.tool(
     "run",
@@ -117,8 +145,8 @@ export function createServer(config: PrismConfig): McpServer {
       cmd:    z.string().describe("Command name (e.g. 'ls', 'git')"),
       args:   z.array(z.string()).default([]).describe("Command arguments"),
       cwd:    z.string().default(process.cwd()).describe("Working directory"),
-      format: z.enum(["json", "compact"]).default("json")
-              .describe("Output format. 'compact' uses columnar schema+rows for lower token cost"),
+      format: z.enum(["json", "compact", "json-no-raw"]).default("json")
+              .describe("Output format. 'compact'=columnar. 'json-no-raw'=omit raw for token savings."),
     },
     async ({ cmd, args, cwd, format }) => {
       const result = await buildRunResult(cmd, args, cwd, config, format);

@@ -1,0 +1,6 @@
+나열 중...
+7zip/noble-apps-security,now 23.01+dfsg-11ubuntu0.1~esm1 amd64 [설치됨,자동]
+accountsservice/noble,now 23.13.9-2ubuntu6 amd64 [설치됨,자동]
+acpid/noble,now 1:2.0.34-1ubuntu2 amd64 [설치됨,자동]
+docker-ce/jammy,now 5:27.1.0-1~ubuntu.22.04~jammy amd64 [설치됨,자동]
+nginx/focal,now 1.18.0-0ubuntu1.4 amd64 [설치됨,자동]

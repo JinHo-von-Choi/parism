@@ -1,0 +1,14 @@
+Terraform will perform the following actions:
+
+  # aws_instance.web will be created
+  + resource "aws_instance" "web" {
+      + ami           = "ami-12345678"
+      + instance_type = "t3.micro"
+  }
+
+  # aws_instance.old will be destroyed
+  - resource "aws_instance" "old" {
+      - id = "i-abc123"
+  }
+
+Plan: 2 to add, 0 to change, 1 to destroy.

@@ -1,0 +1,48 @@
+diff --git a/src/server.ts b/src/server.ts
+index 4a2f3b1..9c8e7d0 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -1,18 +1,25 @@
+-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
++import { Server, type ServerOptions } from "@modelcontextprotocol/sdk/server/index.js";
+ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
++import { Guard } from "./guard.js";
+
+ const VERSION = "0.1.6";
++const DEFAULT_TIMEOUT = 30_000;
+
+-export function createServer(): Server {
+-  return new Server({ name: "parism", version: VERSION });
++export function createServer(opts?: ServerOptions): Server {
++  const guard = new Guard();
++  return new Server({ name: "parism", version: VERSION }, opts);
+ }
++
++export { Guard };
+diff --git a/src/guard.ts b/src/guard.ts
+index 7b3a2c0..1f4e8b5 100644
+--- a/src/guard.ts
++++ b/src/guard.ts
+@@ -45,7 +45,14 @@ export class Guard {
+   }
+
+-  check(cmd: string): boolean {
+-    return this.allowlist.has(cmd);
++  check(cmd: string, args: string[]): boolean {
++    if (!this.allowlist.has(cmd)) return false;
++    const blocked = this.blockedPatterns.some(p => args.some(a => p.test(a)));
++    return !blocked;
+   }
++
++  addPattern(pattern: RegExp): void {
++    this.blockedPatterns.push(pattern);
++  }
+ }
+diff --git a/src/parsers/index.ts b/src/parsers/index.ts
+index 2d1a4f0..5e8c3b1 100644
+--- a/src/parsers/index.ts
++++ b/src/parsers/index.ts
+@@ -12,6 +12,8 @@ export { defaultRegistry } from "./registry.js";
+ export type { ParseResult } from "./types.js";
++export type { ParserOptions } from "./options.js";
++export { createParser } from "./factory.js";

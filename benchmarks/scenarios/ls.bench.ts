@@ -55,6 +55,7 @@ function extractJsonLs(raw: string): ExtractionResult {
 export const lsNormalScenario: Scenario = {
   name:        "ls: normal filenames",
   description: "일반 파일명(공백 없음)에서 파일 목록 추출",
+  riskLevel:   "minor",
   fixturePath: "ls-normal.txt",
   extractRaw:  extractRawLs,
 
@@ -71,6 +72,7 @@ export const lsNormalScenario: Scenario = {
 export const lsSpacesScenario: Scenario = {
   name:        "ls: filenames with spaces (edge case)",
   description: "공백 포함 파일명 — raw split이 파일명을 잘라내는 구조적 취약점 시연",
+  riskLevel:   "major",
   fixturePath: "ls-spaces.txt",
   extractRaw:  extractRawLs,  // 공백 포함 파일명에서 파일명이 잘림
   expectedNames: [

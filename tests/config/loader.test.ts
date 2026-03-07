@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { unlink, writeFile } from "node:fs/promises";
 import { loadConfig, DEFAULT_CONFIG } from "../../src/config/loader.js";
 
@@ -17,19 +17,41 @@ describe("loadConfig()", () => {
     expect(cfg).toEqual(DEFAULT_CONFIG);
   });
 
+  it("JSON 파싱 실패 시 기본 설정을 반환한다", async () => {
+    const configPath = `/tmp/prism-config-invalid-${Date.now()}.json`;
+    await writeFile(configPath, "{ invalid json }", "utf-8");
+    try {
+      const cfg = await loadConfig(configPath);
+      expect(cfg).toEqual(DEFAULT_CONFIG);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
   it("DEFAULT_CONFIG에 default_page_size가 있다", () => {
     expect(DEFAULT_CONFIG.guard.default_page_size).toBe(100);
   });
 
-  it("allowed_paths가 빈 배열이면 console.warn을 호출한다", async () => {
+  it("allowed_paths가 빈 배열로 명시되면 console.warn을 호출한다", async () => {
+    const configPath = `/tmp/prism-config-empty-paths-${Date.now()}.json`;
+    const body       = { guard: { allowed_paths: [] } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await loadConfig("/tmp/__nonexistent_prism_config__.json");
+      await loadConfig(configPath);
       expect(spy).toHaveBeenCalledOnce();
       expect(spy.mock.calls[0][0]).toContain("allowed_paths is empty");
     } finally {
       spy.mockRestore();
+      await unlink(configPath);
     }
+  });
+
+  it("config 파일 없을 때 기본 allowed_paths는 process.cwd()이다", async () => {
+    const cfg = await loadConfig("/tmp/__nonexistent_prism_config__.json");
+    expect(cfg.guard.allowed_paths).toHaveLength(1);
+    expect(cfg.guard.allowed_paths[0]).toBe(process.cwd());
   });
 
   it("allowed_paths가 설정되면 console.warn을 호출하지 않는다", async () => {

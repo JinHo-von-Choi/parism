@@ -31,10 +31,27 @@ export interface ScenarioResult {
   rawAccuracy:  number;  // 0~1. 1.0 if no expectedNames provided (assume correct)
   jsonAccuracy: number;  // 0~1. 1.0 if parsed !== null, 0 otherwise
 
-  // Projected real cost assuming 1 retry on failure/inaccuracy
-  // Formula: TOTAL × (1 + (1 - accuracy))
-  rawProjectedCost:  number;
-  jsonProjectedCost: number;
+  // Parsed-only mode: agent reads ONLY stdout.parsed (not the raw field in envelope)
+  // This represents the optimized production usage pattern
+  jsonParsedOnlyTokens: number;  // tokens for parsed output only (no raw duplication)
+
+  // Dollar cost estimates for 1000 agent calls (GPT-4o input pricing: $2.50/1M tokens)
+  dollarCostRaw:            number;  // raw 모드 1000회 호출 비용 ($)
+  dollarCostJsonFull:       number;  // Parism full 모드 1000회 비용 ($)
+  dollarCostJsonParsedOnly: number;  // Parism parsed-only 모드 1000회 비용 ($)
+
+  // Critical Failure Rate: raw 파싱 오류율 × riskLevel 가중치 (0~1)
+  cfr: number;
+
+  // E2E 실행 시간 (ms)
+  execTimeMs: number;
+
+  /**
+   * without Parism일 때 LLM 추론이 raw 텍스트를 파싱하는 데 소요하는 추정 시간.
+   * GPT-4o TTFT 기준: 500ms (base) + context 크기 비례.
+   * with Parism: deterministic 코드 파싱 = 0ms.
+   */
+  estimatedRawParseMs: number;
 }
 
 /**
@@ -44,10 +61,14 @@ export interface BenchmarkReport {
   runAt:     string;
   scenarios: ScenarioResult[];
   summary: {
-    totalRawTokens:  number;
-    totalJsonTokens: number;
-    rawSuccessRate:  number;
-    jsonSuccessRate: number;
+    totalRawTokens:          number;
+    totalJsonTokens:         number;
+    rawSuccessRate:          number;
+    jsonSuccessRate:         number;
+    avgCfr:                  number;
+    totalDollarCostRaw:      number;
+    totalDollarCostParsedOnly: number;
+    avgExecTimeMs:           number;
   };
 }
 
@@ -57,6 +78,12 @@ export interface BenchmarkReport {
 export interface Scenario {
   name:        string;
   description: string;
+
+  /**
+   * 시나리오의 리스크 레벨.
+   * CFR 계산 시 가중치로 사용: catastrophic=1.0, major=0.5, minor=0.1, none=0.0
+   */
+  riskLevel?: "catastrophic" | "major" | "minor" | "none";
 
   /** raw fixture 파일명 (benchmarks/fixtures/ 기준) */
   fixturePath: string;

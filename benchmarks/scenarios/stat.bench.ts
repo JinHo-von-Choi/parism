@@ -63,6 +63,7 @@ function extractRawStatMacos(raw: string): ExtractionResult {
 export const statLinuxScenario: Scenario = {
   name:        "stat: Linux format",
   description: "파일 메타데이터 추출 (Linux stat 형식 — 레이블 있음)",
+  riskLevel:   "minor",
   fixturePath: "stat-linux.txt",
   extractRaw:  extractRawStatLinux,
 
@@ -78,6 +79,7 @@ export const statLinuxScenario: Scenario = {
 export const statMacosScenario: Scenario = {
   name:        "stat: macOS format (OS mismatch edge case)",
   description: "macOS stat는 레이블 없는 단일 줄 형식 — Linux 파서 적용 시 완전 실패",
+  riskLevel:   "minor",
   fixturePath: "stat-macos.txt",
   extractRaw:  extractRawStatMacos,  // Linux parser fails on macOS format
 

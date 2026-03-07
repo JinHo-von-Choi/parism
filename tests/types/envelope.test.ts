@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ResponseEnvelope, StdoutField, DiffField } from "../../src/types/envelope.js";
+import type { ResponseEnvelope } from "../../src/types/envelope.js";
 
 
 describe("ResponseEnvelope", () => {

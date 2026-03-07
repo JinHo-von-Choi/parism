@@ -17,7 +17,43 @@ export interface StatResult {
   birth_at:    string;
 }
 
+/**
+ * macOS/BSD stat 단일 줄 형식 파싱.
+ * 형식: dev ino mode nlink uid gid rdev size "atime" "mtime" "ctime" "btime" blksize blocks flags path
+ */
+function parseStatMacos(raw: string): StatResult | null {
+  const line = raw.trim();
+  if (!line || line.includes("File:")) return null;
+
+  const match = line.match(
+    /^\d+\s+\d+\s+(\S+)\s+\d+\s+\S+\s+\S+\s+\d+\s+(\d+)\s+"([^"]*)"\s+"([^"]*)"\s+"([^"]*)"\s+"([^"]*)"\s+\d+\s+\d+\s+\S+\s+(.+)$/,
+  );
+  if (!match) return null;
+
+  return {
+    file:        match[7]!.trim(),
+    size_bytes:  parseInt(match[2]!, 10),
+    blocks:      0,
+    io_block:    0,
+    file_type:   "",
+    inode:       0,
+    links:       0,
+    permissions: match[1]!,
+    uid:         0,
+    uid_name:    "",
+    gid:         0,
+    gid_name:    "",
+    accessed_at: "",
+    modified_at: match[4]!,
+    changed_at:  match[5]!,
+    birth_at:    match[6]!,
+  };
+}
+
 export function parseStat(cmd: string, args: string[], raw: string): StatResult | { lines: string[] } {
+  const macosResult = parseStatMacos(raw);
+  if (macosResult) return macosResult;
+
   const fileMatch    = raw.match(/\s*File:\s*(.+)/);
   const sizeMatch    = raw.match(/\s*Size:\s*(\d+)/);
   const blocksMatch  = raw.match(/Blocks:\s*(\d+)/);

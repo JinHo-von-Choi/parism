@@ -53,7 +53,7 @@ describe("buildPagedResult()", () => {
 describe("buildRunResult() with format", () => {
   it("format=compact이면 리스트 파서 결과가 schema+rows 형식이다", async () => {
     const result = JSON.parse(
-      await buildRunResult("ls", ["-la", "/tmp"], process.cwd(), DEFAULT_CONFIG, "compact"),
+      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, "compact"),
     );
     if (result.stdout.parsed && result.stdout.parsed.entries) {
       const entries = result.stdout.parsed.entries;
@@ -70,6 +70,15 @@ describe("buildRunResult() with format", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.stdout.parsed).toBeNull();
+  });
+
+  it("format=json-no-raw이면 stdout.raw가 빈 문자열이다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, "json-no-raw"),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.stdout.raw).toBe("");
+    expect(result.stdout.parsed).not.toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@ describe("Integration: buildRunResult with parsers", () => {
   });
 
   it("ls 결과에 parsed entries가 있다", async () => {
-    const result = await buildRunResult("ls", ["-la", "/tmp"], process.cwd(), DEFAULT_CONFIG);
+    const result = await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG);
     const env    = JSON.parse(result);
 
     expect(env.ok).toBe(true);

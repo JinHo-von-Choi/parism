@@ -6,9 +6,10 @@ import { parsePing, parseCurl, parseNetstat, parseLsof, parseSs,
 import { parseGrep, parseWc, parseHead, parseTail, parseCat }         from "./text/index.js";
 import { parseGitStatus, parseGitLog, parseGitDiff, parseGitBranch }  from "./git/index.js";
 import { parseEnv, parsePwd, parseWhich }                             from "./env/index.js";
-import { parseFree, parseUname, parseId }                             from "./system/index.js";
+import { parseFree, parseUname, parseId, parseSystemctl, parseJournalctl, parseApt, parseBrew } from "./system/index.js";
 import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./windows/index.js";
-import { parseKubectl, parseDocker, parseGh }                         from "./devops/index.js";
+import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
+import { parseNpm, parseCargo } from "./packages/index.js";
 
 /**
  * 전역 싱글턴 Parser Registry. 서버 시작 시 한 번 초기화된다.
@@ -40,6 +41,8 @@ defaultRegistry.register("which",   parseWhich);
 defaultRegistry.register("free",       parseFree);
 defaultRegistry.register("uname",      parseUname);
 defaultRegistry.register("id",         parseId);
+defaultRegistry.register("systemctl",  parseSystemctl);
+defaultRegistry.register("journalctl", parseJournalctl);
 defaultRegistry.register("dir",        parseDir);
 defaultRegistry.register("tasklist",   parseTasklist);
 defaultRegistry.register("ipconfig",   parseIpconfig);
@@ -47,6 +50,14 @@ defaultRegistry.register("systeminfo", parseSysteminfo);
 defaultRegistry.register("kubectl",    parseKubectl);
 defaultRegistry.register("docker",     parseDocker);
 defaultRegistry.register("gh",         parseGh);
+defaultRegistry.register("helm",       parseHelm);
+defaultRegistry.register("terraform",  parseTerraform);
+defaultRegistry.register("apt",        parseApt);
+defaultRegistry.register("brew",       parseBrew);
+defaultRegistry.register("npm",       parseNpm);
+defaultRegistry.register("pnpm",      parseNpm);
+defaultRegistry.register("yarn",      parseNpm);
+defaultRegistry.register("cargo",     parseCargo);
 
 // git은 서브커맨드 기반 — args[0]으로 파서를 선택
 defaultRegistry.register("git", (cmd, args, raw) => {

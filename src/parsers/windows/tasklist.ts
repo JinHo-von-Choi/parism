@@ -52,12 +52,10 @@ export function parseTasklist(_cmd: string, _args: string[], raw: string): Taskl
 
     // Separator line defines column widths
     if (line.match(/^[= ]+$/)) {
-      const segs = line.split(/ (?=[^ ])/);
-      let pos = 0;
+      const segs   = line.split(/ (?=[^ ])/);
       const widths: number[] = [];
       for (const seg of segs) {
         widths.push(seg.length);
-        pos += seg.length + 1;
       }
       // columns: name(0), pid(1), session(2), session#(3), mem(4)
       if (widths.length >= 5) {

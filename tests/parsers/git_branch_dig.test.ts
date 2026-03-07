@@ -44,4 +44,17 @@ describe("parseDig()", () => {
     expect(result.answers[0].value).toBe("142.250.196.110");
     expect(result.query_time_ms).toBe(12);
   });
+
+  it("AUTHORITY SECTION 등장 시 inAnswer를 false로 전환", () => {
+    const withAuth = [
+      ";; ANSWER SECTION:",
+      "example.com.	300	IN	A	93.184.216.34",
+      ";; AUTHORITY SECTION:",
+      "example.com.	300	IN	NS	a.iana-servers.net.",
+      ";; ADDITIONAL SECTION:",
+    ].join("\n");
+    const result = parseDig("dig", ["example.com", "NS"], withAuth);
+    expect(result.answers).toHaveLength(1);
+    expect(result.answers[0].name).toBe("example.com");
+  });
 });
