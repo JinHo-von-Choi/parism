@@ -10,6 +10,26 @@ import type { PrismConfig }       from "./config/loader.js";
 export const PACKAGE_VERSION = "0.1.6";
 
 /**
+ * Guard 차단 시 반환하는 에러 봉투를 생성한다.
+ */
+function buildGuardErrorEnvelope(
+  cmd: string, args: string[], cwd: string, err: GuardError,
+): string {
+  return JSON.stringify({
+    ok:          false,
+    exitCode:    -1,
+    cmd,
+    args,
+    cwd,
+    duration_ms: 0,
+    stdout:      { raw: "", parsed: null },
+    stderr:      { raw: err.message, parsed: null },
+    diff:        null,
+    guard_error: { reason: err.reason, message: err.message },
+  }, null, 2);
+}
+
+/**
  * Guard 검사 → 실행 → JSON 직렬화까지의 파이프라인.
  * MCP 서버와 테스트 코드가 공통으로 사용한다.
  */
@@ -22,21 +42,7 @@ export async function buildRunResult(
   try {
     checkGuard(cmd, args, cwd, config);
   } catch (err) {
-    if (err instanceof GuardError) {
-      const envelope = {
-        ok:          false,
-        exitCode:    -1,
-        cmd,
-        args,
-        cwd,
-        duration_ms: 0,
-        stdout:      { raw: "", parsed: null },
-        stderr:      { raw: err.message, parsed: null },
-        diff:        null,
-        guard_error: { reason: err.reason, message: err.message },
-      };
-      return JSON.stringify(envelope, null, 2);
-    }
+    if (err instanceof GuardError) return buildGuardErrorEnvelope(cmd, args, cwd, err);
     throw err;
   }
 
@@ -46,7 +52,7 @@ export async function buildRunResult(
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
   );
-  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items });
+  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: "json" });
   const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed } };
   return JSON.stringify(enriched, null, 2);
 }
@@ -66,21 +72,7 @@ export async function buildPagedResult(
   try {
     checkGuard(cmd, args, cwd, config);
   } catch (err) {
-    if (err instanceof GuardError) {
-      const envelope = {
-        ok:          false,
-        exitCode:    -1,
-        cmd,
-        args,
-        cwd,
-        duration_ms: 0,
-        stdout:      { raw: "", parsed: null },
-        stderr:      { raw: err.message, parsed: null },
-        diff:        null,
-        guard_error: { reason: err.reason, message: err.message },
-      };
-      return JSON.stringify(envelope, null, 2);
-    }
+    if (err instanceof GuardError) return buildGuardErrorEnvelope(cmd, args, cwd, err);
     throw err;
   }
 
