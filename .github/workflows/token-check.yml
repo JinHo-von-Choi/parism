@@ -1,0 +1,47 @@
+name: NPM Token Expiry Check
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # 매월 1일 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify NPM_TOKEN is valid
+        run: |
+          npm whoami --registry https://registry.npmjs.org 2>&1 || {
+            echo "::error::NPM_TOKEN is invalid or expired. Renew at https://www.npmjs.com/settings/tokens"
+            exit 1
+          }
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create reminder issue if token expires within 30 days
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'NPM_TOKEN expired or invalid — renew required';
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'token-renewal',
+            });
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: [
+                  '`NPM_TOKEN` secret is expired or invalid.',
+                  '',
+                  '1. Go to https://www.npmjs.com/settings/tokens',
+                  '2. Generate a new Granular Access Token (365 days, @nerdvana/parism, read-write)',
+                  '3. Update the secret: repo Settings > Secrets > `NPM_TOKEN`',
+                ].join('\n'),
+                labels: ['token-renewal'],
+              });
+            }
