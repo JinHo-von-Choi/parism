@@ -6,6 +6,8 @@ import { checkGuard, GuardError } from "./engine/guard.js";
 import { defaultRegistry }        from "./parsers/index.js";
 import { paginateLines }          from "./engine/paginator.js";
 import type { PrismConfig }       from "./config/loader.js";
+import type { OutputFormat }      from "./parsers/registry.js";
+import { toCompact }              from "./parsers/compact.js";
 
 export const PACKAGE_VERSION = "0.1.6";
 
@@ -38,6 +40,7 @@ export async function buildRunResult(
   args:   string[],
   cwd:    string,
   config: PrismConfig,
+  format: OutputFormat = "json",
 ): Promise<string> {
   try {
     checkGuard(cmd, args, cwd, config);
@@ -52,8 +55,9 @@ export async function buildRunResult(
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
   );
-  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: "json" });
-  const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed } };
+  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format });
+  const final    = format === "compact" ? toCompact(parsed) : parsed;
+  const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed: final } };
   return JSON.stringify(enriched, null, 2);
 }
 
@@ -104,15 +108,18 @@ export function createServer(config: PrismConfig): McpServer {
 
   server.tool(
     "run",
-    "Execute a shell command and receive structured JSON output. " +
-    "All commands are filtered through an execution guard (whitelist + injection prevention).",
+    "Execute a shell command and receive structured output. " +
+    "All commands are filtered through an execution guard (whitelist + injection prevention). " +
+    "Use format='compact' for token-efficient columnar output.",
     {
-      cmd:  z.string().describe("Command name (e.g. 'ls', 'git')"),
-      args: z.array(z.string()).default([]).describe("Command arguments"),
-      cwd:  z.string().default(process.cwd()).describe("Working directory"),
+      cmd:    z.string().describe("Command name (e.g. 'ls', 'git')"),
+      args:   z.array(z.string()).default([]).describe("Command arguments"),
+      cwd:    z.string().default(process.cwd()).describe("Working directory"),
+      format: z.enum(["json", "compact"]).default("json")
+              .describe("Output format. 'compact' uses columnar schema+rows for lower token cost"),
     },
-    async ({ cmd, args, cwd }) => {
-      const result = await buildRunResult(cmd, args, cwd, config);
+    async ({ cmd, args, cwd, format }) => {
+      const result = await buildRunResult(cmd, args, cwd, config, format);
       return {
         content: [{ type: "text" as const, text: result }],
       };
