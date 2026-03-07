@@ -50,6 +50,46 @@ describe("buildPagedResult()", () => {
   });
 });
 
+describe("buildRunResult() with format", () => {
+  it("format=compact이면 리스트 파서 결과가 schema+rows 형식이다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("ls", ["-la", "/tmp"], process.cwd(), DEFAULT_CONFIG, "compact"),
+    );
+    if (result.stdout.parsed && result.stdout.parsed.entries) {
+      const entries = result.stdout.parsed.entries;
+      expect(entries).toHaveProperty("schema");
+      expect(entries).toHaveProperty("rows");
+      expect(Array.isArray(entries.schema)).toBe(true);
+      expect(Array.isArray(entries.rows)).toBe(true);
+    }
+  });
+
+  it("format 미지정(기본값 json)이면 기존 형식 그대로다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("echo", ["test"], process.cwd(), DEFAULT_CONFIG),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.stdout.parsed).toBeNull();
+  });
+});
+
+describe("buildRunResult() native JSON passthrough", () => {
+  it("stdout이 JSON이면 parsed에 파싱된 객체가 들어간다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("echo", ['{"key":"value"}'], process.cwd(), DEFAULT_CONFIG),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.stdout.parsed).toEqual({ key: "value" });
+  });
+
+  it("stdout이 일반 텍스트이면 parsed는 null이다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("echo", ["plain text"], process.cwd(), DEFAULT_CONFIG),
+    );
+    expect(result.stdout.parsed).toBeNull();
+  });
+});
+
 describe("PACKAGE_VERSION", () => {
   it("package.json version과 일치한다", async () => {
     const pkgPath = new URL("../package.json", import.meta.url);

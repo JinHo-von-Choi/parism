@@ -6,8 +6,31 @@ import { checkGuard, GuardError } from "./engine/guard.js";
 import { defaultRegistry }        from "./parsers/index.js";
 import { paginateLines }          from "./engine/paginator.js";
 import type { PrismConfig }       from "./config/loader.js";
+import type { OutputFormat }      from "./parsers/registry.js";
+import { toCompact }              from "./parsers/compact.js";
+import { tryParseNativeJson }    from "./parsers/json-passthrough.js";
 
-export const PACKAGE_VERSION = "0.1.6";
+export const PACKAGE_VERSION = "0.2.0";
+
+/**
+ * Guard 차단 시 반환하는 에러 봉투를 생성한다.
+ */
+function buildGuardErrorEnvelope(
+  cmd: string, args: string[], cwd: string, err: GuardError,
+): string {
+  return JSON.stringify({
+    ok:          false,
+    exitCode:    -1,
+    cmd,
+    args,
+    cwd,
+    duration_ms: 0,
+    stdout:      { raw: "", parsed: null },
+    stderr:      { raw: err.message, parsed: null },
+    diff:        null,
+    guard_error: { reason: err.reason, message: err.message },
+  }, null, 2);
+}
 
 /**
  * Guard 검사 → 실행 → JSON 직렬화까지의 파이프라인.
@@ -18,25 +41,12 @@ export async function buildRunResult(
   args:   string[],
   cwd:    string,
   config: PrismConfig,
+  format: OutputFormat = "json",
 ): Promise<string> {
   try {
     checkGuard(cmd, args, cwd, config);
   } catch (err) {
-    if (err instanceof GuardError) {
-      const envelope = {
-        ok:          false,
-        exitCode:    -1,
-        cmd,
-        args,
-        cwd,
-        duration_ms: 0,
-        stdout:      { raw: "", parsed: null },
-        stderr:      { raw: err.message, parsed: null },
-        diff:        null,
-        guard_error: { reason: err.reason, message: err.message },
-      };
-      return JSON.stringify(envelope, null, 2);
-    }
+    if (err instanceof GuardError) return buildGuardErrorEnvelope(cmd, args, cwd, err);
     throw err;
   }
 
@@ -46,8 +56,10 @@ export async function buildRunResult(
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
   );
-  const parsed   = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items });
-  const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed } };
+  let parsed     = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format });
+  if (parsed == null) parsed = tryParseNativeJson(envelope.stdout.raw);
+  const final    = format === "compact" ? toCompact(parsed) : parsed;
+  const enriched = { ...envelope, stdout: { ...envelope.stdout, parsed: final } };
   return JSON.stringify(enriched, null, 2);
 }
 
@@ -66,21 +78,7 @@ export async function buildPagedResult(
   try {
     checkGuard(cmd, args, cwd, config);
   } catch (err) {
-    if (err instanceof GuardError) {
-      const envelope = {
-        ok:          false,
-        exitCode:    -1,
-        cmd,
-        args,
-        cwd,
-        duration_ms: 0,
-        stdout:      { raw: "", parsed: null },
-        stderr:      { raw: err.message, parsed: null },
-        diff:        null,
-        guard_error: { reason: err.reason, message: err.message },
-      };
-      return JSON.stringify(envelope, null, 2);
-    }
+    if (err instanceof GuardError) return buildGuardErrorEnvelope(cmd, args, cwd, err);
     throw err;
   }
 
@@ -112,15 +110,18 @@ export function createServer(config: PrismConfig): McpServer {
 
   server.tool(
     "run",
-    "Execute a shell command and receive structured JSON output. " +
-    "All commands are filtered through an execution guard (whitelist + injection prevention).",
+    "Execute a shell command and receive structured output. " +
+    "All commands are filtered through an execution guard (whitelist + injection prevention). " +
+    "Use format='compact' for token-efficient columnar output.",
     {
-      cmd:  z.string().describe("Command name (e.g. 'ls', 'git')"),
-      args: z.array(z.string()).default([]).describe("Command arguments"),
-      cwd:  z.string().default(process.cwd()).describe("Working directory"),
+      cmd:    z.string().describe("Command name (e.g. 'ls', 'git')"),
+      args:   z.array(z.string()).default([]).describe("Command arguments"),
+      cwd:    z.string().default(process.cwd()).describe("Working directory"),
+      format: z.enum(["json", "compact"]).default("json")
+              .describe("Output format. 'compact' uses columnar schema+rows for lower token cost"),
     },
-    async ({ cmd, args, cwd }) => {
-      const result = await buildRunResult(cmd, args, cwd, config);
+    async ({ cmd, args, cwd, format }) => {
+      const result = await buildRunResult(cmd, args, cwd, config, format);
       return {
         content: [{ type: "text" as const, text: result }],
       };

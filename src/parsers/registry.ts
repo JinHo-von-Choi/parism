@@ -1,9 +1,15 @@
 /**
+ * 출력 형식. json=기존 객체 배열, compact=schema+rows 컬럼 기반.
+ */
+export type OutputFormat = "json" | "compact";
+
+/**
  * 파서가 항목 수를 제한할 때 사용하는 컨텍스트.
  * maxItems=0 이면 무제한.
  */
 export interface ParseContext {
   maxItems: number;
+  format:   OutputFormat;
 }
 
 /**
