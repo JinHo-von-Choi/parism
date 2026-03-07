@@ -10,7 +10,7 @@ import type { OutputFormat }      from "./parsers/registry.js";
 import { toCompact }              from "./parsers/compact.js";
 import { tryParseNativeJson }    from "./parsers/json-passthrough.js";
 
-export const PACKAGE_VERSION = "0.1.6";
+export const PACKAGE_VERSION = "0.2.0";
 
 /**
  * Guard 차단 시 반환하는 에러 봉투를 생성한다.
