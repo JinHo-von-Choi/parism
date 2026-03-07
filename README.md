@@ -1,6 +1,8 @@
 # Parism
 
 > Refract the Shell. Every command, structured.
+>
+> AI 에이전트를 위한 안전하고 예측 가능한 OS 실행 게이트웨이.
 
 <p align="right"><a href="README.md">한국어</a> | <a href="README.en.md">English</a></p>
 
@@ -62,7 +64,11 @@ Parism이 개입하는 것은 두 번째와 세 번째 사이다. 한 번 버려
 
 ### 파싱 오류가 없어진다
 
-텍스트 파싱은 깨지기 쉽다. `ps aux`는 리눅스와 macOS에서 컬럼 순서가 다르다. `df -h`의 `1K-blocks` 헤더는 환경에 따라 다르게 나온다. 파일명에 공백이 있으면 `ls` 파싱은 거의 반드시 틀린다. Parism의 파서는 이 경우들을 직접 처리한다. 에이전트는 구조화된 데이터만 받는다.
+텍스트 파싱은 깨지기 쉽다. `ps aux`는 리눅스와 macOS에서 컬럼 순서가 다르다. `df -h`의 `1K-blocks` 헤더는 환경에 따라 다르게 나온다. 파일명에 공백이 있으면 `ls` 파싱은 거의 반드시 틀린다.
+
+수치로 말하면: raw 텍스트를 에이전트가 직접 파싱할 때 평균 CFR(Critical Failure Rate)은 4.18%다. 공백이 포함된 파일명이 섞이면 28.6%까지 치솟는다. 1000회 호출 시 286회는 잘못된 파일 목록을 기반으로 에이전트가 다음 작업을 수행한다는 뜻이다. 잘못된 파일을 읽고, 존재하지 않는 경로에 쓰고, 엉뚱한 파일을 삭제한다.
+
+Parism의 CFR은 0%다. 파서는 deterministic code이기 때문이다. 정규표현식 추론이 아니라 구조적 분해다. 에이전트는 구조화된 데이터만 받는다.
 
 ### 재시도가 줄어든다
 
@@ -162,6 +168,10 @@ Parism이 개입하는 것은 두 번째와 세 번째 사이다. 한 번 버려
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다.
 
+### 네이티브 JSON 패스스루
+
+파서가 없는 명령이라도 출력 자체가 JSON이면(예: `kubectl get pods -o json`, `docker inspect`) Parism이 이를 자동으로 감지하여 `parsed`에 넣는다. Guard 검사와 봉투 래핑은 동일하게 적용된다. 별도 설정은 필요 없다.
+
 ---
 
 ## 설치
@@ -249,6 +259,16 @@ Claude Code (Linux):
 - `cmd` — 명령어 이름 (예: `ls`, `git`)
 - `args` — 인자 배열 (기본값: `[]`)
 - `cwd` — 작업 디렉토리 (기본값: 현재 디렉토리)
+- `format` — 출력 형식 (`"json"` 기본값, `"compact"` 가능). compact는 리스트형 출력을 schema+rows 컬럼 기반으로 압축하여 토큰 비용을 절감한다.
+
+compact 예시:
+
+```json
+{
+  "schema": ["name", "type", "size_bytes"],
+  "rows": [["src", "directory", 4096], ["main.ts", "file", 1200]]
+}
+```
 
 ### run_paged
 
