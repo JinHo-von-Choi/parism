@@ -53,6 +53,14 @@ describe("checkGuard()", () => {
       .toThrow(GuardError);
   });
 
+  it("허용 경로 밖 상대경로 인자(find src, cat subdir/file)를 차단한다", () => {
+    const cfg2 = { ...cfg, guard: { ...cfg.guard, allowed_paths: ["/home/user/project"] } };
+    expect(() => checkGuard("find", [".."], "/home/user/project", cfg2))
+      .toThrow(GuardError);
+    expect(() => checkGuard("cat", ["../etc/passwd"], "/home/user/project", cfg2))
+      .toThrow(GuardError);
+  });
+
   it("node -e는 arg_not_allowed로 차단된다", () => {
     const cfg2 = {
       ...cfg,

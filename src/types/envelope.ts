@@ -1,9 +1,19 @@
 /**
+ * 파서 예외 정보. 파서가 예외를 던졌을 때만 존재. "파서 없음"과 "파서 버그"를 구분한다.
+ */
+export interface ParseErrorField {
+  reason:  "parser_exception";
+  message: string;
+}
+
+/**
  * 명령 stdout/stderr 필드. raw는 항상 보존되고, parsed는 파서 존재 시 채워진다.
+ * parse_error는 파서가 예외를 던졌을 때만 존재한다 (파서 없음과 구분).
  */
 export interface OutputField {
-  raw:    string;
-  parsed: unknown | null;
+  raw:         string;
+  parsed:      unknown | null;
+  parse_error?: ParseErrorField;
 }
 
 // 하위 호환 alias

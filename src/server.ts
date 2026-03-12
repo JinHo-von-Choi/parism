@@ -9,7 +9,7 @@ import type { OutputFormat }      from "./parsers/registry.js";
 import { toCompact }              from "./parsers/compact.js";
 import { tryParseNativeJson }    from "./parsers/json-passthrough.js";
 
-export const PACKAGE_VERSION = "0.3.0";
+export const PACKAGE_VERSION = "0.4.0";
 
 /**
  * Guard 차단 시 반환하는 에러 봉투를 생성한다.
@@ -36,11 +36,12 @@ function buildGuardErrorEnvelope(
  * MCP 서버와 테스트 코드가 공통으로 사용한다.
  */
 export async function buildRunResult(
-  cmd:    string,
-  args:   string[],
-  cwd:    string,
-  config: PrismConfig,
-  format: OutputFormat = "json",
+  cmd:         string,
+  args:        string[],
+  cwd:         string,
+  config:      PrismConfig,
+  format:      OutputFormat = "json",
+  includeDiff: boolean     = true,
 ): Promise<string> {
   try {
     checkGuard(cmd, args, cwd, config);
@@ -54,15 +55,17 @@ export async function buildRunResult(
     config.guard.env_secret_patterns,
     config.guard.timeout_ms,
     config.guard.max_output_bytes,
+    includeDiff,
   );
-  const parseFormat = format === "json-no-raw" ? "json" : format;
-  let parsed       = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: parseFormat });
+  const parseFormat  = format === "json-no-raw" ? "json" : format;
+  const parseResult = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: parseFormat });
+  let parsed        = parseResult.parsed;
   if (parsed == null) parsed = tryParseNativeJson(envelope.stdout.raw);
-  const final      = parseFormat === "compact" ? toCompact(parsed) : parsed;
-  const stdout     = format === "json-no-raw"
-    ? { raw: "", parsed: final }
-    : { ...envelope.stdout, parsed: final };
-  const enriched   = { ...envelope, stdout };
+  const final       = parseFormat === "compact" ? toCompact(parsed) : parsed;
+  const stdout      = format === "json-no-raw"
+    ? { raw: "", parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) }
+    : { ...envelope.stdout, parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) };
+  const enriched    = { ...envelope, stdout };
   return JSON.stringify(enriched, null, 2);
 }
 
@@ -71,12 +74,13 @@ export async function buildRunResult(
  * parsed는 항상 null (부분 출력은 구조화 파싱 불가).
  */
 export async function buildPagedResult(
-  cmd:      string,
-  args:     string[],
-  cwd:      string,
-  page:     number,
-  pageSize: number,
-  config:   PrismConfig,
+  cmd:         string,
+  args:        string[],
+  cwd:         string,
+  page:        number,
+  pageSize:    number,
+  config:      PrismConfig,
+  includeDiff: boolean = true,
 ): Promise<string> {
   try {
     checkGuard(cmd, args, cwd, config);
@@ -91,6 +95,7 @@ export async function buildPagedResult(
     config.guard.env_secret_patterns,
     config.guard.timeout_ms,
     0,
+    includeDiff,
   );
   const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
   const pagedRaw               = lines.join("\n") + (lines.length > 0 ? "\n" : "");
@@ -142,14 +147,16 @@ export function createServer(config: PrismConfig): McpServer {
     "All commands are filtered through an execution guard (whitelist + injection prevention). " +
     "Use format='compact' for token-efficient columnar output.",
     {
-      cmd:    z.string().describe("Command name (e.g. 'ls', 'git')"),
-      args:   z.array(z.string()).default([]).describe("Command arguments"),
-      cwd:    z.string().default(process.cwd()).describe("Working directory"),
-      format: z.enum(["json", "compact", "json-no-raw"]).default("json")
-              .describe("Output format. 'compact'=columnar. 'json-no-raw'=omit raw for token savings."),
+      cmd:         z.string().describe("Command name (e.g. 'ls', 'git')"),
+      args:        z.array(z.string()).default([]).describe("Command arguments"),
+      cwd:         z.string().default(process.cwd()).describe("Working directory"),
+      format:      z.enum(["json", "compact", "json-no-raw"]).default("json")
+                   .describe("Output format. 'compact'=columnar. 'json-no-raw'=omit raw for token savings."),
+      includeDiff: z.boolean().default(false)
+                   .describe("Include filesystem diff (created/deleted/modified). false=skip snapshot, lower latency."),
     },
-    async ({ cmd, args, cwd, format }) => {
-      const result = await buildRunResult(cmd, args, cwd, config, format);
+    async ({ cmd, args, cwd, format, includeDiff }) => {
+      const result = await buildRunResult(cmd, args, cwd, config, format, includeDiff);
       return {
         content: [{ type: "text" as const, text: result }],
       };
@@ -162,15 +169,17 @@ export function createServer(config: PrismConfig): McpServer {
     "Use this for commands with large output (ps aux, find, grep -r). " +
     "Returns page_info with total_lines and has_next for navigation.",
     {
-      cmd:       z.string().describe("Command name"),
-      args:      z.array(z.string()).default([]).describe("Command arguments"),
-      cwd:       z.string().default(process.cwd()).describe("Working directory"),
-      page:      z.number().int().min(0).default(0).describe("Page index (0-based)"),
-      page_size: z.number().int().min(1).default(config.guard.default_page_size)
-                 .describe("Lines per page"),
+      cmd:         z.string().describe("Command name"),
+      args:        z.array(z.string()).default([]).describe("Command arguments"),
+      cwd:         z.string().default(process.cwd()).describe("Working directory"),
+      page:        z.number().int().min(0).default(0).describe("Page index (0-based)"),
+      page_size:   z.number().int().min(1).default(config.guard.default_page_size)
+                   .describe("Lines per page"),
+      includeDiff: z.boolean().default(false)
+                   .describe("Include filesystem diff. false=skip snapshot, lower latency."),
     },
-    async ({ cmd, args, cwd, page, page_size }) => {
-      const result = await buildPagedResult(cmd, args, cwd, page, page_size, config);
+    async ({ cmd, args, cwd, page, page_size, includeDiff }) => {
+      const result = await buildPagedResult(cmd, args, cwd, page, page_size, config, includeDiff);
       return { content: [{ type: "text" as const, text: result }] };
     },
   );

@@ -38,7 +38,7 @@ function isAllowedPath(targetPath: string, allowedPaths: string[]): boolean {
 }
 
 /**
- * 명령 인자 중 실제 파일시스템 경로로 해석 가능한 값만 추출한다.
+ * 명령 인자 중 `/`, `./`, `../`로 시작하는 경로형 인자만 추출한다.
  */
 function getPathLikeArgs(args: string[]): string[] {
   return args.filter((arg) =>
@@ -46,6 +46,23 @@ function getPathLikeArgs(args: string[]): string[] {
     arg.startsWith("./") ||
     arg.startsWith("../")
   );
+}
+
+/**
+ * 경로 인자를 받는 명령. 플래그가 아닌(positional) 인자를 경로 후보로 검사한다.
+ * find src, cat subdir/file, ls -la dir 등 상대경로(슬래시 없음)도 검사 대상.
+ */
+const PATH_TAKING_COMMANDS = new Set([
+  "cat", "find", "stat", "du", "tree", "head", "tail", "ls", "grep", "wc",
+]);
+
+/**
+ * 명령별로 경로로 해석되는 인자들을 수집한다.
+ * PATH_TAKING_COMMANDS에 있는 명령은 플래그로 시작하지 않는 인자를 경로 후보로 본다.
+ */
+function getPathArgsFromCommand(cmd: string, args: string[]): string[] {
+  if (!PATH_TAKING_COMMANDS.has(cmd)) return [];
+  return args.filter((arg) => arg !== "-" && !arg.startsWith("-"));
 }
 
 /**
@@ -107,8 +124,11 @@ export function checkGuard(
       );
     }
 
-    const pathLikeArgs = getPathLikeArgs(args);
-    for (const arg of pathLikeArgs) {
+    const pathLikeArgs   = getPathLikeArgs(args);
+    const pathArgsByCmd  = getPathArgsFromCommand(cmd, args);
+    const allPathArgs    = [...new Set([...pathLikeArgs, ...pathArgsByCmd])];
+
+    for (const arg of allPathArgs) {
       const resolvedArgPath = path.resolve(cwd, arg);
       if (!isAllowedPath(resolvedArgPath, guard.allowed_paths)) {
         throw new GuardError(

@@ -34,6 +34,20 @@ This has a cost. Running `ls` once looks simple, but the agent may spend dozens 
 
 ---
 
+## The Honest Truth — Tokens Cost More
+
+When building Parism, the expectation was token savings. Structured data should be more efficient than raw text.
+
+Benchmarks across 17 scenarios flatly contradicted that. JSON output averages 205% heavier than raw text. For `ls -la` with 200 files: raw 5,807 tokens, Parism 15,531 tokens. Nearly triple, because key names repeat with every entry. What a human eye resolves from a single header row, JSON spells out N times.
+
+But the same benchmarks revealed something else: the disappearance of "explanation tokens." With raw text, the agent needs context — "this format has permissions in the first column, owner in the third." That context prompt shrinks by an average of 61% with Parism. JSON describes its own structure. The agent just reads keys.
+
+And there is a crossover point. For one-shot queries — run `ls` once, done — Parism costs more tokens. But the moment that result feeds into a next step, the cost structure inverts. An agent that misreads raw text writes to a nonexistent path, debugs the failure by scanning history, retries, fails again. Tokens snowball. An agent that starts with structured data never enters that cycle.
+
+Parism's economics live not on the invoice, but in the space where mistakes and rework used to be. The cost of reading once more is nothing compared to the cost of reading once wrong.
+
+---
+
 ## What Parism Does
 
 A prism does not destroy light. It decomposes it.
@@ -62,11 +76,21 @@ The information does not change. The shape does. The agent no longer parses. It 
 
 ### No More Parsing Errors
 
-Text parsing breaks easily. `ps aux` has different column ordering on Linux and macOS. The `1K-blocks` header in `df -h` varies by environment. Filenames with spaces almost always break `ls` parsing. Parism's parsers handle these cases directly. The agent receives structured data.
+Text parsing breaks easily. `ps aux` has different column ordering on Linux and macOS. The `1K-blocks` header in `df -h` varies by environment. Filenames with spaces almost always break `ls` parsing.
+
+In numbers: raw text parsing by agents has an average CFR (Critical Failure Rate) of 4.18%. With filenames containing spaces, it climbs to 28.6%. That means 286 out of 1,000 calls produce a wrong file listing that the agent then acts on — reading wrong files, writing to nonexistent paths, deleting the wrong thing.
+
+macOS `stat` is a starker example. Its output format is entirely different from Linux. Linux uses labeled lines like `Size: 4096`; macOS outputs a single unlabeled line. Apply a Linux parsing pattern and accuracy drops to 0%. Parism detects the OS and selects the correct parser. The agent never needs to know the difference.
+
+Parism's CFR is 0%. Parsers are deterministic code, not probabilistic inference. The agent receives structured data.
 
 ### Fewer Retries
 
 When an agent misinterprets output, it re-queries, runs a second command to verify, or proceeds with bad data. All three cost tokens. Structured output reduces room for misinterpretation. The file count is not something to infer — it is `entries.length`.
+
+### The Agent Gets Better at Everything Else
+
+Parsing text is inference. Inference consumes cognitive resources. When the agent spends capacity decoding output formats, less remains for the actual work — analyzing code, making design judgments, deciding the next step. Structured data eliminates parsing as a task entirely. The agent reads instead of reasons, and the freed capacity flows into the work that matters.
 
 ### `raw` Is Always Preserved
 
@@ -87,6 +111,10 @@ Whether success or failure, `ok` and `exitCode` are always in the same place. Th
 
 Every response includes `duration_ms`. The agent can judge whether a command is slow or fast. Useful for debugging too.
 
+### diff Is Optional
+
+`diff` (created/deleted/modified) is populated only when `includeDiff: true`. run/run_paged default to `includeDiff: false`, skipping snapshot cost to reduce MCP call latency.
+
 ---
 
 ## Guard — Why Not to Trust the Agent
@@ -99,7 +127,7 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, Guard validates both `cwd` and path-like args (starting with `/`, `./`, `../`). Anything outside allowed paths is blocked.
+**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep` — e.g. `cat subdir/file`, `find src`) are checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
 
 **Injection Pattern Blocking**: If `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<` appear in any argument, the command is not executed.
 
@@ -121,46 +149,60 @@ The agent receives the block reason in the same envelope structure as any other 
 
 ---
 
-## Supported Commands — 34 Built-in Parsers
+## Supported Commands — 44 Built-in Parsers
 
-| Category | Command | Parsed Output |
-|---|---|---|
-| Filesystem | `ls` | `entries[]` — name, type, permissions, size, modified time, owner |
-| Filesystem | `find` | `paths[]` — list of paths |
-| Filesystem | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps |
-| Filesystem | `du` | `entries[]` — size, path |
-| Filesystem | `df` | `filesystems[]` — partition, usage, mount point |
-| Filesystem | `tree` | `root`, `tree{}` — hierarchical node map, `total_files`, `total_dirs` |
-| Process | `ps` | `processes[]` — PID, CPU%, MEM%, command |
-| Process | `kill` | raw pass-through |
-| Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` |
-| Network | `curl -I` | `status_code`, `headers{}` |
-| Network | `netstat` | `connections[]` — proto, local/foreign address, state |
-| Network | `lsof -i` | `entries[]` — PID, process name, protocol, local/remote address, state |
-| Network | `ss` | `entries[]` — state, recv/send queue, local/peer address, process |
-| Network | `dig` | `query`, `answers[]` — type, value, TTL, `query_time_ms` |
-| Text | `grep` | `matches[]` — file, line number, text |
-| Text | `wc` | `entries[]` — count, filename |
-| Text | `head`, `tail`, `cat` | `lines[]` |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` |
-| Git | `git log --oneline` | `commits[]` — hash, message |
-| Git | `git diff` | `files_changed[]` |
-| Git | `git branch -vv` | `branches[]` — name, current, upstream, ahead/behind |
-| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]` — status, restarts, reasons, messages |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]` — image, status, CPU/MEM/IO |
-| DevOps | `gh pr list` | `pull_requests[]` — number, title, state, author, labels |
-| Env | `env` | `vars{}` — key-value map (secrets filtered) |
-| Env | `pwd` | `path` |
-| Env | `which` | `paths[]` |
-| System | `free` | `mem`, `swap` — total, used, free, available in bytes |
-| System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` |
-| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]` — id, name |
-| Windows | `dir` | `directory`, `entries[]` — name, type, size, modified time, `free_bytes` |
-| Windows | `tasklist` | `processes[]` — name, PID, session, memory. CSV format supported |
-| Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, subnet, gateway, DNS, MAC |
-| Windows | `systeminfo` | `hostname`, `os_name`, memory, `hotfixes[]`, `network_cards[]` |
+| Category | Command | Parsed Output | Default |
+|---|---|---|---|
+| Filesystem | `ls` | `entries[]` — name, type, permissions, size, modified time, owner | O |
+| Filesystem | `find` | `paths[]` — list of paths | O |
+| Filesystem | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps | O |
+| Filesystem | `du` | `entries[]` — size, path | O |
+| Filesystem | `df` | `filesystems[]` — partition, usage, mount point | O |
+| Filesystem | `tree` | `root`, `tree{}` — hierarchical node map, `total_files`, `total_dirs` | O |
+| Process | `ps` | `processes[]` — PID, CPU%, MEM%, command | O |
+| Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
+| Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
+| Network | `curl -I` | `status_code`, `headers{}` | O |
+| Network | `netstat` | `connections[]` — proto, local/foreign address, state | O |
+| Network | `lsof -i` | `entries[]` — PID, process name, protocol, local/remote address, state | X |
+| Network | `ss` | `connections[]` — state, recv/send queue, local/peer address | X |
+| Network | `dig` | `query`, `answers[]` — type, value, TTL, `query_time_ms` | X |
+| Text | `grep -n` | `matches[]` — file, line number, text | O |
+| Text | `wc` | `entries[]` — count, filename | O |
+| Text | `head`, `tail`, `cat` | `lines[]` | O |
+| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
+| Git | `git log --oneline` | `commits[]` — hash, message | O |
+| Git | `git diff` | `files_changed[]` | O |
+| Git | `git branch -vv` | `branches[]` — name, current, upstream, ahead/behind | O |
+| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]` — status, restarts, reasons, messages | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]` — image, status, CPU/MEM/IO | O |
+| DevOps | `gh pr list` | `pull_requests[]` — number, title, state, author, labels | O |
+| DevOps | `helm list` | `releases[]` — name, namespace, status, chart, app_version | O |
+| DevOps | `terraform plan` | `summary` — to_add, to_change, to_destroy | O |
+| Env | `env` | `vars{}` — key-value map (secrets filtered) | O |
+| Env | `pwd` | `path` | O |
+| Env | `which` | `paths[]` | O |
+| System | `free` | `mem`, `swap` — total, used, free, available in bytes | X |
+| System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
+| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]` — id, name | X |
+| System | `systemctl list-units` | `units[]` — name, load, active, sub, description (Linux) | O |
+| System | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
+| System | `apt list --installed` | `packages[]` — name, version, arch, status | O |
+| System | `brew list --versions` | `packages[]` — name, version | O |
+| Package | `npm list`, `pnpm list`, `yarn list` | `dependencies[]` — name, version, depth | O |
+| Package | `cargo tree` | `crates[]` — name, version, path | O |
+| Windows | `dir` | `directory`, `entries[]` — name, type, size, modified time, `free_bytes` | X |
+| Windows | `tasklist` | `processes[]` — name, PID, session, memory. CSV format supported | X |
+| Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, subnet, gateway, DNS, MAC | X |
+| Windows | `systeminfo` | `hostname`, `os_name`, memory, `hotfixes[]`, `network_cards[]` | X |
 
-Commands without a parser return `parsed: null`. `raw` is always present.
+Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json.
+
+Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
+
+### Native JSON Passthrough
+
+Commands without a dedicated parser still get JSON output passed through when the output is valid JSON (e.g. `kubectl get pods -o json`, `docker inspect`). Parism detects this and puts it in `parsed`. Guard checks and envelope wrapping apply the same. No extra configuration needed.
 
 ---
 
@@ -230,6 +272,8 @@ Parameters:
 - `cmd` — command name (e.g. `ls`, `git`)
 - `args` — argument array (default: `[]`)
 - `cwd` — working directory (default: current directory)
+- `format` — output format (`"json"` default, `"compact"`, `"json-no-raw"`)
+- `includeDiff` — include filesystem diff (default: `false`). `false` skips snapshot for lower latency. Recommended for MCP.
 
 ### run_paged
 
@@ -239,6 +283,7 @@ Parameters:
 - `cmd`, `args`, `cwd` — same as `run`
 - `page` — 0-indexed page number (default: `0`)
 - `page_size` — lines per page (default: `default_page_size`, 100 by default)
+- `includeDiff` — include filesystem diff (default: `false`)
 
 Extra fields:
 - `page_info.total_lines` — total line count
@@ -254,7 +299,7 @@ Place `prism.config.json` in the project root to control Guard behavior.
 ```json
 {
   "guard": {
-    "allowed_commands": ["ls", "git", "find", "grep", "env", "ps"],
+    "allowed_commands": ["ls", "git", "find", "grep", "env", "ps", "kubectl", "docker", "gh", "terraform", "helm", "cargo", "systemctl", "journalctl", "apt", "brew"],
     "allowed_paths": ["/home/user/projects"],
     "timeout_ms": 10000,
     "max_output_bytes": 102400,

@@ -98,8 +98,8 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
   const cmd = path.basename(scenario.fixturePath).split("-")[0] ?? "unknown";
 
   // Parism JSON 파싱
-  const parsed     = defaultRegistry.parse(cmd, scenario.parserArgs ?? [], raw, { maxItems: 0 });
-  const jsonOutput = { stdout: { raw, parsed } };
+  const parseResult = defaultRegistry.parse(cmd, scenario.parserArgs ?? [], raw, { maxItems: 0 });
+  const jsonOutput  = { stdout: { raw, parsed: parseResult.parsed } };
 
   // 토큰 측정
   const rawOutputTokens   = countTokens(raw);
@@ -115,6 +115,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
   rawExtraction.accuracy = rawAccuracy;
 
   // WITH Parism: 파서가 null이면 실패
+  const parsed         = parseResult.parsed;
   const jsonStart      = Date.now();
   const jsonExtraction = {
     success:  parsed !== null,

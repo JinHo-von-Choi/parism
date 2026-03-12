@@ -21,8 +21,16 @@ export interface ParseContext {
 export type ParserFn = (cmd: string, args: string[], raw: string, ctx?: ParseContext) => unknown;
 
 /**
+ * 파서 실행 결과. parsed가 null일 때 parse_error가 있으면 파서 예외, 없으면 파서 없음.
+ */
+export interface ParseResult {
+  parsed:      unknown | null;
+  parse_error?: { reason: "parser_exception"; message: string };
+}
+
+/**
  * 명령어 → 파서 함수의 매핑 테이블.
- * 파서가 없거나 실패하면 null을 반환한다 (graceful degradation).
+ * 파서가 없으면 parsed=null. 파서가 예외를 던지면 parsed=null, parse_error 설정.
  */
 export class ParserRegistry {
   private readonly parsers = new Map<string, ParserFn>();
@@ -33,16 +41,18 @@ export class ParserRegistry {
 
   /**
    * cmd에 등록된 파서를 찾아 실행한다.
-   * 파서 없음 또는 예외 → null 반환.
+   * 파서 없음 → { parsed: null }. 파서 예외 → { parsed: null, parse_error }.
    */
-  parse(cmd: string, args: string[], raw: string, ctx?: ParseContext): unknown | null {
+  parse(cmd: string, args: string[], raw: string, ctx?: ParseContext): ParseResult {
     const fn = this.parsers.get(cmd);
-    if (!fn) return null;
+    if (!fn) return { parsed: null };
 
     try {
-      return fn(cmd, args, raw, ctx);
-    } catch {
-      return null;
+      const parsed = fn(cmd, args, raw, ctx);
+      return { parsed: parsed ?? null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { parsed: null, parse_error: { reason: "parser_exception", message } };
     }
   }
 }

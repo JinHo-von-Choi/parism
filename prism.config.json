@@ -15,12 +15,15 @@
       "terraform", "helm", "cargo",
       "systemctl", "journalctl", "apt", "brew"
     ],
-    "allowed_paths": [],
+    "allowed_paths": ["./"],
     "timeout_ms": 10000,
     "block_patterns": [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
     "command_arg_restrictions": {
       "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
-      "npx":  { "blocked_flags": ["--yes", "-y"] }
+      "npx":  { "blocked_flags": ["--yes", "-y"] },
+      "curl": {
+        "blocked_flags": ["-d", "--data", "-F", "--upload-file", "-T", "-K", "--config", "-o", "--output", "-O"]
+      }
     },
     "env_secret_patterns": [
       "TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"

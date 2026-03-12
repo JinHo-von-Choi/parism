@@ -55,4 +55,11 @@ describe("execute()", () => {
     expect(result.truncated).toBeUndefined();
     expect(result.stdout.raw.trim()).toBe("hello world");
   });
+
+  it("includeDiff=false면 스냅샷을 생략하고 diff가 null이다", async () => {
+    const result = await execute("echo", ["hello"], process.cwd(), [], 5000, 0, false);
+
+    expect(result.ok).toBe(true);
+    expect(result.diff).toBeNull();
+  });
 });
