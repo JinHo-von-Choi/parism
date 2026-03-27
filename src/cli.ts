@@ -47,17 +47,43 @@ export function createCli(): Command {
   program
     .command("add <path>")
     .description("Register a local parser pack permanently")
-    .action(async (_path: string) => {
-      console.log("[parism] add: not yet implemented");
-      process.exit(1);
+    .action(async (pathArg: string) => {
+      const { addParserPack } = await import("./cli/add.js");
+      const result = await addParserPack(pathArg);
+      console.log(`Parser "${result.name}" added to ${result.installedTo}`);
     });
 
   program
     .command("inspect <command>")
     .description("Show raw / parsed / compact output comparison")
-    .action(async (_command: string) => {
-      console.log("[parism] inspect: not yet implemented");
-      process.exit(1);
+    .action(async (command: string) => {
+      const { inspectOutput }  = await import("./cli/inspect.js");
+      const { createRegistry } = await import("./parsers/index.js");
+      const { execFile }       = await import("node:child_process");
+      const { promisify }      = await import("node:util");
+      const execFileAsync = promisify(execFile);
+
+      const parts    = command.split(/\s+/);
+      const cmd      = parts[0];
+      const args     = parts.slice(1);
+      const registry = createRegistry();
+
+      let raw = "";
+      try {
+        const result = await execFileAsync(cmd, args, { timeout: 10_000 });
+        raw = result.stdout;
+      } catch (err: unknown) {
+        raw = (err as { stdout?: string }).stdout ?? "";
+      }
+
+      const result = inspectOutput(cmd, args, raw, registry);
+      console.log("=== RAW ===");
+      console.log(result.raw);
+      console.log("\n=== PARSED ===");
+      console.log(JSON.stringify(result.parsed, null, 2));
+      console.log("\n=== COMPACT ===");
+      console.log(JSON.stringify(result.compact, null, 2));
+      console.log(`\nTokens: raw=${result.tokens.raw} parsed=${result.tokens.parsed} compact=${result.tokens.compact}`);
     });
 
   return program;
