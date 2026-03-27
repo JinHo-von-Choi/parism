@@ -2,10 +2,13 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { buildRunResult, buildPagedResult, PACKAGE_VERSION } from "../src/server.js";
 import { DEFAULT_CONFIG } from "../src/config/loader.js";
+import { createRegistry } from "../src/parsers/index.js";
+
+const registry = createRegistry();
 
 describe("buildRunResult()", () => {
   it("echo 명령을 실행하고 JSON 문자열을 반환한다", async () => {
-    const result = await buildRunResult("echo", ["test-output"], process.cwd(), DEFAULT_CONFIG);
+    const result = await buildRunResult("echo", ["test-output"], process.cwd(), DEFAULT_CONFIG, registry);
     const parsed = JSON.parse(result);
 
     expect(parsed.ok).toBe(true);
@@ -13,7 +16,7 @@ describe("buildRunResult()", () => {
   });
 
   it("차단된 명령은 ok=false와 guard_error를 반환한다", async () => {
-    const result = await buildRunResult("rm", ["-rf", "/"], process.cwd(), DEFAULT_CONFIG);
+    const result = await buildRunResult("rm", ["-rf", "/"], process.cwd(), DEFAULT_CONFIG, registry);
     const parsed = JSON.parse(result);
 
     expect(parsed.ok).toBe(false);
@@ -53,7 +56,7 @@ describe("buildPagedResult()", () => {
 describe("buildRunResult() with format", () => {
   it("format=compact이면 리스트 파서 결과가 schema+rows 형식이다", async () => {
     const result = JSON.parse(
-      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, "compact"),
+      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, registry, "compact"),
     );
     if (result.stdout.parsed && result.stdout.parsed.entries) {
       const entries = result.stdout.parsed.entries;
@@ -66,7 +69,7 @@ describe("buildRunResult() with format", () => {
 
   it("format 미지정(기본값 json)이면 기존 형식 그대로다", async () => {
     const result = JSON.parse(
-      await buildRunResult("echo", ["test"], process.cwd(), DEFAULT_CONFIG),
+      await buildRunResult("echo", ["test"], process.cwd(), DEFAULT_CONFIG, registry),
     );
     expect(result.ok).toBe(true);
     expect(result.stdout.parsed).toBeNull();
@@ -74,7 +77,7 @@ describe("buildRunResult() with format", () => {
 
   it("format=json-no-raw이면 stdout.raw가 빈 문자열이다", async () => {
     const result = JSON.parse(
-      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, "json-no-raw"),
+      await buildRunResult("ls", ["-la"], process.cwd(), DEFAULT_CONFIG, registry, "json-no-raw"),
     );
     expect(result.ok).toBe(true);
     expect(result.stdout.raw).toBe("");
@@ -85,7 +88,7 @@ describe("buildRunResult() with format", () => {
 describe("buildRunResult() native JSON passthrough", () => {
   it("stdout이 JSON이면 parsed에 파싱된 객체가 들어간다", async () => {
     const result = JSON.parse(
-      await buildRunResult("echo", ['{"key":"value"}'], process.cwd(), DEFAULT_CONFIG),
+      await buildRunResult("echo", ['{"key":"value"}'], process.cwd(), DEFAULT_CONFIG, registry),
     );
     expect(result.ok).toBe(true);
     expect(result.stdout.parsed).toEqual({ key: "value" });
@@ -93,7 +96,7 @@ describe("buildRunResult() native JSON passthrough", () => {
 
   it("stdout이 일반 텍스트이면 parsed는 null이다", async () => {
     const result = JSON.parse(
-      await buildRunResult("echo", ["plain text"], process.cwd(), DEFAULT_CONFIG),
+      await buildRunResult("echo", ["plain text"], process.cwd(), DEFAULT_CONFIG, registry),
     );
     expect(result.stdout.parsed).toBeNull();
   });

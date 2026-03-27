@@ -1,9 +1,13 @@
 {
   "name": "@nerdvana/parism",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Structured shell output wrapper for AI agents",
   "type": "module",
   "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/parsers/registry.js"
+  },
   "bin": {
     "parism": "dist/index.js"
   },
@@ -19,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
+    "commander": "^14.0.3",
     "zod": "^3.24.0"
   },
   "devDependencies": {

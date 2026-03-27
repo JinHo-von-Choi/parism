@@ -2,14 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z }         from "zod";
 import { execute }                from "./engine/executor.js";
 import { checkGuard, GuardError } from "./engine/guard.js";
-import { defaultRegistry }        from "./parsers/index.js";
 import { paginateLines }          from "./engine/paginator.js";
 import type { PrismConfig }       from "./config/loader.js";
+import type { ParserRegistry }   from "./parsers/registry.js";
 import type { OutputFormat }      from "./parsers/registry.js";
 import { toCompact }              from "./parsers/compact.js";
 import { tryParseNativeJson }    from "./parsers/json-passthrough.js";
 
-export const PACKAGE_VERSION = "0.4.0";
+export const PACKAGE_VERSION = "0.5.0";
 
 /**
  * Guard 차단 시 반환하는 에러 봉투를 생성한다.
@@ -40,6 +40,7 @@ export async function buildRunResult(
   args:        string[],
   cwd:         string,
   config:      PrismConfig,
+  registry:    ParserRegistry,
   format:      OutputFormat = "json",
   includeDiff: boolean     = true,
 ): Promise<string> {
@@ -58,7 +59,7 @@ export async function buildRunResult(
     includeDiff,
   );
   const parseFormat  = format === "json-no-raw" ? "json" : format;
-  const parseResult = defaultRegistry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: parseFormat });
+  const parseResult = registry.parse(cmd, args, envelope.stdout.raw, { maxItems: config.guard.max_items, format: parseFormat });
   let parsed        = parseResult.parsed;
   if (parsed == null) parsed = tryParseNativeJson(envelope.stdout.raw);
   const final       = parseFormat === "compact" ? toCompact(parsed) : parsed;
@@ -135,7 +136,7 @@ Usage:
 /**
  * MCP 서버를 생성하고 `run` 도구를 등록한다.
  */
-export function createServer(config: PrismConfig): McpServer {
+export function createServer(config: PrismConfig, registry: ParserRegistry): McpServer {
   const server = new McpServer(
     { name: "parism", version: PACKAGE_VERSION },
     { instructions: MCP_INSTRUCTIONS },
@@ -156,7 +157,7 @@ export function createServer(config: PrismConfig): McpServer {
                    .describe("Include filesystem diff (created/deleted/modified). false=skip snapshot, lower latency."),
     },
     async ({ cmd, args, cwd, format, includeDiff }) => {
-      const result = await buildRunResult(cmd, args, cwd, config, format, includeDiff);
+      const result = await buildRunResult(cmd, args, cwd, config, registry, format, includeDiff);
       return {
         content: [{ type: "text" as const, text: result }],
       };
