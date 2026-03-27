@@ -15,9 +15,14 @@ export function createCli(): Command {
     .command("capture <command>")
     .description("Execute command and save raw output as fixture")
     .option("-o, --output <dir>", "Output directory", "~/.parism/fixtures")
-    .action(async (_command: string, _options: Record<string, unknown>) => {
-      console.log("[parism] capture: not yet implemented");
-      process.exit(1);
+    .action(async (command: string, options: { output?: string }) => {
+      const { captureCommand } = await import("./cli/capture.js");
+      const parts  = command.split(/\s+/);
+      const cmd    = parts[0];
+      const args   = parts.slice(1);
+      const result = await captureCommand(cmd, args, options.output);
+      console.log(`Fixture saved: ${result.fixturePath}`);
+      console.log(`Exit code: ${result.exitCode}`);
     });
 
   program
