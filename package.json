@@ -4,6 +4,10 @@
   "description": "Structured shell output wrapper for AI agents",
   "type": "module",
   "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/parsers/registry.js"
+  },
   "bin": {
     "parism": "dist/index.js"
   },
