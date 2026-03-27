@@ -323,6 +323,62 @@ Place `prism.config.json` in the project root to control Guard behavior.
 
 ---
 
+## Custom Parsers -- Build and Use Immediately
+
+When 44 built-in parsers are not enough, build your own. Parism v0.5.0 includes a CLI toolkit.
+
+### Create a Parser in 5 Minutes
+
+```bash
+# 1. Capture command output
+parism capture "htop -b -n 1"
+
+# 2. Scaffold a parser pack
+parism init-parser htop
+
+# 3. Edit parser.ts and test against fixtures
+parism test htop
+
+# 4. Register -- available immediately, no restart needed
+parism add ./htop
+
+# 5. Verify -- raw/parsed/compact comparison + token counts
+parism inspect "htop -b -n 1"
+```
+
+Registered parsers are stored in `~/.parism/parsers/` and automatically loaded when the MCP server starts.
+
+### CLI Commands
+
+| Command | Description |
+|---|---|
+| `parism capture "<command>"` | Execute command and save raw output as fixture |
+| `parism init-parser <name>` | Scaffold a TypeScript parser pack (parser.ts + schema.json + fixtures/) |
+| `parism test [parser]` | Run fixture replay tests |
+| `parism add <path>` | Register a local parser pack permanently to ~/.parism/parsers/ |
+| `parism inspect "<command>"` | Compare raw / parsed / compact output + token counts |
+
+### ParserPack Interface
+
+External parsers implement this interface:
+
+```typescript
+import type { ParserPack } from "@nerdvana/parism/types";
+
+const pack: ParserPack = {
+  name: "my-command",
+  parse(raw, args, ctx?) { /* return structured result */ },
+  schema: { /* JSON Schema */ },
+  fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+};
+
+export default pack;
+```
+
+Running `parism` without arguments starts the MCP server as before.
+
+---
+
 ## What Parism Is Not
 
 Parism is not a new shell. It does not replace bash. It sits above bash, receives output, and structures it.

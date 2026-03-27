@@ -364,6 +364,62 @@ compact 예시:
 
 ---
 
+## 커스텀 파서 -- 직접 만들고 바로 쓴다
+
+44개 내장 파서로 부족하면, 직접 만들면 된다. Parism v0.5.0부터 CLI 도구가 포함된다.
+
+### 5분 안에 파서 만들기
+
+```bash
+# 1. 명령어 출력을 캡처한다
+parism capture "htop -b -n 1"
+
+# 2. 파서 팩 스캐폴드를 생성한다
+parism init-parser htop
+
+# 3. parser.ts를 편집하고 fixture를 테스트한다
+parism test htop
+
+# 4. 등록한다 -- 재시작 없이 즉시 사용 가능
+parism add ./htop
+
+# 5. 결과를 확인한다 -- raw/parsed/compact 비교 + 토큰 수
+parism inspect "htop -b -n 1"
+```
+
+등록된 파서는 `~/.parism/parsers/`에 저장되고, MCP 서버 시작 시 자동으로 로드된다.
+
+### CLI 명령어
+
+| 명령어 | 설명 |
+|---|---|
+| `parism capture "<command>"` | 명령어를 실행하고 raw 출력을 fixture로 저장 |
+| `parism init-parser <name>` | TypeScript 파서 팩 스캐폴드 생성 (parser.ts + schema.json + fixtures/) |
+| `parism test [parser]` | fixture replay 테스트 실행 |
+| `parism add <path>` | 로컬 파서 팩을 ~/.parism/parsers/에 영구 등록 |
+| `parism inspect "<command>"` | raw / parsed / compact 출력 비교 + 토큰 수 |
+
+### ParserPack 인터페이스
+
+외부 파서는 이 인터페이스를 구현한다.
+
+```typescript
+import type { ParserPack } from "@nerdvana/parism/types";
+
+const pack: ParserPack = {
+  name: "my-command",
+  parse(raw, args, ctx?) { /* 구조화된 결과 반환 */ },
+  schema: { /* JSON Schema */ },
+  fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+};
+
+export default pack;
+```
+
+인자 없이 `parism`을 실행하면 기존과 동일하게 MCP 서버로 동작한다.
+
+---
+
 ## Parism이 아닌 것
 
 Parism은 새로운 셸이 아니다. bash를 대체하지 않는다. bash 위에 앉아서 출력을 받아 구조화할 뿐이다.
