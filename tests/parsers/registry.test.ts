@@ -92,3 +92,65 @@ describe("ParserPack interface", () => {
     expect(pack.meta?.os).toContain("linux");
   });
 });
+
+describe("ParserRegistry.registerPack()", () => {
+  it("ParserPack을 등록하면 parse()로 실행된다", () => {
+    const registry = new ParserRegistry();
+    const pack: ParserPack = {
+      name: "mycmd",
+      parse: (raw, _args) => ({ lines: raw.split("\n").length }),
+      schema: { type: "object" },
+      fixtures: [],
+    };
+
+    registry.registerPack(pack);
+    const result = registry.parse("mycmd", [], "a\nb\nc");
+    expect(result.parsed).toEqual({ lines: 3 });
+  });
+
+  it("registerPack은 기존 register()와 공존한다", () => {
+    const registry = new ParserRegistry();
+    registry.register("old", (_cmd, _args, raw) => ({ old: true, len: raw.length }));
+
+    const pack: ParserPack = {
+      name: "new",
+      parse: (raw) => ({ new: true, len: raw.length }),
+      schema: { type: "object" },
+      fixtures: [],
+    };
+    registry.registerPack(pack);
+
+    expect(registry.parse("old", [], "x").parsed).toEqual({ old: true, len: 1 });
+    expect(registry.parse("new", [], "x").parsed).toEqual({ new: true, len: 1 });
+  });
+
+  it("getPack()으로 등록된 ParserPack을 조회할 수 있다", () => {
+    const registry = new ParserRegistry();
+    const pack: ParserPack = {
+      name: "lookup",
+      parse: () => null,
+      schema: { type: "object" },
+      fixtures: [{ input: "x", args: [], expected: null }],
+    };
+
+    registry.registerPack(pack);
+    expect(registry.getPack("lookup")).toBe(pack);
+    expect(registry.getPack("missing")).toBeUndefined();
+  });
+
+  it("listPacks()로 등록된 모든 ParserPack 이름을 조회한다", () => {
+    const registry = new ParserRegistry();
+    registry.registerPack({
+      name: "a", parse: () => null, schema: {}, fixtures: [],
+    });
+    registry.registerPack({
+      name: "b", parse: () => null, schema: {}, fixtures: [],
+    });
+    registry.register("c", () => null);
+
+    const names = registry.listPacks();
+    expect(names).toContain("a");
+    expect(names).toContain("b");
+    expect(names).not.toContain("c");
+  });
+});

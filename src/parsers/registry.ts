@@ -59,9 +59,32 @@ export interface ParseResult {
  */
 export class ParserRegistry {
   private readonly parsers = new Map<string, ParserFn>();
+  private readonly packs   = new Map<string, ParserPack>();
 
   register(cmd: string, fn: ParserFn): void {
     this.parsers.set(cmd, fn);
+  }
+
+  /**
+   * ParserPack을 등록한다. parsers Map에도 어댑터를 등록하여 기존 parse() 경로와 호환.
+   */
+  registerPack(pack: ParserPack): void {
+    this.packs.set(pack.name, pack);
+    this.parsers.set(pack.name, (_cmd, args, raw, ctx) => pack.parse(raw, args, ctx));
+  }
+
+  /**
+   * 등록된 ParserPack을 이름으로 조회한다.
+   */
+  getPack(name: string): ParserPack | undefined {
+    return this.packs.get(name);
+  }
+
+  /**
+   * 등록된 모든 ParserPack 이름 목록을 반환한다.
+   */
+  listPacks(): string[] {
+    return [...this.packs.keys()];
   }
 
   /**
