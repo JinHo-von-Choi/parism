@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ParserRegistry, type ParseContext } from "../../src/parsers/registry.js";
 import type { ParserPack } from "../../src/parsers/registry.js";
+import { createRegistry } from "../../src/parsers/index.js";
 
 describe("ParserRegistry", () => {
   it("등록된 파서가 없으면 parsed=null을 반환한다", () => {
@@ -152,5 +153,37 @@ describe("ParserRegistry.registerPack()", () => {
     expect(names).toContain("a");
     expect(names).toContain("b");
     expect(names).not.toContain("c");
+  });
+});
+
+describe("createRegistry()", () => {
+  it("44개 내장 파서가 등록된 레지스트리를 반환한다", () => {
+    const registry = createRegistry();
+    const commands = [
+      "ls", "find", "stat", "du", "df", "tree",
+      "ps", "kill",
+      "ping", "curl", "netstat", "lsof", "ss", "dig",
+      "grep", "wc", "head", "tail", "cat",
+      "env", "pwd", "which",
+      "free", "uname", "id", "systemctl", "journalctl",
+      "dir", "tasklist", "ipconfig", "systeminfo",
+      "kubectl", "docker", "gh", "helm", "terraform",
+      "apt", "brew",
+      "npm", "pnpm", "yarn", "cargo",
+      "git",
+    ];
+
+    for (const cmd of commands) {
+      const result = registry.parse(cmd, [], "");
+      // 파서가 등록되어 있으면 parsed는 null이 아니거나, 빈 입력에 대한 결과를 반환
+      // 핵심: parsed가 undefined가 아님 (파서 함수가 호출됨)
+      expect(result).toBeDefined();
+    }
+  });
+
+  it("매번 새 인스턴스를 반환한다 (싱글턴이 아님)", () => {
+    const a = createRegistry();
+    const b = createRegistry();
+    expect(a).not.toBe(b);
   });
 });

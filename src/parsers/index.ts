@@ -12,59 +12,70 @@ import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from ".
 import { parseNpm, parseCargo } from "./packages/index.js";
 
 /**
- * 전역 싱글턴 Parser Registry. 서버 시작 시 한 번 초기화된다.
+ * 44개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
+ * 호출할 때마다 새 인스턴스를 반환하므로, 테스트나 CLI에서 독립적으로 사용 가능.
  */
-export const defaultRegistry = new ParserRegistry();
+export function createRegistry(): ParserRegistry {
+  const registry = new ParserRegistry();
 
-defaultRegistry.register("ls",      parseLs);
-defaultRegistry.register("find",    parseFind);
-defaultRegistry.register("stat",    parseStat);
-defaultRegistry.register("du",      parseDu);
-defaultRegistry.register("df",      parseDf);
-defaultRegistry.register("tree",    parseTree);
-defaultRegistry.register("ps",      parsePs);
-defaultRegistry.register("kill",    parseKill);
-defaultRegistry.register("ping",    parsePing);
-defaultRegistry.register("curl",    parseCurl);
-defaultRegistry.register("netstat", parseNetstat);
-defaultRegistry.register("lsof",    parseLsof);
-defaultRegistry.register("ss",      parseSs);
-defaultRegistry.register("dig",     parseDig);
-defaultRegistry.register("grep",    parseGrep);
-defaultRegistry.register("wc",      parseWc);
-defaultRegistry.register("head",    parseHead);
-defaultRegistry.register("tail",    parseTail);
-defaultRegistry.register("cat",     parseCat);
-defaultRegistry.register("env",     parseEnv);
-defaultRegistry.register("pwd",     parsePwd);
-defaultRegistry.register("which",   parseWhich);
-defaultRegistry.register("free",       parseFree);
-defaultRegistry.register("uname",      parseUname);
-defaultRegistry.register("id",         parseId);
-defaultRegistry.register("systemctl",  parseSystemctl);
-defaultRegistry.register("journalctl", parseJournalctl);
-defaultRegistry.register("dir",        parseDir);
-defaultRegistry.register("tasklist",   parseTasklist);
-defaultRegistry.register("ipconfig",   parseIpconfig);
-defaultRegistry.register("systeminfo", parseSysteminfo);
-defaultRegistry.register("kubectl",    parseKubectl);
-defaultRegistry.register("docker",     parseDocker);
-defaultRegistry.register("gh",         parseGh);
-defaultRegistry.register("helm",       parseHelm);
-defaultRegistry.register("terraform",  parseTerraform);
-defaultRegistry.register("apt",        parseApt);
-defaultRegistry.register("brew",       parseBrew);
-defaultRegistry.register("npm",       parseNpm);
-defaultRegistry.register("pnpm",      parseNpm);
-defaultRegistry.register("yarn",      parseNpm);
-defaultRegistry.register("cargo",     parseCargo);
+  registry.register("ls",      parseLs);
+  registry.register("find",    parseFind);
+  registry.register("stat",    parseStat);
+  registry.register("du",      parseDu);
+  registry.register("df",      parseDf);
+  registry.register("tree",    parseTree);
+  registry.register("ps",      parsePs);
+  registry.register("kill",    parseKill);
+  registry.register("ping",    parsePing);
+  registry.register("curl",    parseCurl);
+  registry.register("netstat", parseNetstat);
+  registry.register("lsof",    parseLsof);
+  registry.register("ss",      parseSs);
+  registry.register("dig",     parseDig);
+  registry.register("grep",    parseGrep);
+  registry.register("wc",      parseWc);
+  registry.register("head",    parseHead);
+  registry.register("tail",    parseTail);
+  registry.register("cat",     parseCat);
+  registry.register("env",     parseEnv);
+  registry.register("pwd",     parsePwd);
+  registry.register("which",   parseWhich);
+  registry.register("free",       parseFree);
+  registry.register("uname",      parseUname);
+  registry.register("id",         parseId);
+  registry.register("systemctl",  parseSystemctl);
+  registry.register("journalctl", parseJournalctl);
+  registry.register("dir",        parseDir);
+  registry.register("tasklist",   parseTasklist);
+  registry.register("ipconfig",   parseIpconfig);
+  registry.register("systeminfo", parseSysteminfo);
+  registry.register("kubectl",    parseKubectl);
+  registry.register("docker",     parseDocker);
+  registry.register("gh",         parseGh);
+  registry.register("helm",       parseHelm);
+  registry.register("terraform",  parseTerraform);
+  registry.register("apt",        parseApt);
+  registry.register("brew",       parseBrew);
+  registry.register("npm",       parseNpm);
+  registry.register("pnpm",      parseNpm);
+  registry.register("yarn",      parseNpm);
+  registry.register("cargo",     parseCargo);
 
-// git은 서브커맨드 기반 — args[0]으로 파서를 선택
-defaultRegistry.register("git", (cmd, args, raw) => {
-  const sub = args[0];
-  if (sub === "status") return parseGitStatus(cmd, args, raw);
-  if (sub === "log")    return parseGitLog(cmd, args, raw);
-  if (sub === "diff")   return parseGitDiff(cmd, args, raw);
-  if (sub === "branch") return parseGitBranch(cmd, args, raw);
-  return null;
-});
+  // git은 서브커맨드 기반 — args[0]으로 파서를 선택
+  registry.register("git", (cmd, args, raw) => {
+    const sub = args[0];
+    if (sub === "status") return parseGitStatus(cmd, args, raw);
+    if (sub === "log")    return parseGitLog(cmd, args, raw);
+    if (sub === "diff")   return parseGitDiff(cmd, args, raw);
+    if (sub === "branch") return parseGitBranch(cmd, args, raw);
+    return null;
+  });
+
+  return registry;
+}
+
+/**
+ * 하위 호환용 전역 싱글턴. 기존 server.ts import를 깨지 않기 위해 유지.
+ * @deprecated 신규 코드는 createRegistry()를 사용할 것.
+ */
+export const defaultRegistry = createRegistry();
