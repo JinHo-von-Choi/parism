@@ -24,9 +24,11 @@ export function createCli(): Command {
     .command("init-parser <name>")
     .description("Scaffold a new parser pack (TypeScript + schema + test)")
     .option("-d, --dir <dir>", "Output directory", ".")
-    .action(async (_name: string, _options: Record<string, unknown>) => {
-      console.log("[parism] init-parser: not yet implemented");
-      process.exit(1);
+    .action(async (name: string, options: { dir?: string }) => {
+      const { initParser } = await import("./cli/init-parser.js");
+      const result = initParser(name, options.dir ?? ".");
+      console.log(`Parser pack "${result.name}" created:`);
+      result.files.forEach(f => console.log(`  ${f}`));
     });
 
   program
