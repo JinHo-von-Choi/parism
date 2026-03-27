@@ -274,8 +274,8 @@ Claude Code (Linux):
   "mcpServers": {
     "parism": {
       "command": "node",
-      "args": ["/home/nirna/job/nerdvana-prism/dist/index.js"],
-      "cwd": "/home/nirna/job/nerdvana-prism"
+      "args": ["/path/to/parism/dist/index.js"],
+      "cwd": "/path/to/parism"
     }
   }
 }
