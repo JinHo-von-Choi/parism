@@ -68,7 +68,7 @@ export function createCli(): Command {
       const args     = parts.slice(1);
       const registry = createRegistry();
 
-      let raw = "";
+      let raw: string;
       try {
         const result = await execFileAsync(cmd, args, { timeout: 10_000 });
         raw = result.stdout;

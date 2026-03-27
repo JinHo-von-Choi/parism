@@ -29,17 +29,18 @@ export async function captureCommand(
   const dir = fixturesDir ?? join(parismHome(), "fixtures");
   mkdirSync(dir, { recursive: true });
 
-  let stdout   = "";
-  let stderr   = "";
-  let exitCode = 0;
+  let stdout:   string;
+  let stderr:   string;
+  let exitCode: number;
 
   try {
     const result = await execFileAsync(cmd, args, {
       timeout:   30_000,
       maxBuffer: 10 * 1024 * 1024,
     });
-    stdout = result.stdout;
-    stderr = result.stderr;
+    stdout   = result.stdout;
+    stderr   = result.stderr;
+    exitCode = 0;
   } catch (err: unknown) {
     const execErr = err as { stdout?: string; stderr?: string; code?: number };
     stdout   = execErr.stdout ?? "";
