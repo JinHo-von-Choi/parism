@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ParserRegistry, type ParseContext } from "../../src/parsers/registry.js";
+import type { ParserPack } from "../../src/parsers/registry.js";
 
 describe("ParserRegistry", () => {
   it("등록된 파서가 없으면 parsed=null을 반환한다", () => {
@@ -56,5 +57,38 @@ describe("ParserRegistry", () => {
 
     registry.parse("testcmd", [], "", { maxItems: 42 });
     expect(capturedCtx?.maxItems).toBe(42);
+  });
+});
+
+describe("ParserPack interface", () => {
+  it("ParserPack 구현체가 name, parse, schema, fixtures를 가진다", () => {
+    const pack: ParserPack = {
+      name: "test-cmd",
+      parse: (_raw, _args) => ({ items: [] }),
+      schema: {
+        type: "object",
+        properties: { items: { type: "array" } },
+      },
+      fixtures: [
+        { input: "line1\nline2", args: [], expected: { items: [] } },
+      ],
+    };
+
+    expect(pack.name).toBe("test-cmd");
+    expect(pack.parse("", [])).toEqual({ items: [] });
+    expect(pack.schema.type).toBe("object");
+    expect(pack.fixtures).toHaveLength(1);
+  });
+
+  it("meta 필드는 선택적이다", () => {
+    const pack: ParserPack = {
+      name: "opt",
+      parse: (_raw, _args) => null,
+      schema: { type: "object" },
+      fixtures: [],
+      meta: { os: ["linux"], version: "1.0" },
+    };
+
+    expect(pack.meta?.os).toContain("linux");
   });
 });

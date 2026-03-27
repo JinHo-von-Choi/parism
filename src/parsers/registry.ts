@@ -21,6 +21,31 @@ export interface ParseContext {
 export type ParserFn = (cmd: string, args: string[], raw: string, ctx?: ParseContext) => unknown;
 
 /**
+ * Fixture: 파서 검증용 입출력 쌍.
+ */
+export interface Fixture {
+  input:    string;
+  args:     string[];
+  expected: unknown;
+}
+
+/**
+ * 파서 팩: 명령어 파서의 완전한 정의.
+ * name     -- 대상 명령어 (예: "htop")
+ * parse    -- raw stdout + args -> 구조화된 결과 (null이면 파싱 불가)
+ * schema   -- 출력 JSON 스키마 (검증/문서 용도)
+ * fixtures -- 입출력 쌍 (테스트/검증 용도)
+ * meta     -- 선택적 메타 정보
+ */
+export interface ParserPack {
+  name:      string;
+  parse:     (raw: string, args: string[], ctx?: ParseContext) => unknown;
+  schema:    Record<string, unknown>;
+  fixtures:  Fixture[];
+  meta?:     { os?: string[]; version?: string };
+}
+
+/**
  * 파서 실행 결과. parsed가 null일 때 parse_error가 있으면 파서 예외, 없으면 파서 없음.
  */
 export interface ParseResult {
