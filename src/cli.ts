@@ -1,4 +1,5 @@
-import { Command } from "commander";
+import { Command }        from "commander";
+import { PACKAGE_VERSION } from "./server.js";
 
 /**
  * CLI 프로그램을 생성한다. 명령어 핸들러는 각 모듈에서 등록.
@@ -9,7 +10,7 @@ export function createCli(): Command {
   program
     .name("parism")
     .description("Structured shell output for AI agents")
-    .version("0.5.0");
+    .version(PACKAGE_VERSION);
 
   program
     .command("capture <command>")
