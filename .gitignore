@@ -33,3 +33,15 @@ Thumbs.db
 # Planning documents
 docs/plans/
 Requirements.md
+
+# Local editor / IDE
+.cursor/
+
+# Coverage reports
+coverage/
+
+# Legacy drafts (session-local notes)
+TODOS.md
+
+# Benchmark reports (generated)
+benchmarks/BENCHMARK-REPORT.md

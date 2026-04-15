@@ -1,7 +1,7 @@
 # Claude Desktop — Parism MCP 설정
 
 작성일: 2026-04-15
-대상 버전: Parism v0.6.0-alpha.2
+대상 버전: Parism v1.0.0
 
 ## 개요
 

@@ -70,7 +70,7 @@ export interface ResponseEnvelope {
   page_info?:  PageInfo;     // run_paged 사용 시에만 채워짐
   failure?:    FailureInfo;  // 정규화된 실패 원인 (선택적, 하위 호환)
   /**
-   * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v0.7.0 제거 예정.
+   * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v2.0.0 제거 예정.
    * Guard 차단 시에만 존재한다.
    */
   guard_error?: { reason: string; message: string };

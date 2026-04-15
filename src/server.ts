@@ -5,7 +5,7 @@ import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
 
-export const PACKAGE_VERSION = "0.6.0-alpha.2";
+export const PACKAGE_VERSION = "1.0.0";
 
 const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
 

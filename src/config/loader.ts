@@ -19,7 +19,7 @@ export interface PrismGuardConfig {
   default_page_size:        number;   // run_paged 기본 줄 수, 0=비활성
   block_patterns:           string[];
   command_arg_restrictions: Record<string, CommandArgRestriction>;
-  /** @deprecated guard.secrets.env_patterns 으로 이전하세요. v0.7.0 제거 예정. */
+  /** @deprecated guard.secrets.env_patterns 으로 이전하세요. v2.0.0 제거 예정. */
   env_secret_patterns:      string[];
   secrets?:                 PrismGuardSecretsConfig;
 }
@@ -100,7 +100,7 @@ function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig 
 }
 
 const DEPRECATION_MSG =
-  "[parism] guard.env_secret_patterns is deprecated; use guard.secrets.env_patterns. v0.7.0 제거 예정.";
+  "[parism] guard.env_secret_patterns is deprecated; use guard.secrets.env_patterns. v2.0.0 제거 예정.";
 
 /**
  * 지정된 경로에서 prism.config.json을 로드한다.

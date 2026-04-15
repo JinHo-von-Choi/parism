@@ -246,7 +246,7 @@ node dist/index.js
 
 ## 라이브러리 모드
 
-MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v0.6.0-alpha.1 부터 실험적으로 제공된다.
+MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v1.0.0 부터 정식 API 다. Semantic Versioning 을 따르며, breaking change 는 v2.0.0 에서만 발생한다.
 
 최소 예시:
 
@@ -281,7 +281,7 @@ console.log(result.stdout.parsed);
 
 RunOptions — `args` / `cwd` / `format` / `includeDiff`. RunPagedOptions — 위 옵션 전체 + `page` / `page_size`.
 
-API 는 v0.7.0 이전까지 변경될 수 있다. 설계 상세는 [SPECIFICATION.md](SPECIFICATION.md) §1.1 참조.
+설계 상세는 [SPECIFICATION.md](SPECIFICATION.md) §1.1 참조.
 
 ---
 
@@ -390,13 +390,13 @@ compact 예시:
 
 `parsers.strict_schemas`를 `true` 로 설정하면 각 파서의 Zod 스키마로 파싱 결과를 검증한다. 스키마 위반 시 `failure.reason === "schema_violation"` 을 반환한다. 기본 `false` 이며 opt-in 방식이다.
 
-> legacy `env_secret_patterns` 는 v0.7.0 에서 제거된다. 사용 시 stderr 에 deprecation 경고가 출력된다.
+> legacy `env_secret_patterns` 는 v2.0.0 에서 제거된다. 사용 시 stderr 에 deprecation 경고가 출력된다.
 
 ---
 
 ## 커스텀 파서 -- 직접 만들고 바로 쓴다
 
-44개 내장 파서로 부족하면, 직접 만들면 된다. Parism v0.5.0 부터 CLI 도구가 포함된다. v0.6 부터 `ParserPack.schema` 는 Zod 스키마를 단일 소스로 사용한다.
+44개 내장 파서로 부족하면, 직접 만들면 된다. Parism v0.5.0 부터 CLI 도구가 포함된다. v1.0.0 부터 `ParserPack.schema` 는 Zod 스키마를 단일 소스로 사용한다.
 
 ### 5분 안에 파서 만들기
 
