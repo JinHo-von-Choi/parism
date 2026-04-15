@@ -4,6 +4,7 @@ import { createServer }         from "./server.js";
 import { loadConfig }           from "./config/loader.js";
 import { createRegistry }       from "./parsers/index.js";
 import { createCli }            from "./cli.js";
+import { validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS } from "./engine/redactor.js";
 import path                     from "node:path";
 
 const CLI_COMMANDS = ["capture", "init-parser", "test", "add", "inspect", "help", "--help", "-h", "--version", "-V"];
@@ -23,6 +24,14 @@ async function startMcpServer(): Promise<void> {
   const loaded = await loadExternalParsers(parismHome(), registry);
   if (loaded > 0) {
     console.error(`[parism] Loaded ${loaded} external parser(s)`);
+  }
+
+  if (config.guard.secrets?.output_redaction_enabled === true) {
+    const rawPatterns     = config.guard.secrets.output_patterns !== undefined
+      ? config.guard.secrets.output_patterns
+      : DEFAULT_OUTPUT_REDACT_PATTERNS;
+    const validatedCount  = validatePatterns(rawPatterns).length;
+    process.stderr.write(`[parism] output redaction enabled (${validatedCount} patterns, raw/stderr only)\n`);
   }
 
   const server    = createServer(config, registry);

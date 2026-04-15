@@ -1,13 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { ParserRegistry, type ParseContext } from "../../src/parsers/registry.js";
+import { z }                    from "zod";
+import {
+  ParserRegistry,
+  exportJsonSchema,
+  type ParseContext,
+} from "../../src/parsers/registry.js";
 import type { ParserPack } from "../../src/parsers/registry.js";
-import { createRegistry } from "../../src/parsers/index.js";
+import { createRegistry }    from "../../src/parsers/index.js";
 
 describe("ParserRegistry", () => {
   it("등록된 파서가 없으면 parsed=null을 반환한다", () => {
     const registry = new ParserRegistry();
     const result   = registry.parse("unknown_cmd", [], "some output");
     expect(result.parsed).toBeNull();
+    expect(result.parse_error).toBeUndefined();
+  });
+
+  it("미등록 명령 parse()는 { parsed: null } 형태를 유지한다 (parser_not_found는 봉투 계층에서 처리)", () => {
+    const registry = new ParserRegistry();
+    const result   = registry.parse("__no_such_command__", ["arg1"], "output text");
+    expect(result).toEqual({ parsed: null });
     expect(result.parse_error).toBeUndefined();
   });
 
@@ -64,12 +76,9 @@ describe("ParserRegistry", () => {
 describe("ParserPack interface", () => {
   it("ParserPack 구현체가 name, parse, schema, fixtures를 가진다", () => {
     const pack: ParserPack = {
-      name: "test-cmd",
-      parse: (_raw, _args) => ({ items: [] }),
-      schema: {
-        type: "object",
-        properties: { items: { type: "array" } },
-      },
+      name:   "test-cmd",
+      parse:  (_raw, _args) => ({ items: [] }),
+      schema: z.object({ items: z.array(z.unknown()) }),
       fixtures: [
         { input: "line1\nline2", args: [], expected: { items: [] } },
       ],
@@ -77,17 +86,17 @@ describe("ParserPack interface", () => {
 
     expect(pack.name).toBe("test-cmd");
     expect(pack.parse("", [])).toEqual({ items: [] });
-    expect(pack.schema.type).toBe("object");
+    expect(pack.schema).toBeDefined();
     expect(pack.fixtures).toHaveLength(1);
   });
 
   it("meta 필드는 선택적이다", () => {
     const pack: ParserPack = {
-      name: "opt",
-      parse: (_raw, _args) => null,
-      schema: { type: "object" },
+      name:    "opt",
+      parse:   (_raw, _args) => null,
+      schema:  z.unknown(),
       fixtures: [],
-      meta: { os: ["linux"], version: "1.0" },
+      meta:    { os: ["linux"], version: "1.0" },
     };
 
     expect(pack.meta?.os).toContain("linux");
@@ -98,9 +107,9 @@ describe("ParserRegistry.registerPack()", () => {
   it("ParserPack을 등록하면 parse()로 실행된다", () => {
     const registry = new ParserRegistry();
     const pack: ParserPack = {
-      name: "mycmd",
-      parse: (raw, _args) => ({ lines: raw.split("\n").length }),
-      schema: { type: "object" },
+      name:   "mycmd",
+      parse:  (raw, _args) => ({ lines: raw.split("\n").length }),
+      schema: z.object({ lines: z.number() }),
       fixtures: [],
     };
 
@@ -114,9 +123,9 @@ describe("ParserRegistry.registerPack()", () => {
     registry.register("old", (_cmd, _args, raw) => ({ old: true, len: raw.length }));
 
     const pack: ParserPack = {
-      name: "new",
-      parse: (raw) => ({ new: true, len: raw.length }),
-      schema: { type: "object" },
+      name:   "new",
+      parse:  (raw) => ({ new: true, len: raw.length }),
+      schema: z.object({ new: z.boolean(), len: z.number() }),
       fixtures: [],
     };
     registry.registerPack(pack);
@@ -128,9 +137,9 @@ describe("ParserRegistry.registerPack()", () => {
   it("getPack()으로 등록된 ParserPack을 조회할 수 있다", () => {
     const registry = new ParserRegistry();
     const pack: ParserPack = {
-      name: "lookup",
-      parse: () => null,
-      schema: { type: "object" },
+      name:    "lookup",
+      parse:   () => null,
+      schema:  z.unknown(),
       fixtures: [{ input: "x", args: [], expected: null }],
     };
 
@@ -142,10 +151,10 @@ describe("ParserRegistry.registerPack()", () => {
   it("listPacks()로 등록된 모든 ParserPack 이름을 조회한다", () => {
     const registry = new ParserRegistry();
     registry.registerPack({
-      name: "a", parse: () => null, schema: {}, fixtures: [],
+      name: "a", parse: () => null, schema: z.unknown(), fixtures: [],
     });
     registry.registerPack({
-      name: "b", parse: () => null, schema: {}, fixtures: [],
+      name: "b", parse: () => null, schema: z.unknown(), fixtures: [],
     });
     registry.register("c", () => null);
 
@@ -153,6 +162,85 @@ describe("ParserRegistry.registerPack()", () => {
     expect(names).toContain("a");
     expect(names).toContain("b");
     expect(names).not.toContain("c");
+  });
+
+  // ── Zod schema / strict_schemas tests ──────────────────────────────────
+
+  it("strictSchemas=false이면 스키마 검증 없이 파서 출력을 그대로 반환한다", () => {
+    const registry = new ParserRegistry();
+    const pack: ParserPack = {
+      name:  "validated",
+      parse: () => ({ count: "not-a-number" }),    // 스키마 위반이지만 검증 안 함
+      schema: z.object({ count: z.number() }),
+      fixtures: [],
+    };
+
+    registry.registerPack(pack);
+    const result = registry.parse("validated", [], "x", undefined, false);
+    expect(result.parsed).toEqual({ count: "not-a-number" });
+    expect(result.parse_error).toBeUndefined();
+  });
+
+  it("strictSchemas=true이고 파서 출력이 스키마를 위반하면 schema_violation을 반환한다", () => {
+    const registry = new ParserRegistry();
+    const pack: ParserPack = {
+      name:  "strict-cmd",
+      parse: () => ({ count: "oops" }),    // z.number() 위반
+      schema: z.object({ count: z.number() }),
+      fixtures: [],
+    };
+
+    registry.registerPack(pack);
+    const result = registry.parse("strict-cmd", [], "x", undefined, true);
+    expect(result.parsed).toBeNull();
+    expect(result.parse_error?.reason).toBe("schema_violation");
+    expect(result.parse_error?.message).toBeTruthy();
+  });
+
+  it("strictSchemas=true이고 파서 출력이 스키마를 만족하면 정상 반환된다", () => {
+    const registry = new ParserRegistry();
+    const pack: ParserPack = {
+      name:  "valid-cmd",
+      parse: () => ({ count: 42 }),
+      schema: z.object({ count: z.number() }),
+      fixtures: [],
+    };
+
+    registry.registerPack(pack);
+    const result = registry.parse("valid-cmd", [], "x", undefined, true);
+    expect(result.parsed).toEqual({ count: 42 });
+    expect(result.parse_error).toBeUndefined();
+  });
+
+  it("strictSchemas=true이고 bare register()로 등록된 파서는 스키마 검증을 건너뛴다", () => {
+    const registry = new ParserRegistry();
+    // bare register — ParserPack이 없으므로 strictSchemas=true여도 검증 없음
+    registry.register("bare", () => ({ anything: true }));
+
+    const result = registry.parse("bare", [], "x", undefined, true);
+    expect(result.parsed).toEqual({ anything: true });
+    expect(result.parse_error).toBeUndefined();
+  });
+});
+
+describe("exportJsonSchema()", () => {
+  it("ParserPack의 Zod 스키마를 JSON Schema 객체로 변환한다", () => {
+    const pack: ParserPack = {
+      name:  "export-test",
+      parse: () => null,
+      schema: z.object({
+        count: z.number(),
+        items: z.array(z.string()),
+      }),
+      fixtures: [],
+    };
+
+    const jsonSchema = exportJsonSchema(pack);
+    expect(jsonSchema).toBeDefined();
+    expect(typeof jsonSchema).toBe("object");
+    // JSON Schema $schema 또는 type 필드가 있어야 함
+    const js = jsonSchema as Record<string, unknown>;
+    expect(js.type ?? js.$schema ?? js.definitions).toBeDefined();
   });
 });
 

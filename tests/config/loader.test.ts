@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { unlink, writeFile } from "node:fs/promises";
 import { loadConfig, DEFAULT_CONFIG } from "../../src/config/loader.js";
 
@@ -86,6 +86,99 @@ describe("loadConfig()", () => {
       expect(cfg.guard.command_arg_restrictions.node.blocked_flags).toEqual(["--eval"]);
       expect(cfg.guard.command_arg_restrictions.npx).toEqual(
         DEFAULT_CONFIG.guard.command_arg_restrictions.npx,
+      );
+    } finally {
+      await unlink(configPath);
+    }
+  });
+});
+
+describe("loadConfig() — guard.secrets 마이그레이션 shim", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("레거시 전용: env_secret_patterns만 있을 때 secrets.env_patterns에 복사하고 경고를 출력한다", async () => {
+    const configPath = `/tmp/prism-config-legacy-only-${Date.now()}.json`;
+    const patterns   = ["MY_TOKEN", "MY_SECRET"];
+    const body       = { guard: { env_secret_patterns: patterns } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const cfg = await loadConfig(configPath);
+
+      expect(stderrSpy).toHaveBeenCalledOnce();
+      expect(String(stderrSpy.mock.calls[0][0])).toContain(
+        "guard.env_secret_patterns is deprecated",
+      );
+      expect(cfg.guard.secrets?.env_patterns).toEqual(patterns);
+      expect(cfg.guard.env_secret_patterns).toEqual(patterns);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
+  it("신규 전용: secrets.env_patterns만 있을 때 경고 없이 정상 동작한다", async () => {
+    const configPath = `/tmp/prism-config-new-only-${Date.now()}.json`;
+    const patterns   = ["NEW_TOKEN", "NEW_SECRET"];
+    const body       = { guard: { secrets: { env_patterns: patterns } } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const cfg = await loadConfig(configPath);
+
+      expect(stderrSpy).not.toHaveBeenCalled();
+      expect(cfg.guard.secrets?.env_patterns).toEqual(patterns);
+      expect(cfg.guard.env_secret_patterns).toEqual(patterns);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
+  it("둘 다 존재할 때 secrets.env_patterns를 우선하고 경고를 출력한다", async () => {
+    const configPath  = `/tmp/prism-config-both-${Date.now()}.json`;
+    const legacyPats  = ["LEGACY_TOKEN"];
+    const newPats     = ["NEW_TOKEN"];
+    const body        = {
+      guard: {
+        env_secret_patterns: legacyPats,
+        secrets: { env_patterns: newPats },
+      },
+    };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const cfg = await loadConfig(configPath);
+
+      expect(stderrSpy).toHaveBeenCalledOnce();
+      expect(String(stderrSpy.mock.calls[0][0])).toContain(
+        "guard.env_secret_patterns is deprecated",
+      );
+      expect(cfg.guard.secrets?.env_patterns).toEqual(newPats);
+      expect(cfg.guard.env_secret_patterns).toEqual(newPats);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
+  it("둘 다 없으면 기본값이 적용되고 경고가 발생하지 않는다", async () => {
+    const configPath = `/tmp/prism-config-neither-${Date.now()}.json`;
+    const body       = { guard: { timeout_ms: 5000 } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const cfg = await loadConfig(configPath);
+
+      expect(stderrSpy).not.toHaveBeenCalled();
+      expect(cfg.guard.secrets?.env_patterns).toEqual(
+        DEFAULT_CONFIG.guard.secrets?.env_patterns,
+      );
+      expect(cfg.guard.env_secret_patterns).toEqual(
+        DEFAULT_CONFIG.guard.env_secret_patterns,
       );
     } finally {
       await unlink(configPath);

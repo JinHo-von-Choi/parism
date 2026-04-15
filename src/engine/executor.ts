@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ResponseEnvelope } from "../types/envelope.js";
+import type { ResponseEnvelope, FailureInfo } from "../types/envelope.js";
 import { takeSnapshot, computeDiff } from "./state-tracker.js";
 
 const execFileAsync = promisify(execFile);
@@ -82,10 +82,25 @@ export async function execute(
       code?:   string | number;
       stdout?: string;
       stderr?: string;
+      killed?: boolean;
+      signal?: string;
     };
 
     const exitCode = typeof e.code === "number" ? e.code : 1;
     const after    = includeDiff ? await takeSnapshot(cwd) : null;
+
+    // failure.reason 분류:
+    //   killed=true (execFile timeout → SIGTERM) 또는 ETIMEDOUT → timeout
+    //   ENOENT/EACCES (스폰 실패) → spawn_failed
+    //   그 외 비정상 종료 → non_zero_exit
+    let failure: FailureInfo;
+    if (e.killed === true || e.code === "ETIMEDOUT") {
+      failure = { kind: "exec", reason: "timeout",       message: e.message };
+    } else if (e.code === "ENOENT" || e.code === "EACCES") {
+      failure = { kind: "exec", reason: "spawn_failed",  message: e.message };
+    } else {
+      failure = { kind: "exec", reason: "non_zero_exit", message: e.message };
+    }
 
     return {
       ok:          false,
@@ -97,6 +112,7 @@ export async function execute(
       stdout:      { raw: e.stdout ?? "", parsed: null },
       stderr:      { raw: e.stderr ?? e.message, parsed: null },
       diff:        before && after ? computeDiff(before, after) : null,
+      failure,
     };
   }
 }

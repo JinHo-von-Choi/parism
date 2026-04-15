@@ -1,3 +1,6 @@
+import { z }             from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+
 /**
  * 출력 형식.
  * json: 기존 객체 배열 + raw 포함.
@@ -33,16 +36,25 @@ export interface Fixture {
  * 파서 팩: 명령어 파서의 완전한 정의.
  * name     -- 대상 명령어 (예: "htop")
  * parse    -- raw stdout + args -> 구조화된 결과 (null이면 파싱 불가)
- * schema   -- 출력 JSON 스키마 (검증/문서 용도)
+ * schema   -- Zod 스키마 (출력 형태 정의, 검증/문서 용도)
  * fixtures -- 입출력 쌍 (테스트/검증 용도)
  * meta     -- 선택적 메타 정보
  */
 export interface ParserPack {
   name:      string;
   parse:     (raw: string, args: string[], ctx?: ParseContext) => unknown;
-  schema:    Record<string, unknown>;
+  schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
+}
+
+/**
+ * Zod 에러를 간결한 문자열로 변환한다.
+ */
+function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map(i => `${i.path.length > 0 ? i.path.join(".") + ": " : ""}${i.message}`)
+    .join("; ");
 }
 
 /**
@@ -50,7 +62,10 @@ export interface ParserPack {
  */
 export interface ParseResult {
   parsed:      unknown | null;
-  parse_error?: { reason: "parser_exception"; message: string };
+  parse_error?: {
+    reason:  "parser_exception" | "schema_violation";
+    message: string;
+  };
 }
 
 /**
@@ -89,18 +104,49 @@ export class ParserRegistry {
 
   /**
    * cmd에 등록된 파서를 찾아 실행한다.
+   * strictSchemas=true이고 cmd에 ParserPack이 등록된 경우, 파서 출력을 schema로 검증한다.
    * 파서 없음 → { parsed: null }. 파서 예외 → { parsed: null, parse_error }.
+   * schema 검증 실패 → { parsed: null, parse_error: { reason: "schema_violation" } }.
    */
-  parse(cmd: string, args: string[], raw: string, ctx?: ParseContext): ParseResult {
+  parse(cmd: string, args: string[], raw: string, ctx?: ParseContext, strictSchemas = false): ParseResult {
     const fn = this.parsers.get(cmd);
     if (!fn) return { parsed: null };
 
+    let parsed: unknown;
     try {
-      const parsed = fn(cmd, args, raw, ctx);
-      return { parsed: parsed ?? null };
+      parsed = fn(cmd, args, raw, ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { parsed: null, parse_error: { reason: "parser_exception", message } };
     }
+
+    if (parsed == null) return { parsed: null };
+
+    // strict_schemas 활성화 시 ParserPack이 있는 경우에만 검증
+    if (strictSchemas) {
+      const pack = this.packs.get(cmd);
+      if (pack) {
+        const result = pack.schema.safeParse(parsed);
+        if (!result.success) {
+          return {
+            parsed:      null,
+            parse_error: {
+              reason:  "schema_violation",
+              message: formatZodError(result.error),
+            },
+          };
+        }
+      }
+    }
+
+    return { parsed };
   }
+}
+
+/**
+ * ParserPack의 Zod 스키마를 JSON Schema 객체로 변환한다.
+ * 외부 문서화 및 툴링 용도.
+ */
+export function exportJsonSchema(pack: ParserPack): object {
+  return zodToJsonSchema(pack.schema, pack.name) as object;
 }

@@ -13,11 +13,20 @@ describe("checkGuard()", () => {
   it("허용되지 않은 명령은 GuardError를 던진다", () => {
     expect(() => checkGuard("rm", ["-rf", "/"], cwdOk, cfg))
       .toThrow(GuardError);
+    // failure.kind="guard", failure.reason=GuardError.reason 매핑 검증
+    try { checkGuard("rm", ["-rf", "/"], cwdOk, cfg); } catch (e) {
+      expect(e).toBeInstanceOf(GuardError);
+      expect((e as GuardError).reason).toBe("command_not_allowed");
+    }
   });
 
   it("세미콜론이 포함된 인자는 차단된다", () => {
     expect(() => checkGuard("ls", ["; rm -rf /"], cwdOk, cfg))
       .toThrow(GuardError);
+    try { checkGuard("ls", ["; rm -rf /"], cwdOk, cfg); } catch (e) {
+      expect(e).toBeInstanceOf(GuardError);
+      expect((e as GuardError).reason).toBe("injection_pattern");
+    }
   });
 
   it("백틱이 포함된 인자는 차단된다", () => {
@@ -39,6 +48,10 @@ describe("checkGuard()", () => {
     const cfg2 = { ...cfg, guard: { ...cfg.guard, allowed_paths: ["/home/user"] } };
     expect(() => checkGuard("ls", [], "/etc", cfg2))
       .toThrow(GuardError);
+    // failure.kind="guard", failure.reason="path_not_allowed" 매핑 검증
+    try { checkGuard("ls", [], "/etc", cfg2); } catch (e) {
+      expect((e as GuardError).reason).toBe("path_not_allowed");
+    }
   });
 
   it("../ 경로 순회로 allowed_paths 우회를 차단한다", () => {
@@ -66,6 +79,7 @@ describe("checkGuard()", () => {
       ...cfg,
       guard: {
         ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "node"],
         command_arg_restrictions: {
           node: { blocked_flags: ["-e", "--eval"] },
         },
@@ -73,6 +87,10 @@ describe("checkGuard()", () => {
     };
     expect(() => checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], cwdOk, cfg2))
       .toThrow(GuardError);
+    // failure.kind="guard", failure.reason="arg_not_allowed" 매핑 검증
+    try { checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], cwdOk, cfg2); } catch (e) {
+      expect((e as GuardError).reason).toBe("arg_not_allowed");
+    }
   });
 
   it("node --eval=code 형태도 차단된다", () => {

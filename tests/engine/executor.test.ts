@@ -23,6 +23,8 @@ describe("execute()", () => {
 
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
+    expect(result.failure?.kind).toBe("exec");
+    expect(result.failure?.reason).toBe("spawn_failed");
   });
 
   it("실패한 명령은 ok=false를 반환한다", async () => {
@@ -31,6 +33,8 @@ describe("execute()", () => {
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.raw.length).toBeGreaterThan(0);
+    expect(result.failure?.kind).toBe("exec");
+    expect(result.failure?.reason).toBe("non_zero_exit");
   });
 
   it("cwd가 응답에 포함된다", async () => {
@@ -62,4 +66,12 @@ describe("execute()", () => {
     expect(result.ok).toBe(true);
     expect(result.diff).toBeNull();
   });
+
+  it("타임아웃 초과 시 failure.reason=timeout을 반환한다", async () => {
+    const result = await execute("sleep", ["5"], process.cwd(), [], 50);
+
+    expect(result.ok).toBe(false);
+    expect(result.failure?.kind).toBe("exec");
+    expect(result.failure?.reason).toBe("timeout");
+  }, 10000);
 });
