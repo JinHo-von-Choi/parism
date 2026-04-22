@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { unlink, writeFile } from "node:fs/promises";
-import { loadConfig, DEFAULT_CONFIG } from "../../src/config/loader.js";
+import { loadConfig, loadConfigMultiLayer, DEFAULT_CONFIG } from "../../src/config/loader.js";
 
 describe("loadConfig()", () => {
   it("기본 설정이 올바른 구조를 가진다", () => {
@@ -183,5 +183,97 @@ describe("loadConfig() — guard.secrets 마이그레이션 shim", () => {
     } finally {
       await unlink(configPath);
     }
+  });
+});
+
+describe("loadConfigMultiLayer() — envToConfig 격리", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("PARISM_")) delete process.env[key];
+    }
+    Object.assign(process.env, originalEnv);
+  });
+
+  it("환경변수 미설정 시 project config의 allowed_commands가 보존된다", async () => {
+    const projectPath = `/tmp/prism-multilayer-${Date.now()}.json`;
+    const body = { guard: { allowed_commands: ["ls", "git", "cat"] } };
+    await writeFile(projectPath, JSON.stringify(body), "utf-8");
+
+    try {
+      const cfg = await loadConfigMultiLayer({
+        globalPath: "/tmp/__nonexistent__.json",
+        projectPath,
+        envPrefix: "PARISM_",
+      });
+
+      expect(cfg.guard.allowed_commands).toEqual(["ls", "git", "cat"]);
+    } finally {
+      await unlink(projectPath);
+    }
+  });
+
+  it("환경변수 미설정 시 project config의 allowed_paths가 보존된다", async () => {
+    const projectPath = `/tmp/prism-multilayer-paths-${Date.now()}.json`;
+    const body = { guard: { allowed_paths: ["/home/user", "/tmp"] } };
+    await writeFile(projectPath, JSON.stringify(body), "utf-8");
+
+    try {
+      const cfg = await loadConfigMultiLayer({
+        globalPath: "/tmp/__nonexistent__.json",
+        projectPath,
+        envPrefix: "PARISM_",
+      });
+
+      expect(cfg.guard.allowed_paths).toEqual(["/home/user", "/tmp"]);
+    } finally {
+      await unlink(projectPath);
+    }
+  });
+
+  it("PARISM_ALLOWED_COMMANDS 설정 시 해당 필드만 덮어쓴다", async () => {
+    const projectPath = `/tmp/prism-multilayer-env-${Date.now()}.json`;
+    const body = {
+      guard: {
+        allowed_commands: ["ls", "git"],
+        allowed_paths: ["/home/user"],
+        timeout_ms: 5000,
+      },
+    };
+    await writeFile(projectPath, JSON.stringify(body), "utf-8");
+
+    process.env.PARISM_ALLOWED_COMMANDS = "echo,curl";
+
+    try {
+      const cfg = await loadConfigMultiLayer({
+        globalPath: "/tmp/__nonexistent__.json",
+        projectPath,
+        envPrefix: "PARISM_",
+      });
+
+      expect(cfg.guard.allowed_commands).toEqual(["echo", "curl"]);
+      expect(cfg.guard.allowed_paths).toEqual(["/home/user"]);
+      expect(cfg.guard.timeout_ms).toBe(5000);
+    } finally {
+      delete process.env.PARISM_ALLOWED_COMMANDS;
+      await unlink(projectPath);
+    }
+  });
+
+  it("환경변수가 하나도 없으면 기본값을 보존한다", async () => {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("PARISM_")) delete process.env[key];
+    }
+
+    const cfg = await loadConfigMultiLayer({
+      globalPath: "/tmp/__nonexistent__.json",
+      projectPath: "/tmp/__nonexistent__.json",
+      envPrefix: "PARISM_",
+    });
+
+    expect(cfg.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
+    expect(cfg.guard.block_patterns).toEqual(DEFAULT_CONFIG.guard.block_patterns);
+    expect(cfg.guard.timeout_ms).toBe(DEFAULT_CONFIG.guard.timeout_ms);
   });
 });

@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 export interface CommandArgRestriction {
   blocked_flags: string[];
@@ -26,11 +28,21 @@ export interface PrismGuardConfig {
 
 export interface PrismParsersConfig {
   strict_schemas?: boolean;
+  adaptive_format_threshold?: {
+    json?: number;
+    compact?: number;
+    json_no_raw?: number;
+  };
 }
 
 export interface PrismConfig {
-  guard:    PrismGuardConfig;
-  parsers?: PrismParsersConfig;
+  guard:      PrismGuardConfig;
+  parsers?:   PrismParsersConfig;
+  telemetry?: PrismTelemetryConfig;
+}
+
+export interface PrismTelemetryConfig {
+  enabled?: boolean;
 }
 
 type PartialPrismGuardConfig = Partial<PrismGuardConfig>;
@@ -42,6 +54,11 @@ const DEFAULT_ENV_SECRET_PATTERNS = [
 export const DEFAULT_CONFIG: PrismConfig = {
   parsers: {
     strict_schemas: false,
+    adaptive_format_threshold: {
+      json: 0,
+      compact: 50,
+      json_no_raw: 200,
+    },
   },
   guard: {
     allowed_commands: [
@@ -159,4 +176,115 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
   } catch {
     return DEFAULT_CONFIG;
   }
+}
+
+export async function loadConfigMultiLayer(opts?: {
+  globalPath?: string;
+  projectPath?: string;
+  envPrefix?: string;
+}): Promise<PrismConfig> {
+  let config: PrismConfig = {
+    guard: { ...DEFAULT_CONFIG.guard },
+    parsers: { ...DEFAULT_CONFIG.parsers },
+  };
+
+  const globalPath = opts?.globalPath || path.join(os.homedir(), ".parism", "prism.config.json");
+  const projectPath = opts?.projectPath || path.join(process.cwd(), "prism.config.json");
+  const envPrefix = opts?.envPrefix || "PARISM_";
+
+  try {
+    const globalRaw = await readFile(globalPath, "utf-8");
+    const globalJson = JSON.parse(globalRaw) as Partial<PrismConfig>;
+    config = mergeConfig(config, globalJson);
+  } catch { /* ignore */ }
+
+  try {
+    const projectRaw = await readFile(projectPath, "utf-8");
+    const projectJson = JSON.parse(projectRaw) as Partial<PrismConfig>;
+    config = mergeConfig(config, projectJson);
+  } catch { /* ignore */ }
+
+  config = mergeConfig(config, envToConfig(envPrefix));
+
+  const userGuard = config.guard as PartialPrismGuardConfig;
+  const hasLegacy = userGuard.env_secret_patterns !== undefined;
+  const hasNew = userGuard.secrets?.env_patterns !== undefined;
+
+  if (hasLegacy || hasNew) {
+    if (hasNew) {
+      if (hasLegacy) process.stderr.write(DEPRECATION_MSG + "\n");
+      const newPatterns = config.guard.secrets!.env_patterns!;
+      config.guard.env_secret_patterns = newPatterns;
+    } else {
+      process.stderr.write(DEPRECATION_MSG + "\n");
+      const legacyPatterns = config.guard.env_secret_patterns;
+      config.guard.secrets = {
+        ...DEFAULT_CONFIG.guard.secrets,
+        ...config.guard.secrets,
+        env_patterns: legacyPatterns,
+      };
+    }
+  }
+
+  if (config.guard.allowed_paths.length === 0) {
+    console.warn(
+      "[parism] WARNING: allowed_paths is empty. " +
+      "All filesystem paths are accessible. " +
+      "Add paths to guard.allowed_paths in prism.config.json, or set [] to disable restriction.",
+    );
+  }
+
+  return config;
+}
+
+function envToConfig(envPrefix: string): Partial<PrismConfig> {
+  const guard: Partial<PrismGuardConfig> = {};
+  let parsers: PrismConfig["parsers"] | undefined;
+  const prefix = envPrefix || "PARISM_";
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith(prefix)) continue;
+    const shortKey = key.slice(prefix.length).toLowerCase();
+
+    if (shortKey === "allowed_commands") {
+      guard.allowed_commands = value?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+    } else if (shortKey === "allowed_paths") {
+      guard.allowed_paths = value?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+    } else if (shortKey === "timeout_ms") {
+      guard.timeout_ms = parseInt(value || "10000", 10);
+    } else if (shortKey === "max_output_bytes") {
+      guard.max_output_bytes = parseInt(value || "102400", 10);
+    } else if (shortKey === "max_items") {
+      guard.max_items = parseInt(value || "500", 10);
+    } else if (shortKey === "default_page_size") {
+      guard.default_page_size = parseInt(value || "100", 10);
+    } else if (shortKey === "strict_schemas") {
+      parsers = parsers ?? {};
+      parsers.strict_schemas = value === "true" || value === "1";
+    } else if (shortKey.startsWith("adaptive_format_")) {
+      parsers = parsers ?? {};
+      parsers.adaptive_format_threshold = parsers.adaptive_format_threshold ?? {};
+      const thresholdKey = shortKey.replace("adaptive_format_", "") as "json" | "compact" | "json_no_raw";
+      if (thresholdKey === "json_no_raw") {
+        parsers.adaptive_format_threshold.json_no_raw = parseInt(value || "0", 10);
+      } else {
+        parsers.adaptive_format_threshold[thresholdKey] = parseInt(value || "0", 10);
+      }
+    }
+  }
+
+  const result: Partial<PrismConfig> = {};
+  if (Object.keys(guard).length > 0) result.guard = guard as PrismGuardConfig;
+  if (parsers) result.parsers = parsers;
+  return result;
+}
+
+function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismConfig {
+  return {
+    guard: mergeGuardConfig({ ...base.guard, ...(override.guard ?? {}) }),
+    parsers: {
+      ...(base.parsers ?? {}),
+      ...(override.parsers ?? {}),
+    },
+  };
 }

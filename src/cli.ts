@@ -87,5 +87,29 @@ export function createCli(): Command {
       console.log(`\nTokens: raw=${result.tokens.raw} parsed=${result.tokens.parsed} compact=${result.tokens.compact}`);
     });
 
+  program
+    .command("eval [scenario]")
+    .description("Run benchmark suite: parse-error, retry-rate, completion (default: all)")
+    .option("-v, --verbose", "Show detailed output for each test case")
+    .action(async (scenario: string | undefined, options: { verbose?: boolean }) => {
+      const { runEvalSuite } = await import("./cli/eval.js");
+      const results = await runEvalSuite(scenario, options.verbose);
+      
+      console.log("\n=== Eval Suite Results ===");
+      console.log(`Scenario          | Runs | Success | Fail | Rate`);
+      console.log(`-------------------|------|----------|------|------`);
+      
+      for (const [name, data] of Object.entries(results)) {
+        const r = data as { total: number; success: number; fail: number };
+        const rate = r.total > 0 ? ((r.success / r.total) * 100).toFixed(1) + "%" : "N/A";
+        console.log(`${name.padEnd(17)}| ${String(r.total).padStart(4)} | ${String(r.success).padStart(8)} | ${String(r.fail).padStart(4)} | ${rate}`);
+      }
+      
+      const totalRuns = Object.values(results).reduce((sum: number, r: unknown) => sum + (r as { total: number }).total, 0);
+      const totalSuccess = Object.values(results).reduce((sum: number, r: unknown) => sum + (r as { success: number }).success, 0);
+      console.log(`-------------------|------|----------|------|------`);
+      console.log(`Overall           | ${String(totalRuns).padStart(4)} | ${String(totalSuccess).padStart(8)} | ${String(totalRuns - totalSuccess).padStart(4)} | ${totalRuns > 0 ? ((totalSuccess / totalRuns) * 100).toFixed(1) + "%" : "N/A"}`);
+    });
+
   return program;
 }

@@ -127,9 +127,9 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep` — e.g. `cat subdir/file`, `find src`) are checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
+**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` — e.g. `cat subdir/file`, `find src`) are checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
 
-**Injection Pattern Blocking**: If `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<` appear in any argument, the command is not executed.
+**Injection Pattern Blocking**: Each argument is checked individually for `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`. Per-argument checking prevents cross-boundary false positives (e.g., `["foo>", ">bar"]` is not falsely detected as `>>`).
 
 **Per-Command Argument Restrictions**: Specific flags can be blocked per command. `node -e`, `node --eval`, and `node --input-type` are blocked by default. `npx --yes` is also blocked.
 
@@ -255,10 +255,9 @@ Claude Code (Linux):
 }
 ```
 
-Once connected, two tools are exposed: `run` and `run_paged`.
+Once connected, four tools are exposed: `run`, `run_paged`, `describe`, and `dry_run`.
 
-`run` is the default command runner with structured parsing when available.
-`run_paged` returns paginated stdout for large output and includes `page_info`.
+The agent should call `describe` first to discover allowed commands and available parsers, then use `dry_run` to pre-check guard compliance before executing with `run` or `run_paged`.
 
 ---
 
@@ -290,6 +289,37 @@ Extra fields:
 - `page_info.has_next` — whether next page exists
 - `stdout.parsed` — always `null` (partial output cannot be safely parsed)
 
+### describe
+
+Agent onboarding tool. Returns allowed commands, available parsers, guard limits, and version info.
+
+Parameters: none.
+
+Response:
+- `version` — Parism package version
+- `allowed_commands` — commands permitted by guard
+- `available_parsers` — registered parser names
+- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns_count`, `allowed_paths`
+- `telemetry_enabled` — whether telemetry is active
+
+Call this first when the agent encounters Parism for the first time.
+
+### dry_run
+
+Guard pre-check tool. Validates whether a command would pass guard without executing it.
+
+Parameters:
+- `cmd` — command name (e.g. `rm`, `git`)
+- `args` — argument array (default: `[]`)
+- `cwd` — working directory (default: current directory)
+
+Response:
+- `would_pass` — whether guard would allow execution
+- `reason` — block reason (`command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`) or `null`
+- `message` — detailed block message or `null`
+
+Example: `dry_run("rm", ["-rf", "/"])` → `{ would_pass: false, reason: "command_not_allowed", message: "..." }`
+
 ---
 
 ## Configuration
@@ -311,6 +341,9 @@ Place `prism.config.json` in the project root to control Guard behavior.
       "npx":  { "blocked_flags": ["--yes", "-y"] }
     },
     "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
+  },
+  "telemetry": {
+    "enabled": false
   }
 }
 ```
@@ -320,6 +353,8 @@ Place `prism.config.json` in the project root to control Guard behavior.
 `env_secret_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them.
 
 `command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
+
+`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in.
 
 ---
 

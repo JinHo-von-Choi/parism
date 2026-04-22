@@ -80,3 +80,120 @@ describe("ParismEngine.runPaged()", () => {
     expect(result.failure?.kind).toBe("guard");
   });
 });
+
+/* ─── describe() ─── */
+describe("ParismEngine.describe()", () => {
+  const registry = createRegistry();
+  const engine   = new ParismEngine(DEFAULT_CONFIG, registry);
+
+  it("version, allowed_commands, available_parsers를 반환한다", () => {
+    const desc = engine.describe();
+
+    expect(desc.version).toBeDefined();
+    expect(Array.isArray(desc.allowed_commands)).toBe(true);
+    expect(desc.allowed_commands.length).toBeGreaterThan(0);
+    expect(Array.isArray(desc.available_parsers)).toBe(true);
+  });
+
+  it("guard_summary에 block_patterns과 timeout_ms가 포함된다", () => {
+    const desc = engine.describe();
+
+    expect(desc.guard_summary.block_patterns).toEqual(DEFAULT_CONFIG.guard.block_patterns);
+    expect(desc.guard_summary.timeout_ms).toBe(DEFAULT_CONFIG.guard.timeout_ms);
+    expect(desc.guard_summary.max_output_bytes).toBe(DEFAULT_CONFIG.guard.max_output_bytes);
+  });
+
+  it("command_arg_restrictions가 원본과 동일한 구조를 갖는다", () => {
+    const desc = engine.describe();
+    const keys = Object.keys(desc.guard_summary.command_arg_restrictions);
+
+    expect(keys).toContain("node");
+    expect(keys).toContain("curl");
+    expect(desc.guard_summary.command_arg_restrictions["node"].blocked_flags).toContain("-e");
+  });
+
+  it("telemetry_enabled가 기본 비활성이다", () => {
+    const desc = engine.describe();
+    expect(desc.telemetry_enabled).toBe(false);
+  });
+});
+
+/* ─── dryRun() ─── */
+describe("ParismEngine.dryRun()", () => {
+  const registry = createRegistry();
+  const engine   = new ParismEngine(DEFAULT_CONFIG, registry);
+
+  it("허용된 명령은 would_pass=true를 반환한다", () => {
+    const result = engine.dryRun("echo", ["hello"]);
+
+    expect(result.would_pass).toBe(true);
+    expect(result.reason).toBeUndefined();
+    expect(result.message).toBeUndefined();
+  });
+
+  it("차단된 명령은 would_pass=false와 reason을 반환한다", () => {
+    const result = engine.dryRun("rm", ["-rf", "/"]);
+
+    expect(result.would_pass).toBe(false);
+    expect(result.reason).toBe("command_not_allowed");
+    expect(result.message).toBeDefined();
+  });
+
+  it("injection 패턴은 would_pass=false, reason=injection_pattern을 반환한다", () => {
+    const result = engine.dryRun("echo", ["hello;rm -rf /"]);
+
+    expect(result.would_pass).toBe(false);
+    expect(result.reason).toBe("injection_pattern");
+  });
+
+  it("차단된 플래그는 would_pass=false, reason=arg_not_allowed를 반환한다", () => {
+    const result = engine.dryRun("curl", ["-d", "payload", "http://example.com"]);
+
+    expect(result.would_pass).toBe(false);
+    expect(result.reason).toBe("arg_not_allowed");
+  });
+});
+
+/* ─── Telemetry ─── */
+describe("ParismEngine.run() — telemetry", () => {
+  const registry = createRegistry();
+
+  it("telemetry 비활성 시 telemetry 필드가 없다", async () => {
+    const engine = new ParismEngine(DEFAULT_CONFIG, registry);
+    const result = await engine.run("echo", { args: ["hi"] });
+
+    expect(result.telemetry).toBeUndefined();
+  });
+
+  it("telemetry 활성 시 단계별 타이밍이 포함된다", async () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      telemetry: { enabled: true },
+    };
+    const engine = new ParismEngine(config, registry);
+    const result = await engine.run("echo", { args: ["hello"] });
+
+    expect(result.telemetry).toBeDefined();
+    const t = result.telemetry!;
+    expect(typeof t.guard_ms).toBe("number");
+    expect(typeof t.exec_ms).toBe("number");
+    expect(typeof t.parse_ms).toBe("number");
+    expect(typeof t.redact_ms).toBe("number");
+    expect(typeof t.total_ms).toBe("number");
+    expect(typeof t.raw_bytes).toBe("number");
+    expect(t.total_ms).toBeGreaterThanOrEqual(0);
+    expect(t.raw_bytes).toBeGreaterThan(0);
+  });
+
+  it("telemetry total_ms >= guard_ms + exec_ms 이상이다", async () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      telemetry: { enabled: true },
+    };
+    const engine = new ParismEngine(config, registry);
+    const result = await engine.run("echo", { args: ["timing test"] });
+
+    const t = result.telemetry!;
+    expect(t.total_ms).toBeGreaterThanOrEqual(t.guard_ms);
+  });
+});

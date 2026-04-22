@@ -51,6 +51,19 @@ export interface PageInfo {
 }
 
 /**
+ * 파이프라인 단계별 성능 메트릭.
+ * config.telemetry.enabled=true일 때만 ResponseEnvelope에 포함된다.
+ */
+export interface TelemetryField {
+  guard_ms:   number;
+  exec_ms:    number;
+  parse_ms:   number;
+  redact_ms:  number;
+  total_ms:   number;
+  raw_bytes:  number;
+}
+
+/**
  * Prism의 모든 명령 실행 결과가 따르는 응답 봉투.
  * - ok: 실행 성공 여부 (exitCode === 0)
  * - diff: State Tracker 미활성 시 null
@@ -69,6 +82,7 @@ export interface ResponseEnvelope {
   truncated?:  boolean;      // stdout이 max_output_bytes로 잘렸을 때 true
   page_info?:  PageInfo;     // run_paged 사용 시에만 채워짐
   failure?:    FailureInfo;  // 정규화된 실패 원인 (선택적, 하위 호환)
+  telemetry?:  TelemetryField; // config.telemetry.enabled=true 시에만 포함
   /**
    * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v2.0.0 제거 예정.
    * Guard 차단 시에만 존재한다.

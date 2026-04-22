@@ -147,4 +147,76 @@ describe("checkGuard()", () => {
     };
     expect(() => checkGuard("node", ["--version"], cwdOk, cfg2)).not.toThrow();
   });
+
+  it("인자 경계에서 합성되는 패턴은 오탐하지 않는다", () => {
+    // ["foo>", "bar"] 를 join하면 "foo> bar" — >> 패턴이 아님
+    // 개별 인자에도 >> 없으므로 통과해야 함
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        block_patterns: [">>"],
+      },
+    };
+    expect(() => checkGuard("echo", ["foo>", ">bar"], cwdOk, cfg2)).not.toThrow();
+  });
+
+  it("개별 인자 내 injection 패턴은 여전히 차단된다", () => {
+    expect(() => checkGuard("echo", ["hello>>world"], cwdOk, {
+      ...cfg,
+      guard: { ...cfg.guard, block_patterns: [">>"] },
+    })).toThrow(GuardError);
+  });
+
+  it("injection 에러 메시지에 문제 인자가 명시된다", () => {
+    try {
+      checkGuard("echo", ["safe", "bad;arg"], cwdOk, cfg);
+    } catch (e) {
+      expect(e).toBeInstanceOf(GuardError);
+      expect((e as GuardError).message).toContain("bad;arg");
+    }
+  });
+
+  it("git add로 허용 경로 밖 파일 접근이 차단된다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "git"],
+        allowed_paths: ["/home/user/project"],
+      },
+    };
+    expect(() => checkGuard("git", ["add", "/etc/passwd"], "/home/user/project", cfg2))
+      .toThrow(GuardError);
+    try {
+      checkGuard("git", ["add", "/etc/passwd"], "/home/user/project", cfg2);
+    } catch (e) {
+      expect((e as GuardError).reason).toBe("path_not_allowed");
+    }
+  });
+
+  it("docker build로 허용 경로 밖 접근이 차단된다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "docker"],
+        allowed_paths: ["/home/user/project"],
+      },
+    };
+    expect(() => checkGuard("docker", ["build", "/tmp/outside"], "/home/user/project", cfg2))
+      .toThrow(GuardError);
+  });
+
+  it("git status (경로 인자 없음)는 정상 통과한다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "git"],
+        allowed_paths: ["/home/user/project"],
+      },
+    };
+    expect(() => checkGuard("git", ["status"], "/home/user/project", cfg2)).not.toThrow();
+  });
 });

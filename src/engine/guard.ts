@@ -54,6 +54,7 @@ function getPathLikeArgs(args: string[]): string[] {
  */
 const PATH_TAKING_COMMANDS = new Set([
   "cat", "find", "stat", "du", "tree", "head", "tail", "ls", "grep", "wc",
+  "git", "docker", "kubectl", "cargo",
 ]);
 
 /**
@@ -89,13 +90,14 @@ export function checkGuard(
     );
   }
 
-  const allArgs = args.join(" ");
   for (const pattern of guard.block_patterns) {
-    if (allArgs.includes(pattern)) {
-      throw new GuardError(
-        `Blocked pattern '${pattern}' detected in arguments`,
-        "injection_pattern",
-      );
+    for (const arg of args) {
+      if (arg.includes(pattern)) {
+        throw new GuardError(
+          `Blocked pattern '${pattern}' detected in argument '${arg}'`,
+          "injection_pattern",
+        );
+      }
     }
   }
 

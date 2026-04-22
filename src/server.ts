@@ -4,8 +4,9 @@ import type { PrismConfig }    from "./config/loader.js";
 import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
+import { PACKAGE_VERSION }     from "./version.js";
 
-export const PACKAGE_VERSION = "1.0.0";
+export { PACKAGE_VERSION };
 
 const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
 
@@ -22,16 +23,21 @@ When to use:
 When NOT to use: Single-line output (pwd, echo) or commands needing pipe/redirect (Guard blocks).
 
 Tools:
+- describe: Show allowed commands, available parsers, guard restrictions, version. Call this first.
+- dry_run: Check if a command would pass the guard WITHOUT executing it.
 - run: Execute command, get structured JSON. format: json|compact|json-no-raw.
 - run_paged: Paginated stdout for large output. parsed is always null.
 
 Usage:
-1. Prefer run for small output; format=compact saves tokens.
-2. Large output: run_paged(page=0) first, check page_info.total_lines, fetch needed pages.
-3. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
-4. stdout.parsed has structured data; stdout.raw is fallback.
+1. Call describe first to understand what commands and parsers are available.
+2. Use dry_run to pre-validate unfamiliar commands before executing.
+3. Prefer run for small output; format=compact saves tokens.
+4. Large output: run_paged(page=0) first, check page_info.total_lines, fetch needed pages.
+5. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
+6. stdout.parsed has structured data; stdout.raw is fallback.
 
 Notes:
+- When config.telemetry.enabled is true, responses include a telemetry field with per-stage timing (guard_ms, exec_ms, parse_ms, redact_ms, total_ms, raw_bytes).
 - When config.guard.secrets.output_redaction_enabled is true, stdout.raw and stderr.raw are masked with [REDACTED]; stdout.parsed is untouched.
 - When config.parsers.strict_schemas is true, parser output is validated against the Zod schema — failure.reason = 'schema_violation' on mismatch.`;
 
@@ -128,6 +134,32 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
     },
     async ({ cmd, args, cwd, page, page_size, includeDiff }) => {
       const result = await engine.runPaged(cmd, { args, cwd, page, page_size, includeDiff });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "describe",
+    "Describe the current Parism environment: allowed commands, available parsers, guard restrictions, and version. " +
+    "Call this first when using Parism to understand what commands are available and how the guard is configured.",
+    {},
+    async () => {
+      const result = engine.describe();
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "dry_run",
+    "Check whether a command would pass the execution guard WITHOUT actually running it. " +
+    "Use this to pre-validate commands before calling run, especially for unfamiliar commands.",
+    {
+      cmd:  z.string().describe("Command name to test (e.g. 'git', 'rm')"),
+      args: z.array(z.string()).default([]).describe("Command arguments to test"),
+      cwd:  z.string().default(process.cwd()).describe("Working directory to test"),
+    },
+    async ({ cmd, args, cwd }) => {
+      const result = engine.dryRun(cmd, args, cwd);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     },
   );

@@ -7,7 +7,7 @@
  */
 
 import path                                                                         from "node:path";
-import { loadConfig }                                                               from "../config/loader.js";
+import { loadConfigMultiLayer } from "../config/loader.js";
 import type { PrismConfig }                                                         from "../config/loader.js";
 import { createRegistry }                                                           from "../parsers/index.js";
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
@@ -21,6 +21,8 @@ import { toCompact }                                                            
 import { tryParseNativeJson }                                                       from "../parsers/json-passthrough.js";
 import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
+import { PipelineTimer }                                                            from "../engine/telemetry.js";
+import { PACKAGE_VERSION }                                                          from "../version.js";
 
 export interface RunOptions {
   args?:        string[];
@@ -84,7 +86,10 @@ export class ParismEngine {
     const cwd         = opts?.cwd         ?? process.cwd();
     const format      = (opts?.format     ?? "json") as OutputFormat;
     const includeDiff = opts?.includeDiff ?? false;
+    const telemetryEnabled = this.config.telemetry?.enabled === true;
+    const timer = telemetryEnabled ? new PipelineTimer() : null;
 
+    timer?.markStart("guard");
     try {
       checkGuard(cmd, args, cwd, this.config);
     } catch (err) {
@@ -93,7 +98,9 @@ export class ParismEngine {
       }
       throw err;
     }
+    timer?.markEnd("guard");
 
+    timer?.markStart("exec");
     const envelope = await execute(
       cmd, args, cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
@@ -101,14 +108,33 @@ export class ParismEngine {
       this.config.guard.max_output_bytes,
       includeDiff,
     );
+    timer?.markEnd("exec");
+    timer?.setRawBytes(Buffer.byteLength(envelope.stdout.raw, "utf8"));
 
+    timer?.markStart("parse");
     const parseFormat   = format === "json-no-raw" ? "json" : format;
     const strictSchemas = this.config.parsers?.strict_schemas ?? false;
-    const parseResult   = this.registry.parse(cmd, args, envelope.stdout.raw, { maxItems: this.config.guard.max_items, format: parseFormat }, strictSchemas);
-    let   parsed       = parseResult.parsed;
+
+    const parseResult = this.registry.parse(cmd, args, envelope.stdout.raw, { maxItems: this.config.guard.max_items, format: parseFormat }, strictSchemas);
+    let parsed = parseResult.parsed;
     const nativeParsed = parsed == null ? tryParseNativeJson(envelope.stdout.raw) : null;
     if (parsed == null) parsed = nativeParsed;
-    const final        = parseFormat === "compact" ? toCompact(parsed) : parsed;
+
+    // adaptive format: 항목 수 기준 자동 포맷 선택
+    let finalFormat = parseFormat;
+    const threshold = this.config.parsers?.adaptive_format_threshold;
+    if (threshold && parsed && typeof parsed === "object") {
+      const arr = Array.isArray(parsed) ? parsed : Object.values(parsed).find(v => Array.isArray(v)) as unknown[] | undefined;
+      if (arr && arr.length > 0) {
+        if (threshold.json_no_raw !== undefined && arr.length >= threshold.json_no_raw) {
+          finalFormat = "json-no-raw" as typeof parseFormat;
+        } else if (threshold.compact !== undefined && arr.length >= threshold.compact) {
+          finalFormat = "compact";
+        }
+      }
+    }
+
+    const final = finalFormat === "compact" ? toCompact(parsed) : parsed;
     const stdout       = format === "json-no-raw"
       ? { raw: "", parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) }
       : { ...envelope.stdout, parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) };
@@ -121,11 +147,13 @@ export class ParismEngine {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };
     }
+    timer?.markEnd("parse");
 
     let enriched = parseFailure !== undefined
       ? { ...envelope, stdout, failure: parseFailure }
       : { ...envelope, stdout };
 
+    timer?.markStart("redact");
     if (this.config.guard.secrets?.output_redaction_enabled === true) {
       const patterns = validatePatterns(resolveRedactPatterns(this.config));
       enriched = {
@@ -134,8 +162,58 @@ export class ParismEngine {
         stderr:  { ...enriched.stderr, raw: redact(enriched.stderr.raw, patterns) },
       };
     }
+    timer?.markEnd("redact");
+
+    if (timer) {
+      enriched = { ...enriched, telemetry: timer.toField() };
+    }
 
     return enriched as ResponseEnvelope;
+  }
+
+  /**
+   * 현재 환경 정보를 반환한다. 에이전트가 사용 가능한 명령, 파서, guard 제한을 파악할 수 있다.
+   */
+  describe(): DescribeResult {
+    const guard = this.config.guard;
+    return {
+      version:            PACKAGE_VERSION,
+      allowed_commands:   [...guard.allowed_commands],
+      available_parsers:  this.registry.listPacks(),
+      guard_summary: {
+        block_patterns:          [...guard.block_patterns],
+        allowed_paths:           [...guard.allowed_paths],
+        timeout_ms:              guard.timeout_ms,
+        max_output_bytes:        guard.max_output_bytes,
+        command_arg_restrictions: Object.fromEntries(
+          Object.entries(guard.command_arg_restrictions).map(([k, v]) => [k, { ...v }]),
+        ),
+      },
+      telemetry_enabled: this.config.telemetry?.enabled === true,
+    };
+  }
+
+  /**
+   * 실제 실행 없이 guard 통과 여부만 확인한다.
+   */
+  dryRun(cmd: string, args: string[] = [], cwd: string = process.cwd()): DryRunResult {
+    try {
+      checkGuard(cmd, args, cwd, this.config);
+      return { would_pass: true };
+    } catch (err) {
+      if (err instanceof GuardError) {
+        return {
+          would_pass: false,
+          reason:     err.reason,
+          message:    err.message,
+        };
+      }
+      return {
+        would_pass: false,
+        reason:     "unknown",
+        message:    err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   /**
@@ -189,15 +267,36 @@ export class ParismEngine {
 
 /**
  * 기본 설정과 파서 레지스트리로 ParismEngine 인스턴스를 생성한다.
- * configPath를 지정하지 않으면 process.cwd()/prism.config.json을 사용한다.
+ * 다층 설정(global/project/env)을 자동으로 로드한다.
  */
 export async function createEngine(opts?: { configPath?: string }): Promise<ParismEngine> {
-  const configPath = opts?.configPath ?? path.join(process.cwd(), "prism.config.json");
-  const config     = await loadConfig(configPath);
-  const registry   = createRegistry();
-  const loaded     = await loadExternalParsers(parismHome(), registry);
+  const config = await loadConfigMultiLayer();
+  const registry = createRegistry();
+  const loaded = await loadExternalParsers(parismHome(), registry);
   if (loaded > 0) {
     process.stderr.write(`[parism] Loaded ${loaded} external parser(s)\n`);
   }
   return new ParismEngine(config, registry);
+}
+
+/** describe() 반환 타입. */
+export interface DescribeResult {
+  version:            string;
+  allowed_commands:   string[];
+  available_parsers:  string[];
+  guard_summary: {
+    block_patterns:          string[];
+    allowed_paths:           string[];
+    timeout_ms:              number;
+    max_output_bytes:        number;
+    command_arg_restrictions: Record<string, { blocked_flags?: string[]; allowed_flags?: string[] }>;
+  };
+  telemetry_enabled:  boolean;
+}
+
+/** dryRun() 반환 타입. */
+export interface DryRunResult {
+  would_pass: boolean;
+  reason?:    string;
+  message?:   string;
 }
