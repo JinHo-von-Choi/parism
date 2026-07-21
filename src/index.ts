@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer }         from "./server.js";
-import { loadConfig }           from "./config/loader.js";
+import { loadConfigMultiLayer } from "./config/loader.js";
 import { createRegistry }       from "./parsers/index.js";
 import { createCli }            from "./cli.js";
 import { validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS } from "./engine/redactor.js";
-import path                     from "node:path";
 
 const CLI_COMMANDS = ["capture", "init-parser", "test", "add", "inspect", "help", "--help", "-h", "--version", "-V"];
 
@@ -15,8 +14,7 @@ function isCliMode(): boolean {
 }
 
 async function startMcpServer(): Promise<void> {
-  const configPath = path.join(process.cwd(), "prism.config.json");
-  const config     = await loadConfig(configPath);
+  const config     = await loadConfigMultiLayer();
   const registry   = createRegistry();
 
   const { loadExternalParsers } = await import("./cli/auto-loader.js");

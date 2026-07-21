@@ -275,5 +275,79 @@ describe("loadConfigMultiLayer() — envToConfig 격리", () => {
     expect(cfg.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
     expect(cfg.guard.block_patterns).toEqual(DEFAULT_CONFIG.guard.block_patterns);
     expect(cfg.guard.timeout_ms).toBe(DEFAULT_CONFIG.guard.timeout_ms);
+    expect(cfg.telemetry?.enabled).toBe(false);
+  });
+
+  it("PARISM_TELEMETRY_ENABLED=true 설정 시 telemetry.enabled가 true로 반영된다", async () => {
+    process.env.PARISM_TELEMETRY_ENABLED = "true";
+
+    try {
+      const cfg = await loadConfigMultiLayer({
+        globalPath: "/tmp/__nonexistent__.json",
+        projectPath: "/tmp/__nonexistent__.json",
+        envPrefix: "PARISM_",
+      });
+
+      expect(cfg.telemetry?.enabled).toBe(true);
+    } finally {
+      delete process.env.PARISM_TELEMETRY_ENABLED;
+    }
+  });
+});
+
+describe("telemetry 설정 배선", () => {
+  it("DEFAULT_CONFIG.telemetry.enabled는 false이다", () => {
+    expect(DEFAULT_CONFIG.telemetry?.enabled).toBe(false);
+  });
+
+  it("설정 파일의 telemetry.enabled=true가 loadConfig 결과에 반영된다", async () => {
+    const configPath = `/tmp/prism-config-telemetry-${Date.now()}.json`;
+    const body        = { telemetry: { enabled: true } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    try {
+      const cfg = await loadConfig(configPath);
+      expect(cfg.telemetry?.enabled).toBe(true);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
+  it("설정 파일에 telemetry가 없으면 기본값(false)을 유지한다", async () => {
+    const configPath = `/tmp/prism-config-telemetry-default-${Date.now()}.json`;
+    const body        = { guard: { timeout_ms: 3000 } };
+    await writeFile(configPath, JSON.stringify(body), "utf-8");
+
+    try {
+      const cfg = await loadConfig(configPath);
+      expect(cfg.telemetry?.enabled).toBe(false);
+    } finally {
+      await unlink(configPath);
+    }
+  });
+
+  it("JSON 파싱 실패 시 stderr에 경고를 출력한다", async () => {
+    const configPath = `/tmp/prism-config-invalid-warn-${Date.now()}.json`;
+    await writeFile(configPath, "{ invalid json }", "utf-8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await loadConfig(configPath);
+      expect(stderrSpy).toHaveBeenCalled();
+      expect(String(stderrSpy.mock.calls[0][0])).toContain("failed to load");
+    } finally {
+      stderrSpy.mockRestore();
+      await unlink(configPath);
+    }
+  });
+
+  it("파일이 없으면 stderr 경고를 출력하지 않는다", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await loadConfig("/tmp/__nonexistent_prism_config__.json");
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });

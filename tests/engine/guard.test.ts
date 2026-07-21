@@ -219,4 +219,49 @@ describe("checkGuard()", () => {
     };
     expect(() => checkGuard("git", ["status"], "/home/user/project", cfg2)).not.toThrow();
   });
+
+  it("node로 슬래시 없는 상대경로 인자를 이용한 allowed_paths 우회를 차단한다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "node"],
+      },
+    };
+    expect(() => checkGuard("node", ["foo/../../evil.js"], cwdOk, cfg2))
+      .toThrow(GuardError);
+    try {
+      checkGuard("node", ["foo/../../evil.js"], cwdOk, cfg2);
+    } catch (e) {
+      expect((e as GuardError).reason).toBe("path_not_allowed");
+    }
+  });
+
+  it("node ./local.js는 cwd 내부 경로이므로 통과한다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "node"],
+      },
+    };
+    expect(() => checkGuard("node", ["./local.js"], cwdOk, cfg2)).not.toThrow();
+  });
+
+  it("DEFAULT_CONFIG 기준 node -e는 여전히 arg_not_allowed로 차단된다", () => {
+    const cfg2 = {
+      ...cfg,
+      guard: {
+        ...cfg.guard,
+        allowed_commands: [...cfg.guard.allowed_commands, "node"],
+      },
+    };
+    expect(() => checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], cwdOk, cfg2))
+      .toThrow(GuardError);
+    try {
+      checkGuard("node", ["-e", "require('fs').readFileSync('/etc/passwd')"], cwdOk, cfg2);
+    } catch (e) {
+      expect((e as GuardError).reason).toBe("arg_not_allowed");
+    }
+  });
 });

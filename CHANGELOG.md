@@ -5,7 +5,7 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
-## [Unreleased]
+## [1.1.0] - 2026-07-21
 
 ### Added
 - `describe` MCP 도구 — 허용 명령, 사용 가능 파서, guard 제한, 버전 정보를 단일 호출로 반환. 에이전트 온보딩에 사용.
@@ -16,15 +16,27 @@
 - `ResponseEnvelope.telemetry?` 필드 — `config.telemetry.enabled=true` 시에만 응답 봉투에 포함.
 - `ParismEngine.describe()` / `ParismEngine.dryRun()` 메서드 — 라이브러리 모드에서도 사용 가능.
 - `src/version.ts` — `PACKAGE_VERSION` 상수를 독립 모듈로 분리하여 순환 의존성 방지.
+- `ParserRegistry.listCommands()` — 내장 파서 43종의 명령 이름 목록 반환.
+- `createEngine({ configPath })` — 지정된 설정 파일 경로를 단일 로더로 로드하여 `ParismEngine` 인스턴스에 반영. 미지정 시 기존 multi-layer 로드 유지.
 
 ### Changed
 - `MCP_INSTRUCTIONS` 에 `describe`, `dry_run` 도구 안내 추가 및 사용 순서 권고 (describe 먼저 호출).
 - `ParismEngine.run()` 에 텔레메트리 계측 삽입 (guard/exec/parse/redact 각 단계 타이밍).
+- `describe().available_parsers` — 내장 파서 43종 명령 이름과 등록된 커스텀 ParserPack 이름을 합쳐 반환.
+- `DEFAULT_CONFIG.telemetry`, `loadConfig()`, `loadConfigMultiLayer()`/`mergeConfig()` — `telemetry` 필드를 설정 로딩 경로 전체에 포함. `envToConfig()` 에 `PARISM_TELEMETRY_ENABLED` 처리 추가로 설정 파일 또는 환경 변수로 `telemetry.enabled` 활성화 가능.
+- `PATH_TAKING_COMMANDS` 에 `node`, `npx`, `npm` 추가 — 슬래시로 시작하지 않는 상대경로 스크립트 인자도 `allowed_paths` 경로 검사 대상에 포함.
+- 배포 `prism.config.json` 의 `guard.block_patterns` 를 DEFAULT_CONFIG 수준으로 복원.
 
 ### Fixed
 - `envToConfig()` — `PARISM_*` 환경 변수 미설정 시 빈 배열이 이전 설정 레이어를 덮어쓰던 버그 수정. `Partial<PrismGuardConfig>` 사용하여 실제 설정된 필드만 emit.
 - Guard 인젝션 패턴 검사 — `args.join(" ")` 방식에서 개별 인자 순회로 변경하여 교차 경계 오탐 방지 (예: `["foo>", ">bar"]` → `>>` 오탐 제거).
 - `PATH_TAKING_COMMANDS` 에 `git`, `docker`, `kubectl`, `cargo` 추가 — 경로 인자를 받는 명령의 경로 guard 검증 누락 수정.
+
+### Documentation
+- `SPECIFICATION.md` §6.6, `README.md`, `README.en.md` — 설정 3레이어 병합과 `PARISM_*` 환경 변수 오버레이 목록 기록.
+- `SECURITY.md`, `SPECIFICATION.md` — `allowed_paths` 경로 인자 검사 명령 목록에 `node`, `npx`, `npm` 반영.
+- `README.md` — `describe` guard_summary 필드명, `parse_error.reason` 값 집합, `parism test` 상태 표기 정정.
+- `docs/adr/2026-07-21-external-parser-sandbox.md` — 외부 ParserPack 실행 격리 전략 ADR 신설.
 
 ## [1.0.0] - 2026-04-15
 

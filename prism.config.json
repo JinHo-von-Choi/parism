@@ -17,7 +17,7 @@
     ],
     "allowed_paths": ["./"],
     "timeout_ms": 10000,
-    "block_patterns": [],
+    "block_patterns": [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
     "command_arg_restrictions": {},
     "secrets": {
       "env_patterns": [

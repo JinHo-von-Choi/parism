@@ -60,6 +60,9 @@ export const DEFAULT_CONFIG: PrismConfig = {
       json_no_raw: 200,
     },
   },
+  telemetry: {
+    enabled: false,
+  },
   guard: {
     allowed_commands: [
       "ls", "find", "stat", "du", "df", "tree",
@@ -140,6 +143,10 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
         ...DEFAULT_CONFIG.parsers,
         ...(json.parsers ?? {}),
       },
+      telemetry: {
+        ...DEFAULT_CONFIG.telemetry,
+        ...(json.telemetry ?? {}),
+      },
     };
 
     const userGuard        = json.guard as PartialPrismGuardConfig | undefined ?? {};
@@ -173,7 +180,12 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
     }
 
     return config;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `[parism] WARNING: failed to load ${configPath}: ${(err as Error).message}\n`,
+      );
+    }
     return DEFAULT_CONFIG;
   }
 }
@@ -186,6 +198,7 @@ export async function loadConfigMultiLayer(opts?: {
   let config: PrismConfig = {
     guard: { ...DEFAULT_CONFIG.guard },
     parsers: { ...DEFAULT_CONFIG.parsers },
+    telemetry: { ...DEFAULT_CONFIG.telemetry },
   };
 
   const globalPath = opts?.globalPath || path.join(os.homedir(), ".parism", "prism.config.json");
@@ -196,13 +209,25 @@ export async function loadConfigMultiLayer(opts?: {
     const globalRaw = await readFile(globalPath, "utf-8");
     const globalJson = JSON.parse(globalRaw) as Partial<PrismConfig>;
     config = mergeConfig(config, globalJson);
-  } catch { /* ignore */ }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `[parism] WARNING: failed to load ${globalPath}: ${(err as Error).message}\n`,
+      );
+    }
+  }
 
   try {
     const projectRaw = await readFile(projectPath, "utf-8");
     const projectJson = JSON.parse(projectRaw) as Partial<PrismConfig>;
     config = mergeConfig(config, projectJson);
-  } catch { /* ignore */ }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(
+        `[parism] WARNING: failed to load ${projectPath}: ${(err as Error).message}\n`,
+      );
+    }
+  }
 
   config = mergeConfig(config, envToConfig(envPrefix));
 
@@ -240,6 +265,7 @@ export async function loadConfigMultiLayer(opts?: {
 function envToConfig(envPrefix: string): Partial<PrismConfig> {
   const guard: Partial<PrismGuardConfig> = {};
   let parsers: PrismConfig["parsers"] | undefined;
+  let telemetry: PrismConfig["telemetry"] | undefined;
   const prefix = envPrefix || "PARISM_";
 
   for (const [key, value] of Object.entries(process.env)) {
@@ -261,6 +287,9 @@ function envToConfig(envPrefix: string): Partial<PrismConfig> {
     } else if (shortKey === "strict_schemas") {
       parsers = parsers ?? {};
       parsers.strict_schemas = value === "true" || value === "1";
+    } else if (shortKey === "telemetry_enabled") {
+      telemetry = telemetry ?? {};
+      telemetry.enabled = value === "true" || value === "1";
     } else if (shortKey.startsWith("adaptive_format_")) {
       parsers = parsers ?? {};
       parsers.adaptive_format_threshold = parsers.adaptive_format_threshold ?? {};
@@ -276,6 +305,7 @@ function envToConfig(envPrefix: string): Partial<PrismConfig> {
   const result: Partial<PrismConfig> = {};
   if (Object.keys(guard).length > 0) result.guard = guard as PrismGuardConfig;
   if (parsers) result.parsers = parsers;
+  if (telemetry) result.telemetry = telemetry;
   return result;
 }
 
@@ -285,6 +315,10 @@ function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismCo
     parsers: {
       ...(base.parsers ?? {}),
       ...(override.parsers ?? {}),
+    },
+    telemetry: {
+      ...(base.telemetry ?? {}),
+      ...(override.telemetry ?? {}),
     },
   };
 }

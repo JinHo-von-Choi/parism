@@ -103,6 +103,14 @@ export class ParserRegistry {
   }
 
   /**
+   * register()로 등록된 모든 명령어 이름 목록을 반환한다.
+   * registerPack()으로 등록된 명령어도 parsers Map에 어댑터가 함께 등록되므로 포함된다.
+   */
+  listCommands(): string[] {
+    return [...this.parsers.keys()];
+  }
+
+  /**
    * cmd에 등록된 파서를 찾아 실행한다.
    * strictSchemas=true이고 cmd에 ParserPack이 등록된 경우, 파서 출력을 schema로 검증한다.
    * 파서 없음 → { parsed: null }. 파서 예외 → { parsed: null, parse_error }.

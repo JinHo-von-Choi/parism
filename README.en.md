@@ -200,6 +200,8 @@ Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json.
 
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
+> `stdout.parse_error.reason` only takes two values: `"parser_exception"` and `"schema_violation"`. "No parser found" is not a `parse_error` — it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+
 ### Native JSON Passthrough
 
 Commands without a dedicated parser still get JSON output passed through when the output is valid JSON (e.g. `kubectl get pods -o json`, `docker inspect`). Parism detects this and puts it in `parsed`. Guard checks and envelope wrapping apply the same. No extra configuration needed.
@@ -299,7 +301,7 @@ Response:
 - `version` — Parism package version
 - `allowed_commands` — commands permitted by guard
 - `available_parsers` — registered parser names
-- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns_count`, `allowed_paths`
+- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns` (full array), `allowed_paths`
 - `telemetry_enabled` — whether telemetry is active
 
 Call this first when the agent encounters Parism for the first time.
@@ -356,6 +358,30 @@ Place `prism.config.json` in the project root to control Guard behavior.
 
 `telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in.
 
+### Config Layers and Environment Variables
+
+Configuration merges three layers in order; later layers override earlier ones.
+
+1. Global: `~/.parism/prism.config.json`
+2. Project: `<cwd>/prism.config.json`
+3. Environment: `PARISM_`-prefixed variables
+
+Both the MCP server and library mode (`createEngine()`) use the same three-layer merge. `createEngine({ configPath })` loads only the specified file.
+
+| Environment variable | Target setting | Format |
+|---|---|---|
+| `PARISM_ALLOWED_COMMANDS` | `guard.allowed_commands` | comma-separated list |
+| `PARISM_ALLOWED_PATHS` | `guard.allowed_paths` | comma-separated list |
+| `PARISM_TIMEOUT_MS` | `guard.timeout_ms` | integer |
+| `PARISM_MAX_OUTPUT_BYTES` | `guard.max_output_bytes` | integer |
+| `PARISM_MAX_ITEMS` | `guard.max_items` | integer |
+| `PARISM_DEFAULT_PAGE_SIZE` | `guard.default_page_size` | integer |
+| `PARISM_STRICT_SCHEMAS` | `parsers.strict_schemas` | `true` or `1` |
+| `PARISM_ADAPTIVE_FORMAT_JSON` | `parsers.adaptive_format_threshold.json` | integer |
+| `PARISM_ADAPTIVE_FORMAT_COMPACT` | `parsers.adaptive_format_threshold.compact` | integer |
+| `PARISM_ADAPTIVE_FORMAT_JSON_NO_RAW` | `parsers.adaptive_format_threshold.json_no_raw` | integer |
+| `PARISM_TELEMETRY_ENABLED` | `telemetry.enabled` | `true` or `1` |
+
 ---
 
 ## Custom Parsers -- Build and Use Immediately
@@ -371,8 +397,7 @@ parism capture "htop -b -n 1"
 # 2. Scaffold a parser pack
 parism init-parser htop
 
-# 3. Edit parser.ts and test against fixtures
-parism test htop
+# 3. Edit parser.ts and verify fixtures (fixture replay is planned; use parism inspect for manual comparison today)
 
 # 4. Register -- available immediately, no restart needed
 parism add ./htop
@@ -389,7 +414,7 @@ Registered parsers are stored in `~/.parism/parsers/` and automatically loaded w
 |---|---|
 | `parism capture "<command>"` | Execute command and save raw output as fixture |
 | `parism init-parser <name>` | Scaffold a TypeScript parser pack (parser.ts + schema.json + fixtures/) |
-| `parism test [parser]` | Run fixture replay tests |
+| `parism test [parser]` | Run fixture replay tests (planned, not implemented) |
 | `parism add <path>` | Register a local parser pack permanently to ~/.parism/parsers/ |
 | `parism inspect "<command>"` | Compare raw / parsed / compact output + token counts |
 

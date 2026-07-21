@@ -39,7 +39,7 @@ export function createCli(): Command {
 
   program
     .command("test [parser]")
-    .description("Run fixture replay tests for a parser pack")
+    .description("Run fixture replay tests for a parser pack (planned)")
     .action(async (_parser: string | undefined) => {
       console.log("[parism] test: not yet implemented");
       process.exit(1);

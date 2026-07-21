@@ -164,6 +164,18 @@ describe("ParserRegistry.registerPack()", () => {
     expect(names).not.toContain("c");
   });
 
+  it("listCommands()로 register()된 모든 명령어 이름을 조회한다", () => {
+    const registry = new ParserRegistry();
+    registry.register("c", () => null);
+    registry.registerPack({
+      name: "a", parse: () => null, schema: z.unknown(), fixtures: [],
+    });
+
+    const names = registry.listCommands();
+    expect(names).toContain("c");
+    expect(names).toContain("a");
+  });
+
   // ── Zod schema / strict_schemas tests ──────────────────────────────────
 
   it("strictSchemas=false이면 스키마 검증 없이 파서 출력을 그대로 반환한다", () => {
@@ -273,5 +285,14 @@ describe("createRegistry()", () => {
     const a = createRegistry();
     const b = createRegistry();
     expect(a).not.toBe(b);
+  });
+
+  it("listCommands()가 비어있지 않고 내장 명령어를 포함한다", () => {
+    const registry = createRegistry();
+    const commands = registry.listCommands();
+
+    expect(commands.length).toBeGreaterThan(0);
+    expect(commands).toContain("ls");
+    expect(commands).toContain("git");
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { unlink, writeFile }    from "node:fs/promises";
 import { ParismEngine, createEngine } from "../../src/facade/engine.js";
 import { DEFAULT_CONFIG }             from "../../src/config/loader.js";
 import { createRegistry }             from "../../src/parsers/index.js";
@@ -7,6 +8,20 @@ describe("createEngine()", () => {
   it("기본 설정으로 ParismEngine 인스턴스를 반환한다", async () => {
     const engine = await createEngine();
     expect(engine).toBeInstanceOf(ParismEngine);
+  });
+
+  it("configPath 지정 시 해당 파일의 guard 설정이 반영된다", async () => {
+    const configPath = `/tmp/prism-config-engine-${Date.now()}.json`;
+    await writeFile(configPath, JSON.stringify({ guard: { timeout_ms: 4242 } }), "utf-8");
+
+    try {
+      const engine = await createEngine({ configPath });
+      const desc   = engine.describe();
+
+      expect(desc.guard_summary.timeout_ms).toBe(4242);
+    } finally {
+      await unlink(configPath);
+    }
   });
 });
 
@@ -93,6 +108,7 @@ describe("ParismEngine.describe()", () => {
     expect(Array.isArray(desc.allowed_commands)).toBe(true);
     expect(desc.allowed_commands.length).toBeGreaterThan(0);
     expect(Array.isArray(desc.available_parsers)).toBe(true);
+    expect(desc.available_parsers.length).toBeGreaterThan(0);
   });
 
   it("guard_summary에 block_patterns과 timeout_ms가 포함된다", () => {

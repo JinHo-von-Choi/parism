@@ -36,6 +36,7 @@ Requirements.md
 
 # Local editor / IDE
 .cursor/
+.serena/
 
 # Coverage reports
 coverage/

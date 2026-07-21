@@ -217,7 +217,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
-> v0.6 부터 `parse_error.reason` 은 `"parser_exception"`, `"parser_not_found"`, `"schema_violation"` 세 값을 가질 수 있다. 같은 정보가 `result.failure.kind === "parse"` 로도 노출된다.
+> `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"` 두 값만 가진다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
 
 ### 네이티브 JSON 패스스루
 
@@ -358,7 +358,7 @@ compact 예시:
 - `version` — Parism 패키지 버전
 - `allowed_commands` — guard에서 허용하는 명령 목록
 - `available_parsers` — 등록된 파서 이름 목록
-- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns_count`, `allowed_paths`
+- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns`(전체 배열), `allowed_paths`
 - `telemetry_enabled` — 텔레메트리 활성화 여부
 
 에이전트가 Parism을 처음 사용할 때 이 도구를 먼저 호출하면 가용 명령과 제한 사항을 한눈에 파악할 수 있다.
@@ -428,6 +428,30 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 > legacy `env_secret_patterns` 는 v2.0.0 에서 제거된다. 사용 시 stderr 에 deprecation 경고가 출력된다.
 
+### 설정 레이어와 환경 변수
+
+설정은 세 레이어를 순서대로 병합한다. 뒤 레이어가 앞 레이어를 덮어쓴다.
+
+1. 전역: `~/.parism/prism.config.json`
+2. 프로젝트: `<cwd>/prism.config.json`
+3. 환경 변수: `PARISM_` 접두 변수
+
+MCP 서버와 라이브러리 모드(`createEngine()`) 모두 동일한 3레이어 병합을 사용한다. `createEngine({ configPath })`로 특정 파일을 직접 지정하면 그 파일만 로드한다.
+
+| 환경 변수 | 대상 설정 | 형식 |
+|---|---|---|
+| `PARISM_ALLOWED_COMMANDS` | `guard.allowed_commands` | 쉼표 구분 목록 |
+| `PARISM_ALLOWED_PATHS` | `guard.allowed_paths` | 쉼표 구분 목록 |
+| `PARISM_TIMEOUT_MS` | `guard.timeout_ms` | 정수 |
+| `PARISM_MAX_OUTPUT_BYTES` | `guard.max_output_bytes` | 정수 |
+| `PARISM_MAX_ITEMS` | `guard.max_items` | 정수 |
+| `PARISM_DEFAULT_PAGE_SIZE` | `guard.default_page_size` | 정수 |
+| `PARISM_STRICT_SCHEMAS` | `parsers.strict_schemas` | `true` 또는 `1` |
+| `PARISM_ADAPTIVE_FORMAT_JSON` | `parsers.adaptive_format_threshold.json` | 정수 |
+| `PARISM_ADAPTIVE_FORMAT_COMPACT` | `parsers.adaptive_format_threshold.compact` | 정수 |
+| `PARISM_ADAPTIVE_FORMAT_JSON_NO_RAW` | `parsers.adaptive_format_threshold.json_no_raw` | 정수 |
+| `PARISM_TELEMETRY_ENABLED` | `telemetry.enabled` | `true` 또는 `1` |
+
 ---
 
 ## 커스텀 파서 -- 직접 만들고 바로 쓴다
@@ -443,8 +467,7 @@ parism capture "htop -b -n 1"
 # 2. 파서 팩 스캐폴드를 생성한다
 parism init-parser htop
 
-# 3. parser.ts를 편집하고 fixture를 테스트한다
-parism test htop
+# 3. parser.ts를 편집하고 fixture를 검증한다 (fixture replay 는 예정 기능, 현재는 parism inspect 로 수동 대조)
 
 # 4. 등록한다 -- 재시작 없이 즉시 사용 가능
 parism add ./htop
@@ -461,7 +484,7 @@ parism inspect "htop -b -n 1"
 |---|---|
 | `parism capture "<command>"` | 명령어를 실행하고 raw 출력을 fixture로 저장 |
 | `parism init-parser <name>` | TypeScript 파서 팩 스캐폴드 생성 (parser.ts + schema.json + fixtures/) |
-| `parism test [parser]` | fixture replay 테스트 실행 |
+| `parism test [parser]` | fixture replay 테스트 실행 (예정, 미구현) |
 | `parism add <path>` | 로컬 파서 팩을 ~/.parism/parsers/에 영구 등록 |
 | `parism inspect "<command>"` | raw / parsed / compact 출력 비교 + 토큰 수 |
 

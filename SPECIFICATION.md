@@ -75,7 +75,7 @@ v0.6.0-alpha.1 기준으로 parism은 두 배포 면을 지원한다. FastMCP �
 
 MCP 서버: `src/server.ts` + `src/index.ts`가 `@modelcontextprotocol/sdk` 기반 stdio 서버를 제공한다. 에이전트가 `run` / `run_paged` 도구로 호출한다.
 
-라이브러리 모드 (실험적, v0.6부터): `src/facade/engine.ts`의 `ParismEngine`을 직접 import하여 in-process 사용한다. `import { createEngine } from "@nerdvana/parism/engine"`. v0.7 이전까지 API가 변경될 수 있다.
+라이브러리 모드 (v1.0.0부터 안정 API): `src/facade/engine.ts`의 `ParismEngine`을 직접 import하여 in-process 사용한다. `import { createEngine } from "@nerdvana/parism/engine"`. `ResponseEnvelope` 계약과 `ParismEngine` API는 Semantic Versioning을 따르며 v2.0.0 이전까지 breaking change가 없다.
 
 두 면은 동일한 `ParismEngine`에 위임한다. `server.ts`의 `buildRunResult` / `buildPagedResult`는 `ParismEngine.run` / `runPaged`를 래핑하는 얇은 직렬화 레이어다.
 
@@ -128,6 +128,8 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 
 `run_paged`는 파서를 실행하지 않는다. `stdout.parsed`는 항상 `null`이다. 부분 출력은 구조화 파싱이 불가능하다.
 
+`run_paged`는 스트리밍이 아니다. 명령의 전체 stdout을 실행 완료까지 메모리에 적재한 뒤 페이지 단위로 잘라 반환한다(`page`/`page_size`는 응답 절삭일 뿐 실행 범위 절삭이 아니다). 이 계층은 `max_output_bytes` 상한을 적용하지 않으므로(`runPaged` 내부에서 0으로 전달), 실질 상한은 실행을 위임받는 `execFile`의 `maxBuffer`(10MB, `src/engine/executor.ts`)가 결정한다. 전체 stdout이 10MB를 초과하면 `execFile`이 reject하고 해당 페이지 요청은 실패 봉투로 귀결된다.
+
 응답에 `page_info` 필드가 추가된다:
 - `page_info.page`: 현재 페이지 (0-indexed)
 - `page_info.page_size`: 요청한 페이지 크기
@@ -147,7 +149,7 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 | `version` | string | Parism 패키지 버전 |
 | `allowed_commands` | string[] | guard에서 허용하는 명령 목록 |
 | `available_parsers` | string[] | 등록된 파서 이름 목록 |
-| `guard_summary` | object | `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns_count`, `allowed_paths` |
+| `guard_summary` | object | `timeout_ms`, `max_output_bytes`, `block_patterns`, `allowed_paths`, `command_arg_restrictions` |
 | `telemetry_enabled` | boolean | 텔레메트리 활성화 여부 |
 
 에이전트가 Parism을 처음 사용하거나 가용 명령을 탐색할 때 호출한다. 실행 파이프라인을 거치지 않는다.
@@ -256,7 +258,7 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 `guard.allowed_paths`가 설정된 경우 두 가지를 검사한다.
 
 1. `cwd`가 허용 경로의 하위인지 (`path.resolve` 후 접미 슬래시 기반 prefix 비교)
-2. 경로 인자: `/`, `./`, `../`로 시작하는 인자 + `PATH_TAKING_COMMANDS`(`cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`)의 positional 인자
+2. 경로 인자: `/`, `./`, `../`로 시작하는 인자 + `PATH_TAKING_COMMANDS`(`cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`, `node`, `npx`, `npm`)의 positional 인자
 
 `allowed_paths`가 빈 배열이면 경로 제한이 생략된다. 기본값은 `[process.cwd()]`다 (서버 시작 시점 CWD).
 
@@ -415,6 +417,30 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 }
 ```
 
+### 6.6 설정 레이어와 환경 변수 오버레이
+
+`loadConfigMultiLayer`가 세 레이어를 순서대로 병합한다. 뒤 레이어가 앞 레이어를 덮어쓴다.
+
+1. 전역: `~/.parism/prism.config.json`
+2. 프로젝트: `<cwd>/prism.config.json`
+3. 환경 변수: `PARISM_` 접두 변수
+
+MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일한 3레이어 병합을 사용한다. `createEngine({ configPath })`로 특정 파일을 지정하면 단일 파일 로더(`loadConfig`)로 그 파일만 로드한다. 파일이 없으면 무경고로 기본값에 폴백하고, JSON 파싱에 실패하면 stderr 경고 후 폴백한다.
+
+| 환경 변수 | 대상 설정 | 형식 |
+|---|---|---|
+| `PARISM_ALLOWED_COMMANDS` | `guard.allowed_commands` | 쉼표 구분 목록 |
+| `PARISM_ALLOWED_PATHS` | `guard.allowed_paths` | 쉼표 구분 목록 |
+| `PARISM_TIMEOUT_MS` | `guard.timeout_ms` | 정수 |
+| `PARISM_MAX_OUTPUT_BYTES` | `guard.max_output_bytes` | 정수 |
+| `PARISM_MAX_ITEMS` | `guard.max_items` | 정수 |
+| `PARISM_DEFAULT_PAGE_SIZE` | `guard.default_page_size` | 정수 |
+| `PARISM_STRICT_SCHEMAS` | `parsers.strict_schemas` | `true` 또는 `1` |
+| `PARISM_ADAPTIVE_FORMAT_JSON` | `parsers.adaptive_format_threshold.json` | 정수 |
+| `PARISM_ADAPTIVE_FORMAT_COMPACT` | `parsers.adaptive_format_threshold.compact` | 정수 |
+| `PARISM_ADAPTIVE_FORMAT_JSON_NO_RAW` | `parsers.adaptive_format_threshold.json_no_raw` | 정수 |
+| `PARISM_TELEMETRY_ENABLED` | `telemetry.enabled` | `true` 또는 `1` |
+
 ---
 
 ## 7. 설계 원칙
@@ -423,7 +449,7 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 
 2. raw 보존 — `stdout.raw`는 항상 원본을 유지한다. 파서가 실패하거나 없어도 에이전트는 raw로 폴백할 수 있다. 예외: `output_redaction_enabled=true`이면 raw에도 레덕션이 적용된다. 이 예외는 의도된 것이며, 시크릿 보호가 원본 보존보다 우선한다.
 
-3. YAGNI — 사용 사례가 구체화되지 않은 추상화를 추가하지 않는다. 라이브러리 모드는 실험적으로 표시하고, API가 안정화되기 전에 배포 보장을 하지 않는다.
+3. YAGNI — 사용 사례가 구체화되지 않은 추상화를 추가하지 않는다. v1.0.0 이후 라이브러리 모드는 안정 API이며, breaking change는 v2.0.0을 통해서만 이루어진다.
 
 4. 단방향 임포트 DAG — 모듈 계층은 `types → config → engine → parsers → facade → server` 방향만 허용한다. 역방향 의존은 MCP와 라이브러리 배포 면의 분리를 깨뜨린다.
 

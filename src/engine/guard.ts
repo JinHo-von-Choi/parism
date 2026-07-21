@@ -54,7 +54,7 @@ function getPathLikeArgs(args: string[]): string[] {
  */
 const PATH_TAKING_COMMANDS = new Set([
   "cat", "find", "stat", "du", "tree", "head", "tail", "ls", "grep", "wc",
-  "git", "docker", "kubectl", "cargo",
+  "git", "docker", "kubectl", "cargo", "node", "npx", "npm",
 ]);
 
 /**

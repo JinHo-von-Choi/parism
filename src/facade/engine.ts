@@ -7,7 +7,7 @@
  */
 
 import path                                                                         from "node:path";
-import { loadConfigMultiLayer } from "../config/loader.js";
+import { loadConfig, loadConfigMultiLayer } from "../config/loader.js";
 import type { PrismConfig }                                                         from "../config/loader.js";
 import { createRegistry }                                                           from "../parsers/index.js";
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
@@ -179,7 +179,7 @@ export class ParismEngine {
     return {
       version:            PACKAGE_VERSION,
       allowed_commands:   [...guard.allowed_commands],
-      available_parsers:  this.registry.listPacks(),
+      available_parsers:  [...new Set([...this.registry.listCommands(), ...this.registry.listPacks()])],
       guard_summary: {
         block_patterns:          [...guard.block_patterns],
         allowed_paths:           [...guard.allowed_paths],
@@ -236,7 +236,9 @@ export class ParismEngine {
       throw err;
     }
 
-    // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0)
+    // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
+    // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
+    // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
     const envelope               = await execute(
       cmd, args, cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
@@ -270,7 +272,7 @@ export class ParismEngine {
  * 다층 설정(global/project/env)을 자동으로 로드한다.
  */
 export async function createEngine(opts?: { configPath?: string }): Promise<ParismEngine> {
-  const config = await loadConfigMultiLayer();
+  const config = opts?.configPath ? await loadConfig(opts.configPath) : await loadConfigMultiLayer();
   const registry = createRegistry();
   const loaded = await loadExternalParsers(parismHome(), registry);
   if (loaded > 0) {

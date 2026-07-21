@@ -63,7 +63,7 @@ Guard는 가드 레이어 방어선이며 커널 샌드박스가 아니다. 다�
 
 ### (b) allowed_paths 경로 제한
 
-`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자와, `cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` 등 경로를 받는 명령의 positional 인자가 허용 경로 밖이면 차단된다.
+`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자와, `cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`, `node`, `npx`, `npm` 등 경로를 받는 명령의 positional 인자가 허용 경로 밖이면 차단된다.
 
 한계: 커널 레벨 강제가 아니므로, 경로를 직접 받지 않는 명령(예: `env`, `id`, `uname`)에는 경로 검사가 적용되지 않는다. `allowed_paths`가 비어 있으면 이 계층의 검사가 생략된다.
 
