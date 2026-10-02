@@ -10,8 +10,8 @@ import { parseFree, parseUname, parseId, parseSystemctl, parseJournalctl, parseA
 import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./windows/index.js";
 import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
 import { parseNpm, parseCargo } from "./packages/index.js";
-import { gitSubcommandIndex }                                        from "./supports.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
+import { skipLeadingFlags }                                          from "./format.js";
 
 /**
  * 44개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
@@ -67,7 +67,7 @@ export function createRegistry(): ParserRegistry {
 
   /** git은 앞의 전역 옵션을 건너뛴 서브커맨드로 파서를 선택하고, 서브커맨드부터의 인자를 넘긴다. */
   register("git", (cmd, args, raw) => {
-    const subArgs = args.slice(gitSubcommandIndex(args));
+    const subArgs = args.slice(skipLeadingFlags(BUILTIN_CONTRACTS.git!, args));
     const sub     = subArgs[0];
     if (sub === "status") return parseGitStatus(cmd, subArgs, raw);
     if (sub === "log")    return parseGitLog(cmd, subArgs, raw);

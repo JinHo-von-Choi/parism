@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseFree }       from "../../src/parsers/system/free.js";
-import { supportsFree }    from "../../src/parsers/supports.js";
+import { createRegistry }  from "../../src/parsers/index.js";
 import { parseUname }      from "../../src/parsers/system/uname.js";
 import { parseId }         from "../../src/parsers/system/id.js";
 import { parseSystemctl }  from "../../src/parsers/system/systemctl.js";
@@ -9,8 +9,9 @@ import { parseApt }         from "../../src/parsers/system/apt.js";
 import { parseBrew }       from "../../src/parsers/system/brew.js";
 
 describe("free 단위 처리 범위", () => {
-  it("10진 단위 옵션은 supportsFree가 거부하고 2진 단위 옵션은 환산한다", () => {
-    for (const flag of ["--kilo", "--mega", "--giga"]) expect(supportsFree([flag])).toBe(false);
+  it("10진 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
+    const registry = createRegistry();
+    for (const flag of ["--kilo", "--mega", "--giga"]) expect(registry.parse("free", [flag], "").parse_error?.reason).toBe("unsupported_format");
     const raw = "              total        used        free      shared  buff/cache   available\nMem:             10           4           6           0           0           6\n";
     expect(parseFree("free", ["--mebi"], raw)).toMatchObject({ unit: "MB", mem: { total_bytes: 10 * 1024 ** 2 } });
     expect(parseFree("free", [], raw)).toMatchObject({ unit: "KB", mem: { total_bytes: 10 * 1024 } });

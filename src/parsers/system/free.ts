@@ -38,7 +38,7 @@ function parseSize(s: string): number {
 
 /**
  * 플래그에 따라 숫자 한 단위가 몇 bytes인지 돌려준다. -h 는 값 자체가 접미사를 가지므로 1이다.
- * 10진 단위(--kilo, --mega, --giga 등)는 supportsFree가 거부하므로 여기서 다루지 않는다.
+ * 10진 단위(--kilo, --mega, --giga 등)는 free 계약의 허용 플래그 밖이므로 여기서 다루지 않는다.
  */
 function unitFactor(args: string[]): { unit: string; factor: number } {
   const shorts = args.filter(a => /^-[A-Za-z]+$/.test(a)).map(a => a.slice(1)).join("");

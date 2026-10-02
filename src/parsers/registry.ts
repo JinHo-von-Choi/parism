@@ -2,7 +2,7 @@ import { z }                  from "zod";
 import { zodToJsonSchema }      from "zod-to-json-schema";
 import { tryParseNativeJson }   from "./json-passthrough.js";
 import { countDataLines, isSilentEmpty } from "./invariants.js";
-import { resolveContract }      from "./format.js";
+import { resolveContract, checkFormat, type FlagArity, type PositionalRule } from "./format.js";
 
 /**
  * 출력 형식.
@@ -28,10 +28,26 @@ export type ParserFn = (cmd: string, args: string[], raw: string, ctx?: ParseCon
 
 /**
  * 파서가 처리할 수 있는 입력 범위와 출력 모양의 선언.
- * supports    -- args 기준으로 출력 형식을 처리할 수 있는지 판정. false면 파서를 실행하지 않는다.
+ * 형식 선언(acceptedFlags, acceptedPositionals, subcommands)이 있으면 그 범위 밖의 인자는 unsupported_format이다.
+ * supports    -- 선언으로 표현하기 어려운 조건. 선언 검사를 통과한 뒤 추가로 적용한다.
  * subcommands -- 서브커맨드별 계약. 키는 서브커맨드 낱말("log", "pr list")이고 값은 상위 계약에 덧씌운다.
+ *                선언하지 않은 서브커맨드는 unsupported_format이다. 빈 문자열 키는 서브커맨드 없는 실행이다.
  */
 export interface ParserContract {
+  /** 출력 형식을 검증한 플래그와 값 방식. 목록 밖의 플래그는 unsupported_format이다. */
+  acceptedFlags?:       Readonly<Record<string, FlagArity>>;
+  /** 플래그별 허용 값 패턴 */
+  acceptedValues?:      Readonly<Record<string, RegExp>>;
+  /** 위치 인자 규칙 */
+  acceptedPositionals?: PositionalRule;
+  /** 출력 형식을 정하는 플래그. 이 가운데 하나 이상이 있어야 한다. */
+  requiredFlags?:       readonly string[];
+  /** 함께 쓸 수 없는 플래그. 이 가운데 하나까지만 받는다. */
+  exclusiveFlags?:      readonly string[];
+  /** `+`로 시작하는 인자를 플래그로 본다(dig +short, lsof +D). */
+  plusFlags?:           boolean;
+  /** 단일 대시 긴 이름(-name)만 쓰고 단문자 묶음으로 나누지 않는다(find). */
+  singleDashLong?:      boolean;
   supports?:    (args: string[]) => boolean;
   /** 데이터가 아닌 머리 줄 수(공백 줄 제외). 머리만 있는 출력은 정상적인 빈 결과로 본다. */
   headerLines?: number;
@@ -44,7 +60,7 @@ export interface ParserContract {
   /** 행 객체가 가질 수 있는 필드 이름 목록 */
   rowFields?:   readonly string[];
   /** 서브커맨드 앞에 올 수 있는 전역 옵션과 값 여부(git의 -C <경로>) */
-  leadingFlags?: Readonly<Record<string, "bool" | "value">>;
+  leadingFlags?: Readonly<Record<string, FlagArity>>;
   /** 서브커맨드별 계약 */
   subcommands?:  Readonly<Record<string, ParserContract>>;
 }
@@ -172,11 +188,16 @@ export class ParserRegistry {
     const fn = this.parsers.get(cmd);
     if (!fn) return { parsed: null };
 
-    const contract = this.contractFor(cmd, args);
-    if (contract?.supports && !contract.supports(args)) {
+    const declared = this.contracts.get(cmd);
+    const format   = declared ? checkFormat(declared, args) : undefined;
+    const contract = format?.contract;
+    if (format && !format.accepted) {
       return {
         parsed:      null,
-        parse_error: { reason: "unsupported_format", message: `Output format of '${[cmd, ...args].join(" ")}' is not supported by the '${cmd}' parser` },
+        parse_error: {
+          reason:  "unsupported_format",
+          message: `Output format of '${[cmd, ...args].join(" ")}' is not supported by the '${cmd}' parser: ${format.reason}`,
+        },
       };
     }
 
