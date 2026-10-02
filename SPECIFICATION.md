@@ -135,6 +135,7 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 - `page_info.page_size`: 요청한 페이지 크기
 - `page_info.total_lines`: stdout 전체 줄 수
 - `page_info.has_next`: 다음 페이지 존재 여부
+- `page_info.cache`: `{ hit, age_ms }`. `page=0`은 항상 새로 실행해 저장하고, `page>0`은 같은 (명령, 인자, 실경로 cwd) 결과가 30초 안에 있으면 재실행 없이 재사용한다. 최대 16항목, LRU
 
 ### 2.3 describe
 
@@ -364,7 +365,8 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `block_patterns` | 9개 인젝션 패턴 | 인자 차단 패턴 |
 | `command_arg_restrictions` | node/npx/curl 제한 | 명령별 차단 플래그 |
 | `secrets` | 하위 참조 | 시크릿 설정 통합 객체 (v0.6) |
-| `env_secret_patterns` | 6개 패턴 | deprecated — `secrets.env_patterns` 사용 |
+| `profile` | `"readonly"` | `"build"`이면 빌드·시험 실행 서브커맨드를 추가로 허용. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 사용 |
+| `command_policies` | 없음 | 명령 단위 정책 덮어쓰기. 우선순위는 `command_policies`, `build` 프로필, 기본 정책 순 |
 
 ### 6.2 guard.secrets (v0.6 통합)
 
@@ -386,7 +388,9 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `output_patterns` | `[]` | stdout/stderr 레덕션 패턴. `undefined`이면 7개 DEFAULT 패턴 사용; `[]`이면 레덕션 비활성 |
 | `output_redaction_enabled` | `false` | 출력 레덕션 활성화 여부 |
 
-레거시 `guard.env_secret_patterns` 자동 마이그레이션: 사용자가 레거시 필드만 지정하면 `guard.secrets.env_patterns`에 자동 복사하고 stderr에 deprecation 경고를 출력한다. 둘 다 지정하면 `guard.secrets.env_patterns`가 우선하며 경고가 출력된다.
+레거시 `guard.env_secret_patterns`는 2.0.0에서 제거됐다. 설정에 남아 있으면 stderr에 경고를 출력하고 무시한다.
+
+최상위 `trust_project_config`는 전역 설정에서만 켤 수 있다. 꺼져 있으면 프로젝트 `prism.config.json`은 가드를 넓히지 못하고 좁히는 방향으로만 병합된다.
 
 ### 6.3 출력 레덕션 (v0.6 신설, opt-in)
 
@@ -461,7 +465,7 @@ MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일�
 
 4. 단방향 임포트 DAG — 모듈 계층은 `types → config → engine → parsers → facade → server` 방향만 허용한다. 역방향 의존은 MCP와 라이브러리 배포 면의 분리를 깨뜨린다.
 
-5. 외부 계약의 하위 호환 — 기존 필드 (`guard_error`, `env_secret_patterns`, `stdout.parse_error`)는 deprecation만 하고 삭제하지 않는다. 새 필드 (`failure`, `secrets.env_patterns`)는 기존 필드와 병존한다.
+5. 외부 계약의 하위 호환: 기존 필드 (`guard_error`, `stdout.parse_error`)는 deprecation만 하고 삭제하지 않는다. 새 필드 (`failure`, `secrets.env_patterns`)는 기존 필드와 병존한다.
 
 6. 실패는 봉투로 — Guard 차단, 실행 오류, 파서 예외 모두 예외를 던지지 않고 `ok=false` + `failure` 봉투로 반환한다. 에이전트 파이프라인이 예외로 중단되지 않는다.
 

@@ -9,7 +9,7 @@
       "env", "pwd", "which",
       "free", "uname", "id",
       "echo", "date", "hostname",
-      "npm", "node", "npx",
+      "npm",
       "dir", "tasklist", "ipconfig", "systeminfo",
       "kubectl", "docker", "gh",
       "terraform", "helm", "cargo",

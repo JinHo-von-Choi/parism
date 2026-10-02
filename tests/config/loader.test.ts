@@ -104,37 +104,15 @@ describe("loadConfig()", () => {
   });
 });
 
-describe("loadConfig() — guard.secrets 마이그레이션 shim", () => {
+describe("loadConfig() guard.secrets", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("레거시 전용: env_secret_patterns만 있을 때 secrets.env_patterns에 복사하고 경고를 출력한다", async () => {
-    const configPath = `/tmp/prism-config-legacy-only-${Date.now()}.json`;
-    const patterns   = ["MY_TOKEN", "MY_SECRET"];
-    const body       = { guard: { env_secret_patterns: patterns } };
-    await writeFile(configPath, JSON.stringify(body), "utf-8");
-
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const cfg = await loadConfig(configPath);
-
-      expect(stderrSpy).toHaveBeenCalledOnce();
-      expect(String(stderrSpy.mock.calls[0][0])).toContain(
-        "guard.env_secret_patterns is deprecated",
-      );
-      expect(cfg.guard.secrets?.env_patterns).toEqual(patterns);
-      expect(cfg.guard.env_secret_patterns).toEqual(patterns);
-    } finally {
-      await unlink(configPath);
-    }
-  });
-
-  it("신규 전용: secrets.env_patterns만 있을 때 경고 없이 정상 동작한다", async () => {
+  it("secrets.env_patterns만 있을 때 경고 없이 그대로 사용한다", async () => {
     const configPath = `/tmp/prism-config-new-only-${Date.now()}.json`;
     const patterns   = ["NEW_TOKEN", "NEW_SECRET"];
-    const body       = { guard: { secrets: { env_patterns: patterns } } };
-    await writeFile(configPath, JSON.stringify(body), "utf-8");
+    await writeFile(configPath, JSON.stringify({ guard: { secrets: { env_patterns: patterns } } }), "utf-8");
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
@@ -142,34 +120,22 @@ describe("loadConfig() — guard.secrets 마이그레이션 shim", () => {
 
       expect(stderrSpy).not.toHaveBeenCalled();
       expect(cfg.guard.secrets?.env_patterns).toEqual(patterns);
-      expect(cfg.guard.env_secret_patterns).toEqual(patterns);
     } finally {
       await unlink(configPath);
     }
   });
 
-  it("둘 다 존재할 때 secrets.env_patterns를 우선하고 경고를 출력한다", async () => {
-    const configPath  = `/tmp/prism-config-both-${Date.now()}.json`;
-    const legacyPats  = ["LEGACY_TOKEN"];
-    const newPats     = ["NEW_TOKEN"];
-    const body        = {
-      guard: {
-        env_secret_patterns: legacyPats,
-        secrets: { env_patterns: newPats },
-      },
-    };
-    await writeFile(configPath, JSON.stringify(body), "utf-8");
+  it("제거된 env_secret_patterns 키는 경고하고 무시한다", async () => {
+    const configPath = `/tmp/prism-config-removed-${Date.now()}.json`;
+    await writeFile(configPath, JSON.stringify({ guard: { env_secret_patterns: ["LEGACY_TOKEN"] } }), "utf-8");
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       const cfg = await loadConfig(configPath);
 
-      expect(stderrSpy).toHaveBeenCalledOnce();
-      expect(String(stderrSpy.mock.calls[0][0])).toContain(
-        "guard.env_secret_patterns is deprecated",
-      );
-      expect(cfg.guard.secrets?.env_patterns).toEqual(newPats);
-      expect(cfg.guard.env_secret_patterns).toEqual(newPats);
+      expect(String(stderrSpy.mock.calls[0]![0])).toContain("env_secret_patterns was removed");
+      expect(cfg.guard.secrets?.env_patterns).toEqual(DEFAULT_CONFIG.guard.secrets?.env_patterns);
+      expect("env_secret_patterns" in cfg.guard).toBe(false);
     } finally {
       await unlink(configPath);
     }
@@ -177,20 +143,14 @@ describe("loadConfig() — guard.secrets 마이그레이션 shim", () => {
 
   it("둘 다 없으면 기본값이 적용되고 경고가 발생하지 않는다", async () => {
     const configPath = `/tmp/prism-config-neither-${Date.now()}.json`;
-    const body       = { guard: { timeout_ms: 5000 } };
-    await writeFile(configPath, JSON.stringify(body), "utf-8");
+    await writeFile(configPath, JSON.stringify({ guard: { timeout_ms: 5000 } }), "utf-8");
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       const cfg = await loadConfig(configPath);
 
       expect(stderrSpy).not.toHaveBeenCalled();
-      expect(cfg.guard.secrets?.env_patterns).toEqual(
-        DEFAULT_CONFIG.guard.secrets?.env_patterns,
-      );
-      expect(cfg.guard.env_secret_patterns).toEqual(
-        DEFAULT_CONFIG.guard.env_secret_patterns,
-      );
+      expect(cfg.guard.secrets?.env_patterns).toEqual(DEFAULT_CONFIG.guard.secrets?.env_patterns);
     } finally {
       await unlink(configPath);
     }
@@ -505,23 +465,22 @@ describe("설정 신뢰 경계", () => {
     expect(warned).toBe(true);
   });
 
-  it("레거시 키를 쓰지 않으면 deprecation 경고를 내지 않는다", async () => {
+  it("레거시 키를 쓰지 않으면 제거 경고를 내지 않는다", async () => {
     const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" });
-    const warned = spy.mock.calls.some(c => String(c[0]).includes("deprecated"));
+    const warned = spy.mock.calls.some(c => String(c[0]).includes("env_secret_patterns"));
     spy.mockRestore();
     expect(warned).toBe(false);
   });
 
-  it("전역 설정의 레거시 env_secret_patterns는 경고하고 secrets.env_patterns로 이전된다", async () => {
+  it("전역 설정의 제거된 env_secret_patterns 키는 경고하고 무시한다", async () => {
     const spy        = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const globalPath = tmpConfig({ guard: { env_secret_patterns: ["MY_TOKEN"] } });
     const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
-    const warned     = spy.mock.calls.some(c => String(c[0]).includes("deprecated"));
+    const warned     = spy.mock.calls.some(c => String(c[0]).includes("env_secret_patterns was removed"));
     spy.mockRestore();
     expect(warned).toBe(true);
-    expect(cfg.guard.secrets?.env_patterns).toEqual(["MY_TOKEN"]);
-    expect(cfg.guard.env_secret_patterns).toEqual(["MY_TOKEN"]);
+    expect(cfg.guard.secrets?.env_patterns).toEqual(DEFAULT_CONFIG.guard.secrets?.env_patterns);
   });
 
   it("숫자가 아닌 PARISM_TIMEOUT_MS는 무시하고 경고한다", async () => {

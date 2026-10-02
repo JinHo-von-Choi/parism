@@ -206,7 +206,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 시스템 | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
 | 시스템 | `apt list --installed` | `packages[]` — name, version, arch, status | O |
 | 시스템 | `brew list --versions` | `packages[]` — name, version | O |
-| 패키지 | `npm list`, `pnpm list`, `yarn list` | `dependencies[]` — name, version, depth | O |
+| 패키지 | `npm list`, `pnpm list`, `yarn list`(build 프로필) | `dependencies[]` - name, version, depth | O |
 | 패키지 | `cargo tree` | `crates[]` — name, version, path | O |
 | Windows | `dir` | `directory`, `entries[]` — 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]` — 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
@@ -337,6 +337,7 @@ compact 예시:
 응답 추가 필드:
 - `page_info.total_lines` — 전체 줄 수
 - `page_info.has_next` — 다음 페이지 존재 여부
+- `page_info.cache` - `{ hit, age_ms }`. 후속 페이지는 30초 안에서 첫 실행 결과를 재사용한다
 - `stdout.parsed` — 항상 `null` (부분 출력은 구조화 불가)
 
 에이전트 패턴:
@@ -426,7 +427,11 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다.
 
-> legacy `env_secret_patterns` 는 v2.0.0 에서 제거된다. 사용 시 stderr 에 deprecation 경고가 출력된다.
+> legacy `env_secret_patterns` 는 v2.0.0 에서 제거됐다. 설정에 남아 있으면 stderr 에 경고하고 무시한다.
+
+`guard.profile` 은 기본 `"readonly"` 이며 조회 서브커맨드만 허용한다. `"build"` 로 바꾸면 `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 등 빌드·시험 서브커맨드가 추가로 허용된다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 켠다. `node`, `npx`, `yarn` 은 `allowed_commands` 에 직접 추가해야 하며 `build` 프로필에서만 동작한다. 명령별 세부 규칙은 `guard.command_policies` 로 덮어쓴다. 프로젝트 `prism.config.json` 은 가드를 넓히지 못하며, 넓히려면 전역 `~/.parism/prism.config.json` 에 `"trust_project_config": true` 를 둔다.
+
+저장소의 `prism.config.json` 은 설정 예시이며 npm 패키지에는 포함되지 않는다.
 
 ### 설정 레이어와 환경 변수
 

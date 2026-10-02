@@ -111,7 +111,7 @@ export class ParismEngine {
     timer?.markStart("exec");
     const executed = await execute(
       cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
-      this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
+      this.config.guard.secrets?.env_patterns ?? [],
       this.config.guard.timeout_ms,
       this.config.guard.max_output_bytes,
       includeDiff,
@@ -272,7 +272,7 @@ export class ParismEngine {
     } else {
       const executed = await execute(
         cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
-        this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
+        this.config.guard.secrets?.env_patterns ?? [],
         this.config.guard.timeout_ms,
         0,
         includeDiff,

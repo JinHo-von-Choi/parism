@@ -23,8 +23,6 @@ export interface PrismGuardConfig {
   block_patterns:           string[];
   command_arg_restrictions: Record<string, CommandArgRestriction>;
   command_policies?:        Record<string, CommandPolicy>;
-  /** @deprecated guard.secrets.env_patterns 으로 이전하세요. v2.0.0 제거 예정. */
-  env_secret_patterns:      string[];
   secrets?:                 PrismGuardSecretsConfig;
   profile?:                 "readonly" | "build";
 }
@@ -98,7 +96,6 @@ export const DEFAULT_CONFIG: PrismConfig = {
         ],
       },
     },
-    env_secret_patterns: DEFAULT_ENV_SECRET_PATTERNS,
     secrets: {
       env_patterns:             DEFAULT_ENV_SECRET_PATTERNS,
       output_patterns:          [],
@@ -124,26 +121,28 @@ function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig 
   };
 }
 
-const DEPRECATION_MSG =
-  "[parism] guard.env_secret_patterns is deprecated; use guard.secrets.env_patterns. v2.0.0 제거 예정.";
+const REMOVED_KEY_MSG =
+  "[parism] guard.env_secret_patterns was removed in 2.0.0 and is ignored; use guard.secrets.env_patterns.";
+
+/** 제거된 레거시 키(guard.env_secret_patterns)가 있으면 경고하고 키를 뺀 사본을 돌려준다. */
+function dropRemovedGuardKeys<T extends object>(guard: T | undefined): T | undefined {
+  if (guard === undefined || !("env_secret_patterns" in guard)) return guard;
+  process.stderr.write(REMOVED_KEY_MSG + "\n");
+  const rest = { ...guard } as Record<string, unknown>;
+  delete rest.env_secret_patterns;
+  return rest as T;
+}
 
 /**
  * 지정된 경로에서 prism.config.json을 로드한다.
  * 파일이 없거나 파싱 실패 시 DEFAULT_CONFIG를 반환한다.
- *
- * 마이그레이션 shim:
- *   - 사용자가 guard.env_secret_patterns만 지정하면 guard.secrets.env_patterns에 복사하고 deprecation 경고를 출력한다.
- *   - 사용자가 guard.secrets.env_patterns만 지정하면 경고 없이 그대로 사용한다.
- *   - 둘 다 지정하면 guard.secrets.env_patterns를 우선하고 deprecation 경고를 출력한다.
- *   - 런타임에서 guard.env_secret_patterns는 항상 guard.secrets.env_patterns 값과 동일하게 유지되므로
- *     기존 소비자(buildRunResult 등)는 변경 없이 동작한다.
  */
 export async function loadConfig(configPath: string): Promise<PrismConfig> {
   try {
     const raw      = await readFile(configPath, "utf-8");
     const json     = JSON.parse(raw) as Partial<PrismConfig>;
     const config: PrismConfig = {
-      guard:    mergeGuardConfig(json.guard ?? {}),
+      guard:    mergeGuardConfig(dropRemovedGuardKeys(json.guard) ?? {}),
       parsers: {
         ...DEFAULT_CONFIG.parsers,
         ...(json.parsers ?? {}),
@@ -153,28 +152,6 @@ export async function loadConfig(configPath: string): Promise<PrismConfig> {
         ...(json.telemetry ?? {}),
       },
     };
-
-    const userGuard        = json.guard as PartialPrismGuardConfig | undefined ?? {};
-    const hasLegacy        = userGuard.env_secret_patterns !== undefined;
-    const hasNew           = userGuard.secrets?.env_patterns !== undefined;
-
-    if (hasLegacy || hasNew) {
-      if (hasNew) {
-        // 새 경로 우선; 레거시가 함께 있으면 경고 발생
-        if (hasLegacy) process.stderr.write(DEPRECATION_MSG + "\n");
-        const newPatterns                    = config.guard.secrets!.env_patterns!;
-        config.guard.env_secret_patterns     = newPatterns;
-      } else {
-        // 레거시만 존재: 새 경로로 복사 + 경고
-        process.stderr.write(DEPRECATION_MSG + "\n");
-        const legacyPatterns             = config.guard.env_secret_patterns;
-        config.guard.secrets             = {
-          ...DEFAULT_CONFIG.guard.secrets,
-          ...config.guard.secrets,
-          env_patterns: legacyPatterns,
-        };
-      }
-    }
 
     if (config.guard.allowed_paths.length === 0) {
       console.warn(
@@ -284,24 +261,10 @@ async function readJsonLayer(filePath: string): Promise<Partial<PrismConfig> | u
   }
 }
 
-/**
- * 원본 레이어 JSON의 레거시 키(guard.env_secret_patterns)를 신규 경로로 정규화한다.
- * 레거시 키가 있으면 경고하고, 신규 키가 없으면 값을 guard.secrets.env_patterns로 옮긴다.
- */
+/** 원본 레이어 JSON에서 제거된 레거시 guard 키를 경고와 함께 뺀다. */
 function normalizeLegacySecrets(layer: Partial<PrismConfig>): Partial<PrismConfig> {
-  const guard = layer.guard as PartialPrismGuardConfig | undefined;
-  if (guard?.env_secret_patterns === undefined) return layer;
-
-  process.stderr.write(DEPRECATION_MSG + "\n");
-  if (guard.secrets?.env_patterns !== undefined) return layer;
-
-  return {
-    ...layer,
-    guard: {
-      ...guard,
-      secrets: { ...guard.secrets, env_patterns: guard.env_secret_patterns },
-    } as PrismGuardConfig,
-  };
+  if (layer.guard === undefined || !("env_secret_patterns" in layer.guard)) return layer;
+  return { ...layer, guard: dropRemovedGuardKeys(layer.guard) as PrismGuardConfig };
 }
 
 /** 프로젝트 레이어의 상대 allowed_paths를 설정 파일 디렉터리 기준 절대경로로 바꾼다. */
@@ -351,8 +314,6 @@ export async function loadConfigMultiLayer(opts?: {
 
   config = mergeConfig(config, envToConfig(envPrefix));
   if (trustProject) config.trust_project_config = true;
-
-  config.guard.env_secret_patterns = config.guard.secrets?.env_patterns ?? config.guard.env_secret_patterns;
 
   if (config.guard.allowed_paths.length === 0) {
     console.warn(
