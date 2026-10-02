@@ -50,13 +50,20 @@ interface GrepPlan {
   nullSep:     boolean;
 }
 
-/** 플래그와 파일 인자 수로 grep 출력 형식을 정한다. 옵션 값은 피연산자로 세지 않는다. */
+/** 재귀를 켜는 긴 옵션 */
+const RECURSIVE_LONGS = new Set(["--recursive", "--dereference-recursive"]);
+
+/**
+ * 플래그와 파일 인자 수로 grep 출력 형식을 정한다. 옵션 값은 피연산자로 세지 않는다.
+ * 재귀 여부는 -r, -R, -d recurse(--directories=recurse)와 -d read, skip 가운데 마지막 것이 정한다(GNU grep과 같다).
+ */
 function analyze(args: string[]): GrepPlan {
   const shorts:   string[] = [];
   const longs:    string[] = [];
   const operands: string[] = [];
   let   patternGiven       = false;
   let   numeric            = false;
+  let   recursive          = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") { operands.push(...args.slice(i + 1)); break; }
@@ -66,6 +73,8 @@ function analyze(args: string[]): GrepPlan {
       const name = eq >= 0 ? a.slice(0, eq) : a;
       longs.push(name);
       if (PATTERN_FLAGS.has(name)) patternGiven = true;
+      if (RECURSIVE_LONGS.has(name)) recursive = true;
+      if (name === "--directories") recursive = (eq >= 0 ? a.slice(eq + 1) : args[i + 1]) === "recurse";
       if (eq < 0 && LONG_VALUE_FLAGS.has(name)) i++;
       continue;
     }
@@ -73,15 +82,16 @@ function analyze(args: string[]): GrepPlan {
     for (let j = 1; j < a.length; j++) {
       const c = a[j]!;
       shorts.push(c);
+      if (c === "r" || c === "R") recursive = true;
       if (!SHORT_VALUE_FLAGS.has(c)) continue;
       if (PATTERN_FLAGS.has(c)) patternGiven = true;
+      if (c === "d") recursive = (j < a.length - 1 ? a.slice(j + 1) : args[i + 1]) === "recurse";
       if (j === a.length - 1) i++;
       break;
     }
   }
   const has       = (c: string, long: string): boolean => shorts.includes(c) || longs.includes(long);
   const files     = patternGiven ? operands : operands.slice(1);
-  const recursive = has("r", "--recursive") || has("R", "--dereference-recursive");
   const forced    = has("H", "--with-filename");
   const hidden    = has("h", "--no-filename");
 

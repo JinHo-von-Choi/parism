@@ -34,6 +34,10 @@ const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
 
+/** grep 디렉터리 처리 값. recurse는 -r과 같이 파일 이름 열을 낸다. */
+const GREP_DIRECTORIES = /^(read|skip|recurse)$/;
+const GREP_DEVICES     = /^(read|skip)$/;
+
 /** journalctl 출력 형식 가운데 한 줄에 시각, 호스트, 유닛, 메시지가 있는 short 계열 */
 const JOURNAL_FORMATS = /^(short|short-precise|short-iso|short-iso-precise|short-full|short-unix|short-monotonic|with-unit)$/;
 
@@ -151,7 +155,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         "--binary-files", "--label", "-d", "--directories", "-D", "--devices"),
       ...flags("attached", "--color", "--colour"),
     },
-    acceptedValues: { "--color": /^(never|auto|)$/, "--colour": /^(never|auto|)$/ },
+    acceptedValues: {
+      "--color": /^(never|auto|)$/, "--colour": /^(never|auto|)$/,
+      "-d": GREP_DIRECTORIES, "--directories": GREP_DIRECTORIES, "-D": GREP_DEVICES, "--devices": GREP_DEVICES,
+    },
     supports:       supportsGrep,
     hint:           grepHint,
     noise: /^--$/, rowsKey: "matches", rowFields: ["file", "line", "text", "byte_offset", "context"],

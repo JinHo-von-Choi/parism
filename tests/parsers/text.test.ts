@@ -145,6 +145,20 @@ describe("parseGrep() 문맥 줄과 파일 판정", () => {
     expect(run(["-L", "m", "a", "b"], "b\n")).toEqual([{ file: "b", line: 0, text: "" }]);
   });
 
+  it("-d recurse는 -r처럼 이름 열을 읽는다", () => {
+    const want = [{ file: "d/a.txt", line: 2, text: "match one" }];
+    expect(run(["-n", "-d", "recurse", "match", "d"], "d/a.txt:2:match one\n")).toEqual(want);
+    expect(run(["-n", "--directories=recurse", "match", "d"], "d/a.txt:2:match one\n")).toEqual(want);
+    expect(run(["-n", "-drecurse", "match", "d"], "d/a.txt:2:match one\n")).toEqual(want);
+    expect(run(["-n", "--directories", "recurse", "match"], "d/a.txt:2:match one\n")).toEqual(want);
+  });
+
+  it("-d skip과 read는 재귀하지 않는다", () => {
+    expect(run(["-n", "-d", "skip", "match", "top.txt"], "1:match two\n")).toEqual([{ file: "", line: 1, text: "match two" }]);
+    expect(run(["-n", "-d", "read", "match", "top.txt"], "1:match two\n")).toEqual([{ file: "", line: 1, text: "match two" }]);
+    expect(run(["-n", "-d", "recurse", "-d", "skip", "match"], "1:match two\n")).toEqual([{ file: "", line: 1, text: "match two" }]);
+  });
+
   it("-c는 이름에 콜론이 있어도 끝의 개수를 뗀다", () => {
     expect(run(["-c", "m", "a:b", "c"], "a:b:3\nc:0\n")).toEqual([{ file: "a:b", line: 0, text: "3" }, { file: "c", line: 0, text: "0" }]);
   });
@@ -166,6 +180,17 @@ describe("grep 계약 문맥 판정", () => {
     expect(unsupported(["-ncA1", "x", "f"])).toBe(true);
     expect(unsupported(["-Z", "x", "f"])).toBe(true);
     expect(unsupported(["-Zl", "x", "f"])).toBe(false);
+  });
+
+  it("-d, --directories 값은 read, skip, recurse만 받는다", () => {
+    for (const v of ["read", "skip", "recurse"]) {
+      expect(unsupported(["-n", "-d", v, "x", "f"])).toBe(false);
+      expect(unsupported(["-n", `--directories=${v}`, "x", "f"])).toBe(false);
+    }
+    expect(unsupported(["-n", "-d", "other", "x", "f"])).toBe(true);
+    expect(unsupported(["-n", "--directories=other", "x", "f"])).toBe(true);
+    expect(unsupported(["-n", "-D", "other", "x", "f"])).toBe(true);
+    expect(unsupported(["-n", "-D", "skip", "x", "f"])).toBe(false);
   });
 
   it("문맥 옵션 안내는 -n을 더한다", () => {
