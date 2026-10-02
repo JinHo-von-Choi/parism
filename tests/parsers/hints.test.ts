@@ -36,7 +36,7 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["journalctl", ["-n", "5"], ["-n", "5", "-o", "short-iso"], "2026-10-03T06:00:00+0900 host cron[12]: started\n"],
   ["git", ["status", "-s"], ["status"], "On branch main\nChanges not staged for commit:\n\tmodified:   a.txt\n"],
   ["git", ["--no-pager", "status", "--porcelain"], ["--no-pager", "status"], "On branch main\nnothing to commit, working tree clean\n"],
-  ["git", ["log", "--oneline", "--decorate"], ["log", "--format=%h %s"], "abc1234 first\n"],
+  ["git", ["log", "--oneline", "--graph"], ["log", "--format=%h %s"], "abc1234 first\n"],
   ["git", ["log", "-n", "3"], ["log", "-n", "3", "--format=%h %s"], "abc1234 first\n"],
   ["git", ["branch"], ["branch", "-v"], "* main abc1234 first\n"],
   ["docker", ["ps", "-q"], ["ps"], "CONTAINER ID   IMAGE   COMMAND   CREATED   STATUS   PORTS   NAMES\nabc123   nginx   \"nginx\"   1 day ago   Up 1 day   80/tcp   web\n"],
@@ -79,7 +79,7 @@ describe("failure.hint 안내 인자", () => {
 
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
-      ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["status", "--ignored"]], ["git", ["log", "-p"]], ["grep", ["-A1", "x", "f"]],
+      ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-A1", "x", "f"]],
       ["curl", ["-s", "https://example.com"]], ["ss", ["-a"]], ["apt", ["list"]], ["docker", ["stats", "--no-stream"]], ["stat", ["a", "b"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");

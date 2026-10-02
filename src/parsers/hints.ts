@@ -171,7 +171,7 @@ export function journalctlHint(rest: string[]): HintDraft | null {
 /* ---------------- git ---------------- */
 
 export function gitStatusHint(rest: string[]): HintDraft | null {
-  const drop = { ...table("bool", "-s", "--short", "-z", "--null"), ...table("attached", "--porcelain", "--column") };
+  const drop = { ...table("bool", "-s", "--short", "-z", "--null"), ...table("attached", "--porcelain", "--column", "--ignored") };
   return { args: dropFlags(rest, drop, table("attached", "-u", "--untracked-files")), reason: "the long format of git status is parsed" };
 }
 

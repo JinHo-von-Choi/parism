@@ -256,29 +256,34 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     leadingFlags: { ...bools("--no-pager"), ...values("-C", "-c", "--git-dir", "--work-tree", "--namespace") },
     subcommands:  {
       status: {
-        acceptedFlags: { ...bools("--long", "-v", "--verbose", "-b", "--branch"), ...flags("attached", "-u", "--untracked-files") },
-        hint:          gitStatusHint,
+        acceptedFlags:  { ...bools("--long", "-v", "--verbose", "-b", "--branch"), ...flags("attached", "-u", "--untracked-files", "--ignored") },
+        acceptedValues: { "--ignored": /^(traditional|)$/ },
+        hint:           gitStatusHint,
       },
       log: {
         acceptedFlags: {
           ...bools("--oneline", "--all", "--no-merges", "--reverse", "--first-parent", "--abbrev-commit", "--no-decorate", "--no-color",
             "--tags", NUMBER_FLAG),
           ...values("-n", "--max-count", "--since", "--until", "--author"),
-          ...flags("attached", "--format", "--pretty"),
+          ...flags("attached", "--format", "--pretty", "--decorate"),
         },
-        acceptedValues: { "--format": /^(oneline|%h %s|%H %s)$/, "--pretty": /^(oneline|format:%h %s|format:%H %s)$/ },
+        acceptedValues: { "--format": /^(oneline|%h %s|%H %s)$/, "--pretty": /^(oneline|format:%h %s|format:%H %s)$/, "--decorate": /^(short|full|)$/ },
         requiredFlags:  ["--oneline", "--format", "--pretty"],
         hint:           gitLogHint,
         rowsKey: "commits", rowFields: ["hash", "message"],
       },
       branch: {
-        acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l"),
+        acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l", "-a", "--all", "-r", "--remotes"),
         requiredFlags: ["-v", "--verbose"],
         hint:          gitBranchHint,
         rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message"],
       },
       diff: {
-        acceptedFlags: { ...bools("--cached", "--staged", "-w", "--no-color", "-p", "--patch"), ...flags("attached", "-U", "--unified") },
+        acceptedFlags: {
+          ...bools("--cached", "--staged", "-w", "--no-color", "-p", "--patch", "-M", "--no-renames", "--text", "-a", "--binary", "--no-prefix"),
+          ...flags("attached", "-U", "--unified", "--diff-filter", "--find-renames"),
+        },
+        acceptedValues: { "--diff-filter": /^[ACDMRTUXB*acdmrtuxb]+$/, "--find-renames": /^\d*%?$/ },
         rowsKey: "files", rowLine: /^diff --git /, rowFields: ["path", "hunks"],
       },
     },

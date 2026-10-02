@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseGitStatus } from "../../src/parsers/git/status.js";
 import { parseGitLog }    from "../../src/parsers/git/log.js";
 import { parseGitDiff }   from "../../src/parsers/git/diff.js";
+import { unquoteGitPath } from "../../src/parsers/git/paths.js";
 
 describe("parseGitStatus()", () => {
   const statusOutput = [
@@ -132,5 +133,133 @@ describe("parseGitLog()", () => {
     };
     expect(result.commits).toHaveLength(2);
     expect(result.commits[0]).toEqual({ hash: "abc1234", message: "feat: add executor" });
+  });
+});
+
+describe("unquoteGitPath()", () => {
+  it("8진 이스케이프를 UTF-8 경로로 되돌린다", () => {
+    expect(unquoteGitPath("\"n\\303\\251w.txt\"")).toBe("néw.txt");
+    expect(unquoteGitPath("\"quote\\\"d\\ttab\"")).toBe("quote\"d\ttab");
+  });
+
+  it("따옴표가 없는 경로는 그대로 둔다", () => {
+    expect(unquoteGitPath("sp ace.txt")).toBe("sp ace.txt");
+  });
+});
+
+describe("parseGitStatus() 구획", () => {
+  it("이름 바꾸기를 old와 new로 가르고 staged에는 새 경로를 둔다", () => {
+    const raw = [
+      "On branch main",
+      "Changes to be committed:",
+      "  (use \"git restore --staged <file>...\" to unstage)",
+      "\tnew file:   added.txt",
+      "\trenamed:    ren.txt -> renamed.txt",
+      "\trenamed:    \"a b.txt\" -> \"c\\303\\251.txt\"",
+    ].join("\n");
+    const r = parseGitStatus("git", ["status"], raw);
+    expect(r.staged).toEqual(["added.txt", "renamed.txt", "cé.txt"]);
+    expect(r.renamed).toEqual([{ old: "ren.txt", new: "renamed.txt" }, { old: "a b.txt", new: "cé.txt" }]);
+  });
+
+  it("따옴표 경로를 풀고 표시 문구는 경로에 넣지 않는다", () => {
+    const raw = [
+      "On branch main",
+      "Changes not staged for commit:",
+      "\tmodified:   \"n\\303\\251w.txt\"",
+      "\tmodified:   vendor/lib (new commits)",
+      "\tdeleted:    gone.txt",
+    ].join("\n");
+    expect(parseGitStatus("git", ["status"], raw).modified).toEqual(["néw.txt", "vendor/lib", "gone.txt"]);
+  });
+
+  it("detached HEAD는 branch를 HEAD로 두고 가리키는 대상을 남긴다", () => {
+    const r = parseGitStatus("git", ["status"], "HEAD detached at ada9e43\nnothing to commit, working tree clean");
+    expect(r).toMatchObject({ branch: "HEAD", detached: true, detached_at: "ada9e43" });
+  });
+
+  it("무시된 파일은 untracked와 따로 담는다", () => {
+    const raw = [
+      "On branch main",
+      "Untracked files:",
+      "\tuntracked.txt",
+      "",
+      "Ignored files:",
+      "  (use \"git add -f <file>...\" to include in what will be committed)",
+      "\tbuild/",
+      "\tdebug.log",
+    ].join("\n");
+    const r = parseGitStatus("git", ["status", "--ignored"], raw);
+    expect(r.untracked).toEqual(["untracked.txt"]);
+    expect(r.ignored).toEqual(["build/", "debug.log"]);
+  });
+
+  it("병합 충돌 항목을 unmerged에 담는다", () => {
+    const raw = ["On branch main", "Unmerged paths:", "\tboth modified:   f.txt"].join("\n");
+    expect(parseGitStatus("git", ["status"], raw)).toMatchObject({ unmerged: ["f.txt"], staged: [], modified: [] });
+  });
+
+  it("-v 출력의 diff 본문은 구획으로 읽지 않는다", () => {
+    const raw = ["On branch main", "Changes not staged for commit:", "\tmodified:   a.txt", "", "diff --git a/a.txt b/a.txt", "@@ -1 +1 @@", "-x", "+y"].join("\n");
+    expect(parseGitStatus("git", ["status", "-v"], raw)).toMatchObject({ modified: ["a.txt"], untracked: [] });
+  });
+});
+
+describe("parseGitDiff() 파일 머리", () => {
+  it("새 파일과 삭제 파일을 files_changed에 넣는다", () => {
+    const raw = [
+      "diff --git a/added.txt b/added.txt", "new file mode 100644", "index 0000000..d5f7fc3", "--- /dev/null", "+++ b/added.txt", "@@ -0,0 +1 @@", "+added",
+      "diff --git a/del.txt b/del.txt", "deleted file mode 100644", "index 8510665..0000000", "--- a/del.txt", "+++ /dev/null", "@@ -1 +0,0 @@", "-four",
+    ].join("\n");
+    const r = parseGitDiff("git", ["diff"], raw);
+    expect(r.files_changed).toEqual(["added.txt", "del.txt"]);
+    expect(r.files!.map(f => f.status)).toEqual(["added", "deleted"]);
+  });
+
+  it("이름 바꾸기는 새 경로를 path로, 원래 경로를 old_path로 담는다", () => {
+    const raw = ["diff --git a/old.txt b/new-name.txt", "similarity index 100%", "rename from old.txt", "rename to new-name.txt"].join("\n");
+    const r = parseGitDiff("git", ["diff", "-M"], raw);
+    expect(r.files_changed).toEqual(["new-name.txt"]);
+    expect(r.files![0]).toMatchObject({ path: "new-name.txt", old_path: "old.txt", status: "renamed", hunks: [] });
+  });
+
+  it("따옴표 경로와 공백이 든 경로를 푼다", () => {
+    const raw = [
+      "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"", "index 4ae8ef0..5001395 100644", "--- \"a/caf\\303\\251.txt\"", "+++ \"b/caf\\303\\251.txt\"", "@@ -1 +1,2 @@", " u", "+x",
+      "diff --git a/sp ace.txt b/sp ace.txt", "index ffe2fce..6e60b97 100644", "--- a/sp ace.txt\t", "+++ b/sp ace.txt\t", "@@ -1 +1,2 @@", " six", "+more",
+    ].join("\n");
+    expect(parseGitDiff("git", ["diff"], raw).files_changed).toEqual(["café.txt", "sp ace.txt"]);
+  });
+
+  it("내용이 없는 변경(바이너리, 모드)은 diff --git 줄에서 경로를 얻는다", () => {
+    const raw = ["diff --git a/blob.bin b/blob.bin", "index 1..2 100644", "Binary files a/blob.bin and b/blob.bin differ",
+      "diff --git a/run.sh b/run.sh", "old mode 100644", "new mode 100755"].join("\n");
+    const r = parseGitDiff("git", ["diff"], raw);
+    expect(r.files_changed).toEqual(["blob.bin", "run.sh"]);
+    expect(r.files![0]!.binary).toBe(true);
+    expect(r.files![1]!.status).toBe("modified");
+  });
+
+  it("--no-prefix 출력은 접두를 떼지 않는다", () => {
+    const raw = ["diff --git a/x.txt a/x.txt", "--- a/x.txt", "+++ a/x.txt", "@@ -1 +1 @@", "-a", "+b"].join("\n");
+    expect(parseGitDiff("git", ["diff", "--no-prefix"], raw).files_changed).toEqual(["a/x.txt"]);
+  });
+});
+
+describe("parseGitLog() 참조", () => {
+  it("--decorate 꼬리표를 refs로 가르고 message는 제목만 둔다", () => {
+    const raw = ["3166aa7 (HEAD -> main, tag: v1.0) third: colon subject (with parens)", "fd44bc8 add later file"].join("\n");
+    const r = parseGitLog("git", ["log", "--oneline", "--decorate"], raw);
+    expect(r.commits[0]).toEqual({ hash: "3166aa7", message: "third: colon subject (with parens)", refs: ["HEAD -> main", "tag: v1.0"] });
+    expect(r.commits[1]).toEqual({ hash: "fd44bc8", message: "add later file" });
+  });
+
+  it("--decorate가 없으면 괄호로 시작하는 제목을 건드리지 않는다", () => {
+    const r = parseGitLog("git", ["log", "--oneline"], "abc1234 (wip) draft");
+    expect(r.commits[0]).toEqual({ hash: "abc1234", message: "(wip) draft" });
+  });
+
+  it("제목이 빈 커밋도 한 행으로 센다", () => {
+    expect(parseGitLog("git", ["log", "--oneline"], "abc1234\ndef5678 x").commits).toHaveLength(2);
   });
 });
