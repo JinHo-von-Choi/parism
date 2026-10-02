@@ -175,7 +175,7 @@ The agent receives the block reason in the same envelope structure as any other 
 | Git | `git diff` | `files_changed[]` | O |
 | Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]`: image, status, CPU/MEM/IO | O |
+| DevOps | `docker ps` | `containers[]`: image, status, ports, names (`docker stats` is currently outside the accepted formats) | O |
 | DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build profile) | `summary`: to_add, to_change, to_destroy | O |
@@ -191,7 +191,7 @@ The agent receives the block reason in the same envelope structure as any other 
 | System | `brew list --versions` | `packages[]`: name, version | O |
 | Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
 | Package | `yarn list` (build profile) | `dependencies[]`: name, version, depth | X |
-| Package | `cargo tree` (build profile) | `crates[]`: name, version, path | O |
+| Package | `cargo tree` (build profile) | `crates[]`: name, version, path (no accepted format yet) | O |
 | Windows | `dir` | `directory`, `entries[]`: name, type, size, modified time, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: name, PID, session, memory. CSV format supported | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, subnet, gateway, DNS, MAC | X |
@@ -202,6 +202,26 @@ Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
 > `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error`; it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+
+### Accepted Formats and Alternative Args
+
+Each built-in parser declares the argument range whose output format was verified on real output (accepted flags, positional rules, subcommands) in its contract (`src/parsers/contracts.ts`). Args outside that range do not run the parser and return `unsupported_format`, so a wrong result is reported as a failure instead of being returned silently. `raw` is kept, and when the output is a JSON document the native JSON passthrough fills `parsed`.
+
+When other args give the same information in a handled format, `result.failure.hint` (same value in `stdout.parse_error.hint`) carries `{ args, reason }`. `args` is the full argument list for the same command and passes the readonly default policy.
+
+| Request | `failure.hint.args` |
+|-|-|
+| `uname -r` | `["-a"]` |
+| `ls -lh` | `["-l"]` |
+| `git status -s` | `["status"]` |
+| `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `journalctl -n 20` | `["-n", "20", "-o", "short-iso"]` |
+| `ss -tlnp` | `["-tlnp", "-u"]` |
+| `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
+| `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
+| `npm ls --all` | `["ls", "--all", "--json"]` |
+
+There is no `hint` when no args give the same information (`ls -lR`, `git diff --stat`, `grep -A1`, and so on).
 
 ### Native JSON Passthrough
 
@@ -439,9 +459,12 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* return structured result */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
-  supports: (args) => !args.includes("--json"), // optional: false yields unsupported_format
-  headerLines: 1,                                // optional: number of non-data header lines
-  noise: /^Total /,                              // optional: pattern for non-data lines
+  acceptedFlags: { "-a": "bool", "-n": "value" }, // optional: flags whose output format is handled; others yield unsupported_format
+  acceptedPositionals: { max: 1 },                // optional: positional argument rule
+  supports: (args) => args.length < 4,            // optional: extra rule applied after the declaration
+  headerLines: 1,                                 // optional: number of non-data header lines
+  noise: /^Total /,                               // optional: pattern for non-data lines
+  rowsKey: "items",                               // optional: array holding one row per data line (invariant checks)
 };
 
 export default pack;

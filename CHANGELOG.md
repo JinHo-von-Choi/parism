@@ -5,6 +5,31 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
+## [Unreleased]
+
+### Added
+- 파서 계약의 형식 선언: `acceptedFlags`(출력 형식을 검증한 플래그와 값 방식 `bool`, `value`, `attached`), `acceptedValues`(플래그 값 패턴), `acceptedPositionals`(`min`, `max`, `pattern`), `requiredFlags`(하나 이상 필요), `exclusiveFlags`(하나까지만), `leadingFlags`(서브커맨드 앞 전역 옵션), `subcommands`(서브커맨드별 계약, 빈 문자열 키는 서브커맨드 없는 실행), `plusFlags`, `singleDashLong`. 선언 밖의 인자는 파서를 실행하지 않고 `parse_error.reason = "unsupported_format"`이며 메시지에 원인 인자를 밝힌다. raw와 native JSON 폴백은 그대로다. `supports(args)`는 선언 검사를 통과한 뒤 추가로 적용하는 선택 규칙으로 남는다. `ParserPack`도 같은 필드를 쓴다(`ParserPack`이 `ParserContract`를 확장한다).
+- 출력 계약 필드 `rowsKey`(데이터 줄마다 행 하나를 담는 배열의 키), `rowLine`(행이 되는 데이터 줄 패턴), `rowFields`(행 필드 이름 목록).
+- 파서 불변식 모듈 `src/parsers/invariants.ts`: `checkInvariants(parsed, raw, contract)`가 조용한 빈 결과(`silent_empty`), 행 수와 데이터 줄 수 불일치(`row_count`), 유한하지 않은 숫자(`non_finite`), 스키마 밖 필드(`field_names`)를 위반 목록으로 돌려준다. `countDataLines`, `countRowLines`도 내보낸다. 런타임에는 기존 `unrecognized_output` 판정만 이 모듈을 쓴다.
+- `failure.hint = { args, reason }`와 `stdout.parse_error.hint`: `unsupported_format`일 때 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자를 안내한다. 예: `uname -r` → `-a`, `ls -lh` → `-l`, `git status -s` → `status`, `git log --graph` → `log --format=%h %s`, `git branch` → `branch -v`, `journalctl -n 5` → `-n 5 -o short-iso`, `free -h` → `-b`, `ss -tlnp` → `-tlnp -u`, `docker ps -q` → `ps`, `kubectl get pods -o yaml` → `get pods -o json`, `gh issue list` → `--json` 필드 추가, `npm ls --all` → `ls --all --json`. 같은 정보를 얻을 인자가 없으면 hint가 없다. 안내 인자는 readonly 기본 정책을 통과한다.
+- `ParserRegistry.contractFor(cmd, args)`(서브커맨드를 반영한 유효 계약)와 `ParserRegistry.parseWithFallback(...)`(native JSON 폴백까지 적용한 결과, 엔진이 쓰는 경로).
+
+### Changed
+- 내장 파서의 `supports()` 함수(`src/parsers/supports.ts`)를 명령별 선언(`src/parsers/contracts.ts`)으로 바꿨다. 실측에서 처리를 확인한 인자만 허용하고, 조용히 틀린 결과를 내던 인자는 교정 전까지 `unsupported_format`이다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 이 호스트에서 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)은 인자를 제한하지 않는다.
+- `parism init-parser` 템플릿이 `supports` 대신 `acceptedFlags` 예시를 만든다.
+- Breaking notes: 다음 인자는 이제 `unsupported_format`이다(raw는 그대로, JSON 출력이면 native JSON 폴백).
+  - `ls`: `-R`, `-F`, `-p`, `-Q`, `-b`, `-g`, `-o`, `-G`, `-i`, `-s`, `--full-time`, `--time-style`, `--quoting-style`, `--indicator-style`, `--color=always`, 위치 인자 2개 이상.
+  - `find`: `-ls`, `-print0`, `-printf`, `-exec` 등 출력을 바꾸는 식. `stat`: 위치 인자 2개 이상, `-c`, `-t`, `-f`, `--printf`. `du`: `--time`, `-0`. `df`: `-m`, `-B`(1K 외).
+  - `ps`: `f` 글자와 `--forest`, `--no-headers`, `--headers`. `ss`: 유닉스 소켓이 섞이는 조합(종류 필터 없음이고 `-4`/`-6`/`-f inet`도 없음, `-x`), `-H`, `-m`, `-i`, `-e`, `-o`. `lsof`: `-p`, `-c`, `-u`, `-t`, `-F`, `-R`.
+  - `dig`: `+trace`, `+nocomments`, `+noquestion`, `+multi`, `+multiline`, `-u`. `curl -I`: `-L`, `-i`, `-w`, URL 2개 이상.
+  - `grep`: `-A`, `-B`, `-C`, `-NUM`, `-b`, `-Z`, `-z`, `-L`. `env -0`. `free`: `-h`, `--human`, `-w`, 10진 단위, `--tebi`, `--pebi`. `id`: `-n`, `-r`, `-z` 조합.
+  - `systemctl`: `list-units` 외의 서브커맨드, `--no-legend`, `--plain` 없는 `--all`/`-a`와 not-found 유닛을 포함하는 `--state`. `journalctl`: `-o short-iso`, `-o short-iso-precise` 외의 형식, `--no-hostname`.
+  - `apt`: `list`는 `--installed` 또는 `--upgradable`이 있어야 하고, `search`, `show`, `policy`는 형식 밖이다. `npm`: `ls`/`list`의 `--all`, `--depth` 1 이상, `--json`, `--parseable`, 패키지 위치 인자, 그 밖의 서브커맨드. `cargo`: 모든 서브커맨드.
+  - `docker`: `ps`의 `-q`, `-s`, `--format`, `ps` 외의 서브커맨드(`stats` 포함). `gh`: `pr list` 외의 서브커맨드, `-q`, `-w`. `kubectl get`: `-o` 값 `wide` 외, `-A`, `-w`, `--show-labels`.
+  - `git`: `status`의 `-s`, `--porcelain`, `-z`, `--ignored`. `log`는 `--oneline`, `--format=oneline|%h %s|%H %s`, `--pretty=oneline` 가운데 하나가 있어야 하며 `--decorate`, `--graph`, `--stat`, `-p`는 형식 밖이다. `branch`는 `-v`가 있어야 하며 `-a`, `-r`는 형식 밖이다. `diff`의 `-M`, `--find-renames`, `--diff-filter`, `--stat` 계열, `--no-prefix`.
+  - 서브커맨드를 선언한 명령(`git`, `docker`, `gh`, `kubectl`, `helm`, `npm`, `apt`, `systemctl`, `cargo`)의 선언 밖 서브커맨드(`git show`, `docker images`, `gh issue list` 등)는 `failure.reason`이 `parser_not_found` 대신 `unsupported_format`이다. 출력이 JSON이면 이전과 같이 native JSON 폴백이 `parsed`를 채운다.
+  - `dir`은 Windows에서만 파싱한다.
+
 ## [2.0.2] - 2026-10-03
 
 ### Fixed

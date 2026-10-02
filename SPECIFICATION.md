@@ -222,7 +222,12 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `FailureInfo`:
 ```typescript
-{ kind: "guard" | "exec" | "parse" | "config"; reason: string; message: string }
+{
+  kind:    "guard" | "exec" | "parse" | "config";
+  reason:  string;
+  message: string;
+  hint?:   { args: string[]; reason: string };   // reason=unsupported_format일 때만
+}
 ```
 
 | kind | reason | 트리거 | ok |
@@ -238,9 +243,11 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `parse` | `parser_exception` | 파서 함수가 예외 던짐 | false |
 | `parse` | `parser_not_found` | 등록된 파서 없고 native JSON도 아님 | **true** (정보성) |
 | `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 | false |
-| `parse` | `unsupported_format` | 파서의 `supports(args)`가 해당 출력 형식을 거부함 | false |
+| `parse` | `unsupported_format` | 인자가 파서 계약의 형식 선언(5.1) 밖이거나 `supports(args)`가 거부함 | false |
 | `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 | false |
 | `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
+
+`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. 같은 정보를 얻는 인자가 없으면(`ls -lR`, `git diff --stat` 등) `hint`가 없다.
 
 `kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다.
 
@@ -306,19 +313,54 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 `src/parsers/registry.ts`에 정의된다.
 
 ```typescript
-export interface ParserPack {
+export interface ParserPack extends ParserContract {
   name:      string;
   parse:     (raw: string, args: string[], ctx?: ParseContext) => unknown;
   schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
-  supports?:    (args: string[]) => boolean;
-  headerLines?: number;
-  noise?:       RegExp;
+}
+
+type FlagArity = "bool" | "value" | "attached";
+
+export interface ParserContract {
+  // 입력 형식 선언
+  acceptedFlags?:       Record<string, FlagArity>;
+  acceptedValues?:      Record<string, RegExp>;
+  acceptedPositionals?: { min?: number; max?: number; pattern?: RegExp };
+  requiredFlags?:       string[];
+  exclusiveFlags?:      string[];
+  leadingFlags?:        Record<string, FlagArity>;
+  subcommands?:         Record<string, ParserContract>;
+  plusFlags?:           boolean;
+  singleDashLong?:      boolean;
+  supports?:            (args: string[]) => boolean;
+  hint?:                (rest: string[]) => { args: string[]; reason: string; native?: boolean } | null;
+  // 출력 모양
+  headerLines?:         number;
+  noise?:               RegExp;
+  rowsKey?:             string;
+  rowLine?:             RegExp;
+  rowFields?:           string[];
 }
 ```
 
-`supports`, `headerLines`, `noise`는 선택 필드이며 파서 실패 계약을 구성한다. `supports(args)`가 `false`를 반환하면 파서를 실행하지 않고 `parse_error.reason="unsupported_format"`을 반환한다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 실패가 아니다.
+계약 필드는 모두 선택이다.
+
+입력 형식 선언은 파서가 출력 형식을 검증한 인자 범위다. 선언(`acceptedFlags`, `acceptedPositionals`, `subcommands` 가운데 하나)이 있으면 그 밖의 인자는 파서를 실행하지 않고 `parse_error.reason="unsupported_format"`을 반환하며, 메시지에 원인 인자를 밝힌다. 선언이 없으면 인자를 제한하지 않는다.
+- `acceptedFlags`: 플래그 이름과 값 방식. `bool`은 값이 없고, `value`는 붙은 값(`--x=v`, `-xv`)이나 다음 인자를 값으로 받으며, `attached`는 붙은 값만 받는다(`--color=never`, `-U0`). 단문자 묶음(`-la`)은 글자마다 나눠 검사한다. `-5` 같은 숫자 축약은 `"-<number>"` 이름으로 선언한다. `--` 뒤는 모두 위치 인자다.
+- `acceptedValues`: 플래그 값 패턴. `requiredFlags`: 이 가운데 하나 이상이 있어야 한다(`ls`의 `-l`). `exclusiveFlags`: 이 가운데 하나까지만 받는다(`wc`의 카운터).
+- `acceptedPositionals`: 위치 인자 개수(`min`, `max`)와 모든 위치 인자가 일치해야 하는 `pattern`.
+- `leadingFlags`: 서브커맨드 앞에 올 수 있는 전역 옵션(`git --no-pager`, `git -C <경로>`). `subcommands`: 서브커맨드 낱말(`"log"`, `"pr list"`)별 계약으로, 상위 계약에 덧씌운다. 빈 문자열 키는 서브커맨드 없이 실행한 경우다. 서브커맨드를 선언한 명령에서 선언 밖의 서브커맨드는 `unsupported_format`이다.
+- `plusFlags`: `+`로 시작하는 인자를 플래그로 본다(`dig +tcp`, `lsof +D`). `singleDashLong`: 단일 대시 긴 이름(`find -name`)을 묶음으로 나누지 않는다.
+- `supports(args)`: 선언으로 표현하기 어려운 조건. 선언 검사를 통과한 뒤 추가로 적용하며 `false`면 `unsupported_format`이다.
+- `hint(rest)`: 서브커맨드 다음 인자를 받아 같은 정보를 얻는 대체 인자를 제안한다. 레지스트리는 앞쪽 전역 옵션과 서브커맨드를 다시 붙이고, `native`가 아닌 제안은 같은 계약의 형식 검사를 통과해야 `parse_error.hint`로 내보낸다.
+
+출력 모양 필드는 실패 판정과 불변식 검사에 쓰인다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 실패가 아니다. `rowsKey`는 데이터 줄 하나당 행 하나를 담는 결과 배열의 키, `rowLine`은 데이터 줄 가운데 행이 되는 줄의 패턴(없으면 모든 데이터 줄), `rowFields`는 행 객체가 가질 수 있는 필드 이름이다.
+
+`src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드를 반영한 유효 계약을 돌려준다.
+
+내장 파서의 계약은 `src/parsers/contracts.ts`에 있다. 허용 플래그는 실측으로 처리를 확인한 것만 둔다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)에는 형식 선언이 없다.
 
 `schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
 
@@ -328,7 +370,7 @@ export interface ParserPack {
 
 `ParserRegistry`에는 두 등록 경로가 있다.
 
-`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 `{ supports?, headerLines?, noise? }` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
+`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 5.1의 `ParserContract` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
 
 `registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 커스텀 파서 및 외부 파서가 사용하는 경로다.
 

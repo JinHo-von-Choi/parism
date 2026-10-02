@@ -192,7 +192,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | Git | `git diff` | `files_changed[]` | O |
 | Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]`: 상태, 재시도, 이벤트 사유/메시지 | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`/`stats[]`: 이미지, 상태, CPU/MEM/IO | O |
+| DevOps | `docker ps` | `containers[]`: 이미지, 상태, 포트, 이름 (`docker stats`는 현재 허용 형식 밖) | O |
 | DevOps | `gh pr list` | `pull_requests[]`: 번호, 제목, 상태, 작성자, 라벨 | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build 프로필) | `summary`: to_add, to_change, to_destroy | O |
@@ -208,7 +208,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 시스템 | `brew list --versions` | `packages[]`: name, version | O |
 | 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
 | 패키지 | `yarn list` (build 프로필) | `dependencies[]`: name, version, depth | X |
-| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path | O |
+| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path (현재 허용 형식 없음) | O |
 | Windows | `dir` | `directory`, `entries[]`: 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
@@ -219,6 +219,26 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
 > `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"`, `"unsupported_format"`, `"unrecognized_output"` 네 값을 가진다. `unsupported_format` 은 파서가 해당 인자의 출력 형식을 지원하지 않을 때, `unrecognized_output` 은 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못했을 때 반환된다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
+
+### 허용 형식과 대체 인자 안내
+
+내장 파서는 출력 형식을 실측으로 확인한 인자 범위(허용 플래그, 위치 인자 규칙, 서브커맨드)를 계약으로 선언한다(`src/parsers/contracts.ts`). 범위 밖의 인자는 파서를 실행하지 않고 `unsupported_format`을 반환한다. 틀린 값을 조용히 돌려주는 대신 실패를 드러내기 위해서다. `raw`는 그대로이고, 출력이 JSON 문서이면 네이티브 JSON 패스스루가 `parsed`를 채운다.
+
+같은 정보를 처리 가능한 형식으로 얻는 인자가 있으면 `result.failure.hint`(같은 값이 `stdout.parse_error.hint`)에 `{ args, reason }`으로 담긴다. `args`는 같은 명령에 그대로 넘기는 전체 인자이며 readonly 기본 정책을 통과한다.
+
+| 요청 | `failure.hint.args` |
+|-|-|
+| `uname -r` | `["-a"]` |
+| `ls -lh` | `["-l"]` |
+| `git status -s` | `["status"]` |
+| `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `journalctl -n 20` | `["-n", "20", "-o", "short-iso"]` |
+| `ss -tlnp` | `["-tlnp", "-u"]` |
+| `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
+| `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
+| `npm ls --all` | `["ls", "--all", "--json"]` |
+
+같은 정보를 얻는 인자가 없으면(`ls -lR`, `git diff --stat`, `grep -A1` 등) `hint`가 없다.
 
 ### 네이티브 JSON 패스스루
 
@@ -507,9 +527,12 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* 구조화된 결과 반환 */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
-  supports: (args) => !args.includes("--json"), // 선택: false면 unsupported_format
-  headerLines: 1,                                // 선택: 데이터가 아닌 머리 줄 수
-  noise: /^Total /,                              // 선택: 데이터가 아닌 줄 패턴
+  acceptedFlags: { "-a": "bool", "-n": "value" }, // 선택: 출력 형식을 검증한 플래그. 그 밖은 unsupported_format
+  acceptedPositionals: { max: 1 },                // 선택: 위치 인자 규칙
+  supports: (args) => args.length < 4,            // 선택: 선언 뒤에 추가로 적용하는 규칙
+  headerLines: 1,                                 // 선택: 데이터가 아닌 머리 줄 수
+  noise: /^Total /,                               // 선택: 데이터가 아닌 줄 패턴
+  rowsKey: "items",                               // 선택: 데이터 줄마다 행 하나를 담는 배열(불변식 검사용)
 };
 
 export default pack;
