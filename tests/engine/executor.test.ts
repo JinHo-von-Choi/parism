@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { execute, truncateUtf8Lines } from "../../src/engine/executor.js";
+import { execute, truncateUtf8Lines, trackedProcessGroups, terminateProcessGroups } from "../../src/engine/executor.js";
 
 describe("execute()", () => {
   it("echo 명령을 실행하고 stdout을 반환한다", async () => {
@@ -139,4 +139,31 @@ describe("타임아웃 시 프로세스 그룹 종료", () => {
     expect(r.exitCode).toBe(3);
     expect(r.failure?.reason).toBe("non_zero_exit");
   });
+});
+
+/** 조건이 참이 될 때까지 짧게 기다린다. 제한 시간이 지나면 그대로 돌아온다. */
+async function waitFor(cond: () => boolean, limitMs = 3000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  while (!cond() && Date.now() < deadline) await new Promise(res => setTimeout(res, 20));
+}
+
+describe.skipIf(process.platform === "win32")("프로세스 그룹 추적", () => {
+  it("실행 중인 그룹을 추적하고 결과가 확정되면 지운다", async () => {
+    const before  = trackedProcessGroups().size;
+    const pending = execute(process.execPath, ["-e", "setTimeout(() => {}, 300)"], process.cwd(), [], 5000, 0, false);
+    await waitFor(() => trackedProcessGroups().size === before + 1);
+    expect(trackedProcessGroups().size).toBe(before + 1);
+    const r = await pending;
+    expect(r.ok).toBe(true);
+    expect(trackedProcessGroups().size).toBe(before);
+  });
+
+  it("terminateProcessGroups는 추적 중인 그룹을 종료한다", async () => {
+    const pending = execute(process.execPath, ["-e", "setInterval(() => {}, 1000)"], process.cwd(), [], 0, 0, false);
+    await waitFor(() => trackedProcessGroups().size > 0);
+    terminateProcessGroups();
+    const r = await pending;
+    expect(r.ok).toBe(false);
+    expect(trackedProcessGroups().size).toBe(0);
+  }, 10000);
 });

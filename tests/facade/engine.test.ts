@@ -325,3 +325,44 @@ describe("ParismEngine.runPaged() 실행 결과 재사용", () => {
     expect(same.page_info?.cache?.hit).toBe(true);
   });
 });
+
+describe.skipIf(process.platform === "win32")("그룹 밖 자손이 출력 파이프를 가진 실행", () => {
+  /** 새 세션으로 분리한 자손에게 stdout, stderr를 물려주고 끝나지 않는 스크립트. 첫 줄에 자손 pid를 쓴다. */
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const d = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 8000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });",
+    "process.stdout.write(String(d.pid) + '\\n');",
+    "setInterval(function () {}, 1000);",
+  ].join("\n");
+  const config = {
+    ...DEFAULT_CONFIG,
+    guard: {
+      ...DEFAULT_CONFIG.guard,
+      allowed_commands: [process.execPath, "echo"],
+      allowed_paths:    [],
+      block_patterns:   [],
+      timeout_ms:       500,
+      max_concurrency:  1,
+    },
+  };
+
+  it("시간 초과 결과를 timeout + 1초 안에 돌려주고 다음 실행을 막지 않는다", async () => {
+    const engine = new ParismEngine(config, createRegistry());
+    const start  = Date.now();
+    const first  = await engine.run(process.execPath, { args: ["-e", script] });
+    const took   = Date.now() - start;
+    const holder = Number(first.stdout.raw.trim().split("\n")[0]);
+    try {
+      expect(first.failure?.reason).toBe("timeout");
+      expect(took).toBeLessThan(1500);
+      const nextStart = Date.now();
+      const next      = await engine.run("echo", { args: ["after"] });
+      expect(next.ok).toBe(true);
+      expect(Date.now() - nextStart).toBeLessThan(1000);
+    } finally {
+      if (holder > 0) {
+        try { process.kill(holder, "SIGKILL"); } catch { /** 이미 종료됨 */ }
+      }
+    }
+  }, 15000);
+});

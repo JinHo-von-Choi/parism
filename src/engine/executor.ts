@@ -47,6 +47,54 @@ interface ProcessOutcome {
 }
 
 /**
+ * 종료 신호를 보낸 뒤 자식이 끝나고 남은 출력을 받을 때까지 기다리는 시간.
+ * 프로세스 그룹 밖의 자손이 출력 파이프를 물고 있어도 이 시간이 지나면 스트림을 닫고 결과를 확정한다.
+ */
+const KILL_GRACE_MS = 200;
+
+/** 실행 중인 자식의 프로세스 그룹 id(그룹 리더 pid). 결과가 확정되면 지운다. */
+const liveGroups = new Set<number>();
+
+let shutdownHooksInstalled = false;
+
+/** 추적 중인 프로세스 그룹 id 집합 */
+export function trackedProcessGroups(): ReadonlySet<number> {
+  return liveGroups;
+}
+
+/**
+ * 추적 중인 프로세스 그룹 전체에 SIGKILL을 보낸다. 실패는 무시한다.
+ * 서버 종료 시 끝나지 않는 실행이 남지 않게 한다.
+ */
+export function terminateProcessGroups(): void {
+  for (const pgid of liveGroups) {
+    try {
+      process.kill(-pgid, "SIGKILL");
+    } catch {
+      /** 그룹이 이미 없거나 신호를 보낼 수 없으면 할 일이 없다. */
+    }
+  }
+}
+
+/**
+ * 종료 신호를 받으면 추적 중인 그룹을 정리한다.
+ * 다른 처리기가 없으면 같은 신호를 다시 보내 기본 종료 동작을 유지한다.
+ */
+function onShutdownSignal(signal: NodeJS.Signals): void {
+  terminateProcessGroups();
+  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+}
+
+/** SIGINT, SIGTERM, 프로세스 종료 시 그룹 정리 처리기를 한 번만 등록한다. */
+function installShutdownHooks(): void {
+  if (shutdownHooksInstalled) return;
+  shutdownHooksInstalled = true;
+  process.once("SIGINT", onShutdownSignal);
+  process.once("SIGTERM", onShutdownSignal);
+  process.once("exit", terminateProcessGroups);
+}
+
+/**
  * 자식 프로세스와 그 자손을 종료한다.
  * POSIX에서는 자식이 새 프로세스 그룹의 리더이므로 음수 pid로 그룹 전체에 SIGKILL을 보낸다.
  * 그룹이 이미 없으면(ESRCH) 할 일이 없다. 그 밖의 실패와 Windows에서는 자식에게만 신호를 보낸다.
@@ -66,6 +114,8 @@ function killProcessTree(child: ChildProcess, useGroup: boolean): void {
 /**
  * 셸 없이 명령을 실행하고 종료까지 stdout, stderr를 모은다.
  * POSIX에서는 새 프로세스 그룹으로 띄워, 시간 초과나 버퍼 상한 초과 시 손자 프로세스까지 함께 종료한다.
+ * 종료시킨 뒤에는 자식이 끝나고 KILL_GRACE_MS가 지나면 스트림을 닫고 결과를 확정한다.
+ * 실행 중인 그룹은 서버 종료 시 정리할 수 있도록 추적한다.
  * timeoutMs가 0이면 시간 제한을 두지 않는다. 프로세스를 띄우지 못하면 error를 채워 돌려준다.
  */
 function runProcess(
@@ -86,37 +136,29 @@ function runProcess(
       return;
     }
 
+    const pgid = useGroup ? child.pid : undefined;
+    if (pgid !== undefined) {
+      installShutdownHooks();
+      liveGroups.add(pgid);
+    }
+
     const out:  Buffer[] = [];
     const err:  Buffer[] = [];
     const size  = { out: 0, err: 0 };
     let timedOut = false;
     let overflow = false;
     let settled  = false;
-
-    const timer = timeoutMs > 0
-      ? setTimeout(() => { timedOut = true; killProcessTree(child, useGroup); }, timeoutMs)
-      : undefined;
-
-    const collect = (chunks: Buffer[], key: "out" | "err") => (chunk: Buffer) => {
-      if (overflow) return;
-      const room = MAX_BUFFER_BYTES - size[key];
-      if (chunk.length > room) {
-        chunks.push(chunk.subarray(0, room));
-        size[key] = MAX_BUFFER_BYTES;
-        overflow  = true;
-        killProcessTree(child, useGroup);
-        return;
-      }
-      chunks.push(chunk);
-      size[key] += chunk.length;
-    };
-    child.stdout?.on("data", collect(out, "out"));
-    child.stderr?.on("data", collect(err, "err"));
+    let killed   = false;
+    let exited   = false;
+    let exitCode: number | null = null;
+    let grace:    NodeJS.Timeout | undefined;
 
     const finish = (code: number | null, error?: NodeJS.ErrnoException) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      if (pgid !== undefined) liveGroups.delete(pgid);
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
@@ -126,7 +168,50 @@ function runProcess(
         ...(error && { error }),
       });
     };
+
+    /** 종료시킨 자식이 끝났으면 유예 시간 뒤 스트림을 닫고 결과를 확정한다. */
+    const settleAfterKill = () => {
+      if (!killed || !exited || grace || settled) return;
+      grace = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(exitCode);
+      }, KILL_GRACE_MS);
+    };
+
+    const terminate = () => {
+      if (killed) return;
+      killed = true;
+      killProcessTree(child, useGroup);
+      settleAfterKill();
+    };
+
+    const timer = timeoutMs > 0
+      ? setTimeout(() => { timedOut = true; terminate(); }, timeoutMs)
+      : undefined;
+
+    const collect = (chunks: Buffer[], key: "out" | "err") => (chunk: Buffer) => {
+      if (overflow) return;
+      const room = MAX_BUFFER_BYTES - size[key];
+      if (chunk.length > room) {
+        chunks.push(chunk.subarray(0, room));
+        size[key] = MAX_BUFFER_BYTES;
+        overflow  = true;
+        terminate();
+        return;
+      }
+      chunks.push(chunk);
+      size[key] += chunk.length;
+    };
+    child.stdout?.on("data", collect(out, "out"));
+    child.stderr?.on("data", collect(err, "err"));
+
     child.on("error", (e: NodeJS.ErrnoException) => finish(null, e));
+    child.on("exit", (code: number | null) => {
+      exited   = true;
+      exitCode = code;
+      settleAfterKill();
+    });
     child.on("close", (code: number | null) => finish(code));
   });
 }
