@@ -438,6 +438,7 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
       "-L": "value", "--merged": "bool", "--no-merged": "bool", "-l": "bool", "--list": "bool",
       "--abbrev-ref": "bool", "--show-toplevel": "bool", "-w": "bool", "--numstat": "bool",
       "--shortstat": "bool", "--reverse": "bool", "--first-parent": "bool", "--no-merges": "bool", "--tags": "bool", "--always": "bool", "--long": "bool",
+      "--ignored": "attached",
     },
     positionals: "any",
     subPositionals: { branch: "none", tag: "none", remote: "none" },

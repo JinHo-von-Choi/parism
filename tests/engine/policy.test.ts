@@ -372,6 +372,17 @@ describe("값을 붙여서만 받는 플래그", () => {
     }
   });
 
+  it("git status --ignored는 값 없이도, 붙은 값으로도 받는다", () => {
+    for (const a of [["status", "--ignored"], ["status", "--ignored=matching"], ["status", "--short", "--ignored=traditional"]]) {
+      expect(reason(() => checkGuard("git", a, root, cfg))).toBe("pass");
+    }
+    expect(reason(() => checkGuard("git", ["status", "--ignored", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+  });
+
+  it("git log 작성자와 날짜 형식은 기본 정책을 통과한다", () => {
+    expect(reason(() => checkGuard("git", ["log", "-n", "3", "--format=%h%x09%an%x09%aI%x09%s"], root, cfg))).toBe("pass");
+  });
+
   it("git blame, shortlog의 -n은 값을 받지 않는다", () => {
     expect(reason(() => checkGuard("git", ["blame", "-n", "--no-such-option", "f.ts"], root, cfg))).toBe("arg_not_allowed");
     expect(reason(() => checkGuard("git", ["shortlog", "-n", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");

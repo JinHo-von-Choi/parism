@@ -3,7 +3,14 @@ export interface GitCommit {
   message: string;
   /** --decorate로 표시된 참조(HEAD -> main, tag: v1.0, origin/main) */
   refs?:   string[];
+  /** 작성자 이름(--format=%h%x09%an%x09%aI%x09%s) */
+  author?: string;
+  /** 작성 시각, ISO 8601(같은 형식) */
+  date?:   string;
 }
+
+/** 해시, 작성자, 작성 시각, 제목을 탭으로 나눈 형식 */
+const AUTHORED_FORMAT = /^(?:--format=|--pretty=format:)%[hH]%x09%an%x09%aI%x09%s$/;
 
 /** 해시 다음의 "(HEAD -> main, tag: v1.0)" 꼬리표 */
 const DECORATION = /^\(([^)]*)\)(?:\s+(.*))?$/;
@@ -20,9 +27,17 @@ function splitRefs(text: string): string[] | null {
 export function parseGitLog(cmd: string, args: string[], raw: string): { commits: GitCommit[] } {
   const commits: GitCommit[] = [];
   const decorated = args.some(a => a === "--decorate" || /^--decorate=(short|full|auto)$/.test(a));
+  const authored  = args.some(a => AUTHORED_FORMAT.test(a));
 
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
+    if (authored) {
+      const cols = line.split("\t");
+      if (cols.length >= 4 && /^[a-f0-9]+$/.test(cols[0]!)) {
+        commits.push({ hash: cols[0]!, author: cols[1]!, date: cols[2]!, message: cols.slice(3).join("\t") });
+      }
+      continue;
+    }
     const m = line.match(/^([a-f0-9]+)(?:\s+(.*))?$/);
     if (!m) continue;
     const hash = m[1]!;

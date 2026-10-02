@@ -37,6 +37,10 @@ const NUL_RECORDS = { nulRecords: true } as const;
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
 
+/** git log 고정 형식: 해시와 제목, 또는 탭으로 나눈 해시, 작성자, 작성 시각(ISO 8601), 제목 */
+const GIT_LOG_FORMAT = /^(oneline|%[hH] %s|%[hH]%x09%an%x09%aI%x09%s)$/;
+const GIT_LOG_PRETTY = /^(oneline|format:%[hH] %s|format:%[hH]%x09%an%x09%aI%x09%s)$/;
+
 /** grep 디렉터리 처리 값. recurse는 -r과 같이 파일 이름 열을 낸다. */
 const GREP_DIRECTORIES = /^(read|skip|recurse)$/;
 const GREP_DEVICES     = /^(read|skip)$/;
@@ -280,7 +284,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     subcommands:  {
       status: {
         acceptedFlags:  { ...bools("--long", "-v", "--verbose", "-b", "--branch"), ...flags("attached", "-u", "--untracked-files", "--ignored") },
-        acceptedValues: { "--ignored": /^(traditional|)$/ },
+        acceptedValues: { "--ignored": /^(traditional|matching|no|)$/ },
         hint:           gitStatusHint,
       },
       log: {
@@ -290,10 +294,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
           ...values("-n", "--max-count", "--since", "--until", "--author"),
           ...flags("attached", "--format", "--pretty", "--decorate"),
         },
-        acceptedValues: { "--format": /^(oneline|%h %s|%H %s)$/, "--pretty": /^(oneline|format:%h %s|format:%H %s)$/, "--decorate": /^(short|full|)$/ },
+        acceptedValues: { "--format": GIT_LOG_FORMAT, "--pretty": GIT_LOG_PRETTY, "--decorate": /^(short|full|)$/ },
         requiredFlags:  ["--oneline", "--format", "--pretty"],
         hint:           gitLogHint,
-        rowsKey: "commits", rowFields: ["hash", "message", "refs"],
+        rowsKey: "commits", rowFields: ["hash", "message", "refs", "author", "date"],
       },
       branch: {
         acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l", "-a", "--all", "-r", "--remotes"),

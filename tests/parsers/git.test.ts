@@ -3,6 +3,7 @@ import { parseGitStatus } from "../../src/parsers/git/status.js";
 import { parseGitLog }    from "../../src/parsers/git/log.js";
 import { parseGitDiff }   from "../../src/parsers/git/diff.js";
 import { unquoteGitPath } from "../../src/parsers/git/paths.js";
+import { createRegistry } from "../../src/parsers/index.js";
 
 describe("parseGitStatus()", () => {
   const statusOutput = [
@@ -194,6 +195,13 @@ describe("parseGitStatus() 구획", () => {
     expect(r.ignored).toEqual(["build/", "debug.log"]);
   });
 
+  it("--ignored의 traditional, matching, no 값을 받는다", () => {
+    const reg = createRegistry();
+    for (const v of ["", "=traditional", "=matching", "=no"]) {
+      expect(reg.parse("git", ["status", `--ignored${v}`], "On branch main\n").parse_error).toBeUndefined();
+    }
+  });
+
   it("병합 충돌 항목을 unmerged에 담는다", () => {
     const raw = ["On branch main", "Unmerged paths:", "\tboth modified:   f.txt"].join("\n");
     expect(parseGitStatus("git", ["status"], raw)).toMatchObject({ unmerged: ["f.txt"], staged: [], modified: [] });
@@ -243,6 +251,27 @@ describe("parseGitDiff() 파일 머리", () => {
   it("--no-prefix 출력은 접두를 떼지 않는다", () => {
     const raw = ["diff --git a/x.txt a/x.txt", "--- a/x.txt", "+++ a/x.txt", "@@ -1 +1 @@", "-a", "+b"].join("\n");
     expect(parseGitDiff("git", ["diff", "--no-prefix"], raw).files_changed).toEqual(["a/x.txt"]);
+  });
+});
+
+describe("parseGitLog() 작성자와 날짜", () => {
+  it("탭으로 나눈 해시, 작성자, 작성 시각, 제목 형식을 읽는다", () => {
+    const raw = "abc1234\tAlice Kim\t2026-10-03T06:00:00+09:00\tfix: a\tb\ndef5678\tBob\t2026-10-02T01:02:03Z\tsecond\n";
+    const r   = parseGitLog("git", ["log", "--format=%h%x09%an%x09%aI%x09%s"], raw);
+    expect(r.commits).toEqual([
+      { hash: "abc1234", author: "Alice Kim", date: "2026-10-03T06:00:00+09:00", message: "fix: a\tb" },
+      { hash: "def5678", author: "Bob", date: "2026-10-02T01:02:03Z", message: "second" },
+    ]);
+  });
+
+  it("작성자와 날짜 형식을 --format과 --pretty=format:으로 받는다", () => {
+    const reg = createRegistry();
+    for (const a of ["--format=%h%x09%an%x09%aI%x09%s", "--format=%H%x09%an%x09%aI%x09%s", "--pretty=format:%h%x09%an%x09%aI%x09%s"]) {
+      const r = reg.parse("git", ["log", a], "abc1234\tAlice\t2026-10-03T06:00:00+09:00\tfirst\n");
+      expect(r.parse_error).toBeUndefined();
+      expect(r.parsed).toMatchObject({ commits: [{ hash: "abc1234", author: "Alice", message: "first" }] });
+    }
+    expect(reg.parse("git", ["log", "--format=%h%x09%an%x09%s"], "").parse_error?.reason).toBe("unsupported_format");
   });
 });
 

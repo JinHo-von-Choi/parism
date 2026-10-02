@@ -145,14 +145,21 @@ export function journalctlHint(rest: string[]): HintDraft | null {
 /* ---------------- git ---------------- */
 
 export function gitStatusHint(rest: string[]): HintDraft | null {
-  const drop = { ...table("bool", "-s", "--short", "-z", "--null"), ...table("attached", "--porcelain", "--column", "--ignored") };
-  return { args: dropFlags(rest, drop, table("attached", "-u", "--untracked-files")), reason: "the long format of git status is parsed" };
+  const drop = { ...table("bool", "-s", "--short", "-z", "--null"), ...table("attached", "--porcelain", "--column") };
+  return { args: dropFlags(rest, drop, table("attached", "-u", "--untracked-files", "--ignored")), reason: "the long format of git status is parsed" };
 }
 
+/** git log 고정 형식. 한 줄 형식(--oneline)이었으면 해시와 제목, 아니면 작성자와 작성 시각까지 탭으로 나눈다. */
+const GIT_LOG_SUBJECT  = "--format=%h %s";
+const GIT_LOG_AUTHORED = "--format=%h%x09%an%x09%aI%x09%s";
+
 export function gitLogHint(rest: string[]): HintDraft | null {
-  const drop  = { ...table("bool", "--oneline", "--graph"), ...table("attached", "--format", "--pretty", "--decorate", "--color") };
-  const known = table("value", "-n", "--max-count", "--since", "--until", "--author");
-  return { args: [...dropFlags(rest, drop, known), "--format=%h %s"], reason: "git log with the fixed format '%h %s' (hash and subject) is parsed" };
+  const drop    = { ...table("bool", "--oneline", "--graph"), ...table("attached", "--format", "--pretty", "--decorate", "--color") };
+  const known   = table("value", "-n", "--max-count", "--since", "--until", "--author");
+  const oneline = hasFlag(rest, "--oneline") || rest.some(a => /^--(format|pretty)=oneline$/.test(a));
+  return oneline
+    ? { args: [...dropFlags(rest, drop, known), GIT_LOG_SUBJECT], reason: "git log with the fixed format '%h %s' (hash and subject) is parsed" }
+    : { args: [...dropFlags(rest, drop, known), GIT_LOG_AUTHORED], reason: "git log with hash, author, ISO author date and subject separated by tabs is parsed" };
 }
 
 export function gitBranchHint(rest: string[]): HintDraft | null {
