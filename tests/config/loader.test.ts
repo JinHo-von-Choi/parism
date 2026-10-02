@@ -435,6 +435,27 @@ describe("설정 신뢰 경계", () => {
     expect(cfg2.guard.max_output_bytes).toBe(1024);
   });
 
+  it("프로젝트 timeout_ms가 0이거나 음수이거나 유한 수가 아니면 무시한다", async () => {
+    for (const bad of [0, -1, "5000", null]) {
+      const projectPath = tmpConfig({ guard: { timeout_ms: bad } });
+      const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath });
+      expect(cfg.guard.timeout_ms).toBe(DEFAULT_CONFIG.guard.timeout_ms);
+    }
+  });
+
+  it("프로젝트 timeout_ms가 유효하고 더 작으면 그 값을 쓴다", async () => {
+    const projectPath = tmpConfig({ guard: { timeout_ms: 2500 } });
+    const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath });
+    expect(cfg.guard.timeout_ms).toBe(2500);
+  });
+
+  it("전역 timeout_ms가 0(무제한)이면 유효한 양수 프로젝트 값이 한도가 된다", async () => {
+    const globalPath  = tmpConfig({ guard: { timeout_ms: 0 } });
+    const projectPath = tmpConfig({ guard: { timeout_ms: 3000 } });
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.guard.timeout_ms).toBe(3000);
+  });
+
   it("전역이 max_output_bytes 무제한(0)이면 프로젝트 값이 그대로 한도가 된다", async () => {
     const globalPath  = tmpConfig({ guard: { max_output_bytes: 0 } });
     const projectPath = tmpConfig({ guard: { max_output_bytes: 2048 } });

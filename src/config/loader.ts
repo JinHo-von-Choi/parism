@@ -217,6 +217,12 @@ function narrowLimit(base: number, project: number | undefined): number {
   return Math.min(base, project);
 }
 
+/** 유한한 양수가 아닌 프로젝트 값은 무시한다. 기준값이 0(무제한)이면 유효한 프로젝트 값이 한도가 된다. */
+function narrowTimeout(base: number, project: unknown): number {
+  if (typeof project !== "number" || !Number.isFinite(project) || project <= 0) return base;
+  return base === 0 ? project : Math.min(base, project);
+}
+
 function unionOf<T>(a: T[], b: T[] = []): T[] {
   return [...new Set([...a, ...b])];
 }
@@ -255,7 +261,7 @@ function narrowGuard(base: PrismGuardConfig, project: PartialPrismGuardConfig): 
       ? base.allowed_commands.filter(c => project.allowed_commands!.includes(c))
       : base.allowed_commands,
     allowed_paths:            narrowAllowedPaths(base.allowed_paths, project.allowed_paths),
-    timeout_ms:               Math.min(base.timeout_ms, project.timeout_ms ?? base.timeout_ms),
+    timeout_ms:               narrowTimeout(base.timeout_ms, project.timeout_ms),
     max_output_bytes:         narrowLimit(base.max_output_bytes, project.max_output_bytes),
     block_patterns:           unionOf(base.block_patterns, project.block_patterns),
     command_arg_restrictions: narrowArgRestrictions(base.command_arg_restrictions, project.command_arg_restrictions),
