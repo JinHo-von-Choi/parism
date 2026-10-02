@@ -533,3 +533,225 @@ describe("설정 신뢰 경계", () => {
     expect(warned).toBe(true);
   });
 });
+
+describe("설정 값 검증", () => {
+  const writeRaw = (text: string): string => {
+    const dir  = mkdtempSync(path.join(tmpdir(), "parism-cfg-"));
+    const file = path.join(dir, "prism.config.json");
+    writeFileSync(file, text);
+    return file;
+  };
+
+  /** stderr 경고를 모으면서 fn을 실행하고, needle을 포함한 경고 수를 돌려준다. */
+  async function countWarnings<T>(needle: string, fn: () => Promise<T>): Promise<{ result: T; count: number }> {
+    const spy    = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const result = await fn();
+      const count  = spy.mock.calls.filter(c => String(c[0]).includes(needle)).length;
+      return { result, count };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("PARISM_")) delete process.env[key];
+    }
+  });
+
+  const badLimits: [string, string][] = [
+    ["음수", "-1"],
+    ["무한대", "1e999"],
+    ["소수", "1.5"],
+    ["문자열", "\"100\""],
+    ["null", "null"],
+    ["배열", "[1]"],
+  ];
+
+  for (const [label, literal] of badLimits) {
+    it(`전역 설정의 ${label} max_output_bytes는 경고 1회 후 기본값을 유지한다`, async () => {
+      const globalPath = writeRaw(`{ "guard": { "max_output_bytes": ${literal} } }`);
+      const { result, count } = await countWarnings("guard.max_output_bytes", () =>
+        loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+      expect(result.guard.max_output_bytes).toBe(DEFAULT_CONFIG.guard.max_output_bytes);
+      expect(count).toBe(1);
+    });
+
+    it(`프로젝트 설정의 ${label} max_output_bytes는 경고 1회 후 기준값을 유지한다`, async () => {
+      const projectPath = writeRaw(`{ "guard": { "max_output_bytes": ${literal} } }`);
+      const { result, count } = await countWarnings("guard.max_output_bytes", () =>
+        loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath }));
+      expect(result.guard.max_output_bytes).toBe(DEFAULT_CONFIG.guard.max_output_bytes);
+      expect(count).toBe(1);
+    });
+
+    it(`loadConfig의 ${label} max_output_bytes는 경고 1회 후 기본값을 유지한다`, async () => {
+      const configPath = writeRaw(`{ "guard": { "max_output_bytes": ${literal} } }`);
+      const { result, count } = await countWarnings("guard.max_output_bytes", () => loadConfig(configPath));
+      expect(result.guard.max_output_bytes).toBe(DEFAULT_CONFIG.guard.max_output_bytes);
+      expect(count).toBe(1);
+    });
+  }
+
+  for (const value of ["-1", "NaN", "1.5", "Infinity"]) {
+    it(`환경 변수 PARISM_MAX_OUTPUT_BYTES=${value}는 경고 1회 후 기본값을 유지한다`, async () => {
+      process.env.PARISM_MAX_OUTPUT_BYTES = value;
+      const { result, count } = await countWarnings("PARISM_MAX_OUTPUT_BYTES", () =>
+        loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" }));
+      expect(result.guard.max_output_bytes).toBe(DEFAULT_CONFIG.guard.max_output_bytes);
+      expect(count).toBe(1);
+    });
+  }
+
+  const badLists: [string, string][] = [
+    ["문자열", "\"ls\""],
+    ["null", "null"],
+    ["숫자 원소 배열", "[1, 2]"],
+    ["객체", "{}"],
+  ];
+
+  for (const [label, literal] of badLists) {
+    it(`전역 설정의 ${label} allowed_commands는 경고 1회 후 기본 목록을 유지한다`, async () => {
+      const globalPath = writeRaw(`{ "guard": { "allowed_commands": ${literal} } }`);
+      const { result, count } = await countWarnings("guard.allowed_commands", () =>
+        loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+      expect(result.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
+      expect(count).toBe(1);
+    });
+
+    it(`프로젝트 설정의 ${label} allowed_paths는 기동을 막지 않고 기준 경로를 유지한다`, async () => {
+      const base        = realpathSync(tmpdir());
+      const globalPath  = tmpConfig({ guard: { allowed_paths: [base] } });
+      const projectPath = writeRaw(`{ "guard": { "allowed_paths": ${literal} } }`);
+      const { result, count } = await countWarnings("guard.allowed_paths", () =>
+        loadConfigMultiLayer({ globalPath, projectPath }));
+      expect(result.guard.allowed_paths).toEqual([base]);
+      expect(count).toBe(1);
+    });
+  }
+
+  it("유효한 필드는 무효 필드와 같은 레이어에 있어도 반영된다", async () => {
+    const globalPath = tmpConfig({ guard: { timeout_ms: 4000, max_items: -5 } });
+    const { result, count } = await countWarnings("guard.max_items", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.timeout_ms).toBe(4000);
+    expect(result.guard.max_items).toBe(DEFAULT_CONFIG.guard.max_items);
+    expect(count).toBe(1);
+  });
+
+  it("guard가 객체가 아니면 경고 후 기본 guard를 유지한다", async () => {
+    const globalPath = tmpConfig({ guard: "readonly" });
+    const { result, count } = await countWarnings("guard", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
+    expect(count).toBe(1);
+  });
+
+  it("최상위가 객체가 아닌 설정 파일은 경고 후 무시한다", async () => {
+    const globalPath = writeRaw("[1, 2]");
+    const { result, count } = await countWarnings("WARNING", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
+    expect(count).toBe(1);
+  });
+
+  it("잘못된 profile 값은 경고 후 무시한다", async () => {
+    const globalPath = tmpConfig({ guard: { profile: "admin" } });
+    const { result, count } = await countWarnings("guard.profile", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.profile).toBeUndefined();
+    expect(count).toBe(1);
+  });
+
+  it("형식이 틀린 command_policies 항목은 경고 후 그 항목만 무시한다", async () => {
+    const globalPath = tmpConfig({
+      guard: {
+        command_policies: {
+          git:    { flags: "all", positionals: "any" },
+          mytool: { flags: { "-v": "bool" }, positionals: "none" },
+        },
+      },
+    });
+    const { result, count } = await countWarnings("guard.command_policies.git", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.command_policies?.git).toBeUndefined();
+    expect(result.guard.command_policies?.mytool).toEqual({ flags: { "-v": "bool" }, positionals: "none" });
+    expect(count).toBe(1);
+  });
+
+  it("알 수 없는 정책 키가 있는 command_policies 항목은 무시한다", async () => {
+    const globalPath = tmpConfig({ guard: { command_policies: { mytool: { flags: {}, positionals: "none", subcommand: ["x"] } } } });
+    const { result, count } = await countWarnings("guard.command_policies.mytool", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.command_policies?.mytool).toBeUndefined();
+    expect(count).toBe(1);
+  });
+
+  it("잘못된 secrets 하위 값은 경고 후 그 값만 무시한다", async () => {
+    const globalPath = tmpConfig({ guard: { secrets: { env_patterns: "TOKEN", output_redaction_enabled: true } } });
+    const { result, count } = await countWarnings("guard.secrets.env_patterns", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.secrets?.env_patterns).toEqual(DEFAULT_CONFIG.guard.secrets?.env_patterns);
+    expect(result.guard.secrets?.output_redaction_enabled).toBe(true);
+    expect(count).toBe(1);
+  });
+
+  it("잘못된 parsers와 telemetry 값은 경고 후 무시한다", async () => {
+    const globalPath = tmpConfig({ parsers: { strict_schemas: "yes", adaptive_format_threshold: { compact: -1 } }, telemetry: { enabled: 1 } });
+    const spy        = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+    const warnings   = spy.mock.calls.map(c => String(c[0]));
+    spy.mockRestore();
+    expect(cfg.parsers?.strict_schemas).toBe(false);
+    expect(cfg.parsers?.adaptive_format_threshold?.compact).toBe(50);
+    expect(cfg.telemetry?.enabled).toBe(false);
+    expect(warnings.filter(w => w.includes("parsers.strict_schemas"))).toHaveLength(1);
+    expect(warnings.filter(w => w.includes("parsers.adaptive_format_threshold.compact"))).toHaveLength(1);
+    expect(warnings.filter(w => w.includes("telemetry.enabled"))).toHaveLength(1);
+  });
+
+  it("빈 PARISM_ALLOWED_PATHS는 경고 후 무시해 경로 제한을 유지한다", async () => {
+    for (const value of ["", " , "]) {
+      process.env.PARISM_ALLOWED_PATHS = value;
+      const { result, count } = await countWarnings("PARISM_ALLOWED_PATHS", () =>
+        loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" }));
+      expect(result.guard.allowed_paths).toEqual([process.cwd()]);
+      expect(count).toBe(1);
+    }
+  });
+
+  it("빈 PARISM_ALLOWED_COMMANDS는 경고 후 무시한다", async () => {
+    process.env.PARISM_ALLOWED_COMMANDS = "";
+    const { result, count } = await countWarnings("PARISM_ALLOWED_COMMANDS", () =>
+      loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" }));
+    expect(result.guard.allowed_commands).toEqual(DEFAULT_CONFIG.guard.allowed_commands);
+    expect(count).toBe(1);
+  });
+
+  it("유효한 설정은 경고를 내지 않는다", async () => {
+    const globalPath = tmpConfig({ guard: { timeout_ms: 0, max_output_bytes: 0, allowed_commands: ["ls"], profile: "build" }, parsers: { strict_schemas: true } });
+    const { result, count } = await countWarnings("WARNING", () =>
+      loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" }));
+    expect(result.guard.timeout_ms).toBe(0);
+    expect(result.guard.profile).toBe("build");
+    expect(count).toBe(0);
+  });
+
+  it("loadConfig도 cwd가 / 이면 기본 allowed_paths를 홈 디렉터리로 제한한다", async () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/");
+    const { result, count } = await countWarnings("cwd is /", () => loadConfig("/tmp/__nonexistent_prism_config__.json"));
+    cwdSpy.mockRestore();
+    expect(result.guard.allowed_paths).toEqual([homedir()]);
+    expect(count).toBe(1);
+  });
+
+  it("loadConfig는 설정 파일에 allowed_paths가 없을 때도 cwd / 규칙을 따른다", async () => {
+    const configPath = tmpConfig({ guard: { timeout_ms: 3000 } });
+    const cwdSpy     = vi.spyOn(process, "cwd").mockReturnValue("/");
+    const { result } = await countWarnings("cwd is /", () => loadConfig(configPath));
+    cwdSpy.mockRestore();
+    expect(result.guard.allowed_paths).toEqual([homedir()]);
+    expect(result.guard.timeout_ms).toBe(3000);
+  });
+});

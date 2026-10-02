@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import type { CommandPolicy } from "../engine/policy.js";
 import { realPathOf } from "../engine/guard.js";
+import { LIMIT_SCHEMA, validateConfigLayer } from "./schema.js";
 
 export interface CommandArgRestriction {
   blocked_flags: string[];
@@ -126,52 +127,44 @@ function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig 
 const REMOVED_KEY_MSG =
   "[parism] guard.env_secret_patterns was removed in 2.0.0 and is ignored; use guard.secrets.env_patterns.";
 
-/** 제거된 레거시 키(guard.env_secret_patterns)가 있으면 경고하고 키를 뺀 사본을 돌려준다. */
-function dropRemovedGuardKeys<T extends object>(guard: T | undefined): T | undefined {
-  if (guard === undefined || !("env_secret_patterns" in guard)) return guard;
-  process.stderr.write(REMOVED_KEY_MSG + "\n");
-  const rest = { ...guard } as Record<string, unknown>;
-  delete rest.env_secret_patterns;
-  return rest as T;
+/**
+ * 설정 파일 JSON을 레이어로 바꾼다.
+ * 제거된 레거시 키(guard.env_secret_patterns)는 전용 경고를 내고, 나머지 필드는 스키마로 검증한다.
+ * 검증은 알 수 없는 키를 버리므로 레거시 키도 결과에 남지 않는다.
+ */
+function toLayer(json: unknown, source: string): Partial<PrismConfig> {
+  const guard = (json as { guard?: unknown } | null | undefined)?.guard;
+  if (typeof guard === "object" && guard !== null && "env_secret_patterns" in guard) {
+    process.stderr.write(REMOVED_KEY_MSG + "\n");
+  }
+  return validateConfigLayer(json, source);
+}
+
+/** 기본 설정 사본. allowed_paths는 실행 디렉터리 규칙(defaultAllowedPaths)을 따른다. */
+function baseConfig(): PrismConfig {
+  const defaults = structuredClone(DEFAULT_CONFIG);
+  defaults.guard.allowed_paths = defaultAllowedPaths();
+  return defaults;
+}
+
+function warnIfPathsUnrestricted(config: PrismConfig): void {
+  if (config.guard.allowed_paths.length > 0) return;
+  console.warn(
+    "[parism] WARNING: allowed_paths is empty. " +
+    "All filesystem paths are accessible. " +
+    "Add paths to guard.allowed_paths in prism.config.json, or set [] to disable restriction.",
+  );
 }
 
 /**
  * 지정된 경로에서 prism.config.json을 로드한다.
- * 파일이 없거나 파싱 실패 시 DEFAULT_CONFIG를 반환한다.
+ * 파일이 없거나 파싱 실패 시 기본 설정을 반환한다. 무효 필드는 경고 후 기본값을 유지한다.
  */
 export async function loadConfig(configPath: string): Promise<PrismConfig> {
-  try {
-    const raw      = await readFile(configPath, "utf-8");
-    const json     = JSON.parse(raw) as Partial<PrismConfig>;
-    const config: PrismConfig = {
-      guard:    mergeGuardConfig(dropRemovedGuardKeys(json.guard) ?? {}),
-      parsers: {
-        ...DEFAULT_CONFIG.parsers,
-        ...(json.parsers ?? {}),
-      },
-      telemetry: {
-        ...DEFAULT_CONFIG.telemetry,
-        ...(json.telemetry ?? {}),
-      },
-    };
-
-    if (config.guard.allowed_paths.length === 0) {
-      console.warn(
-        "[parism] WARNING: allowed_paths is empty. " +
-        "All filesystem paths are accessible. " +
-        "Add paths to guard.allowed_paths in prism.config.json, or set [] to disable restriction.",
-      );
-    }
-
-    return config;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      process.stderr.write(
-        `[parism] WARNING: failed to load ${configPath}: ${(err as Error).message}\n`,
-      );
-    }
-    return structuredClone(DEFAULT_CONFIG);
-  }
+  const json   = await readJsonLayer(configPath);
+  const config = json === undefined ? baseConfig() : mergeConfig(baseConfig(), toLayer(json, configPath));
+  if (json !== undefined) warnIfPathsUnrestricted(config);
+  return config;
 }
 
 /** 기본 allowed_paths. cwd가 루트(/)이면 홈 디렉터리로 제한하고 stderr에 경고한다. */
@@ -256,9 +249,9 @@ function narrowGuard(base: PrismGuardConfig, project: PartialPrismGuardConfig): 
 }
 
 /** 설정 파일을 JSON으로 읽는다. 없으면 undefined, 읽기·파싱 실패는 경고 후 undefined. */
-async function readJsonLayer(filePath: string): Promise<Partial<PrismConfig> | undefined> {
+async function readJsonLayer(filePath: string): Promise<unknown> {
   try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as Partial<PrismConfig>;
+    return JSON.parse(await readFile(filePath, "utf-8")) as unknown;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       process.stderr.write(
@@ -267,12 +260,6 @@ async function readJsonLayer(filePath: string): Promise<Partial<PrismConfig> | u
     }
     return undefined;
   }
-}
-
-/** 원본 레이어 JSON에서 제거된 레거시 guard 키를 경고와 함께 뺀다. */
-function normalizeLegacySecrets(layer: Partial<PrismConfig>): Partial<PrismConfig> {
-  if (layer.guard === undefined || !("env_secret_patterns" in layer.guard)) return layer;
-  return { ...layer, guard: dropRemovedGuardKeys(layer.guard) as PrismGuardConfig };
 }
 
 /** 프로젝트 레이어의 상대 allowed_paths를 설정 파일 디렉터리 기준 절대경로로 바꾼다. */
@@ -292,9 +279,7 @@ export async function loadConfigMultiLayer(opts?: {
   projectPath?: string;
   envPrefix?: string;
 }): Promise<PrismConfig> {
-  const defaults = structuredClone(DEFAULT_CONFIG);
-  defaults.guard.allowed_paths = defaultAllowedPaths();
-  let config: PrismConfig = defaults;
+  let config: PrismConfig = baseConfig();
 
   const globalPath = opts?.globalPath || path.join(os.homedir(), ".parism", "prism.config.json");
   const projectPath = opts?.projectPath || path.join(process.cwd(), "prism.config.json");
@@ -302,14 +287,15 @@ export async function loadConfigMultiLayer(opts?: {
 
   const globalJson   = await readJsonLayer(globalPath);
   let   trustProject = false;
-  if (globalJson) {
-    trustProject = globalJson.trust_project_config === true;
-    config       = mergeConfig(config, normalizeLegacySecrets(globalJson));
+  if (globalJson !== undefined) {
+    const layer  = toLayer(globalJson, globalPath);
+    trustProject = layer.trust_project_config === true;
+    config       = mergeConfig(config, layer);
   }
 
   const projectJson = await readJsonLayer(projectPath);
-  if (projectJson) {
-    const layer = resolveProjectPaths(normalizeLegacySecrets(projectJson), projectPath);
+  if (projectJson !== undefined) {
+    const layer = resolveProjectPaths(toLayer(projectJson, projectPath), projectPath);
     if (trustProject) {
       config = mergeConfig(config, layer);
     } else {
@@ -323,22 +309,23 @@ export async function loadConfigMultiLayer(opts?: {
   config = mergeConfig(config, envToConfig(envPrefix));
   if (trustProject) config.trust_project_config = true;
 
-  if (config.guard.allowed_paths.length === 0) {
-    console.warn(
-      "[parism] WARNING: allowed_paths is empty. " +
-      "All filesystem paths are accessible. " +
-      "Add paths to guard.allowed_paths in prism.config.json, or set [] to disable restriction.",
-    );
-  }
-
+  warnIfPathsUnrestricted(config);
   return config;
 }
 
-/** 환경 변수의 음이 아닌 정수 값을 파싱한다. 유효하지 않으면 경고하고 undefined를 반환한다. */
+/** 환경 변수의 유한한 0 이상 정수 값을 파싱한다. 유효하지 않으면 경고하고 undefined를 반환한다. */
 function parseEnvInt(key: string, value: string | undefined): number | undefined {
   const n = value?.trim() ? Number(value) : NaN;
-  if (Number.isFinite(n) && n >= 0) return n;
+  if (LIMIT_SCHEMA.safeParse(n).success) return n;
   process.stderr.write(`[parism] WARNING: invalid ${key}: ${JSON.stringify(value)}\n`);
+  return undefined;
+}
+
+/** 쉼표 구분 목록을 파싱한다. 항목이 하나도 없으면 경고하고 undefined를 반환한다. */
+function parseEnvList(key: string, value: string | undefined): string[] | undefined {
+  const list = value?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+  if (list.length > 0) return list;
+  process.stderr.write(`[parism] WARNING: ignored empty ${key}\n`);
   return undefined;
 }
 
@@ -353,9 +340,11 @@ function envToConfig(envPrefix: string): Partial<PrismConfig> {
     const shortKey = key.slice(prefix.length).toLowerCase();
 
     if (shortKey === "allowed_commands") {
-      guard.allowed_commands = value?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+      const list = parseEnvList(key, value);
+      if (list !== undefined) guard.allowed_commands = list;
     } else if (shortKey === "allowed_paths") {
-      guard.allowed_paths = value?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+      const list = parseEnvList(key, value);
+      if (list !== undefined) guard.allowed_paths = list;
     } else if (shortKey === "timeout_ms") {
       const n = parseEnvInt(key, value);
       if (n !== undefined) guard.timeout_ms = n;
@@ -392,18 +381,29 @@ function envToConfig(envPrefix: string): Partial<PrismConfig> {
   return result;
 }
 
-/** command_policies는 명령 단위로 병합해 상위 레이어의 다른 명령 정책을 유지한다. */
+/**
+ * 상위 레이어를 기준 설정 위에 병합한다.
+ * command_policies는 명령 단위로, secrets와 adaptive_format_threshold는 하위 키 단위로 병합해
+ * 상위 레이어가 지정하지 않은(또는 검증에서 버려진) 하위 값은 기준값을 유지한다.
+ */
 function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismConfig {
   const guard: PartialPrismGuardConfig = { ...base.guard, ...(override.guard ?? {}) };
   if (base.guard.command_policies && override.guard?.command_policies) {
     guard.command_policies = { ...base.guard.command_policies, ...override.guard.command_policies };
   }
+  if (base.guard.secrets && override.guard?.secrets) {
+    guard.secrets = { ...base.guard.secrets, ...override.guard.secrets };
+  }
+  const parsers: PrismParsersConfig = { ...(base.parsers ?? {}), ...(override.parsers ?? {}) };
+  if (base.parsers?.adaptive_format_threshold && override.parsers?.adaptive_format_threshold) {
+    parsers.adaptive_format_threshold = {
+      ...base.parsers.adaptive_format_threshold,
+      ...override.parsers.adaptive_format_threshold,
+    };
+  }
   return {
     guard: mergeGuardConfig(guard),
-    parsers: {
-      ...(base.parsers ?? {}),
-      ...(override.parsers ?? {}),
-    },
+    parsers,
     telemetry: {
       ...(base.telemetry ?? {}),
       ...(override.telemetry ?? {}),
