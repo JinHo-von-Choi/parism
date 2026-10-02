@@ -170,48 +170,48 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 | 카테고리 | 명령어 | 파싱 결과 | 기본 허용 |
 |---|---|---|---|
-| 파일시스템 | `ls` | `entries[]` — 이름, 타입, 권한, 크기, 수정 시각, 소유자 | O |
-| 파일시스템 | `find` | `paths[]` — 경로 목록 | O |
+| 파일시스템 | `ls` | `entries[]`: 이름, 타입, 권한, 크기, 수정 시각, 소유자 | O |
+| 파일시스템 | `find` | `paths[]`: 경로 목록 | O |
 | 파일시스템 | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프 | O |
-| 파일시스템 | `du` | `entries[]` — 크기, 경로 | O |
-| 파일시스템 | `df` | `filesystems[]` — 파티션, 사용량, 마운트 위치 | O |
-| 파일시스템 | `tree` | `root`, `tree{}` — 계층 구조 노드, `total_files`, `total_dirs` | O |
-| 프로세스 | `ps` | `processes[]` — PID, CPU%, MEM%, 명령어 | O |
+| 파일시스템 | `du` | `entries[]`: 크기, 경로 | O |
+| 파일시스템 | `df` | `filesystems[]`: 파티션, 사용량, 마운트 위치 | O |
+| 파일시스템 | `tree` | `root`, `tree{}`: 계층 구조 노드, `total_files`, `total_dirs` | O |
+| 프로세스 | `ps` | `processes[]`: PID, CPU%, MEM%, 명령어 | O |
 | 프로세스 | `kill` | raw pass-through (기본 차단, prism.config.json에서 명시적 허용 시 사용) | X |
 | 네트워크 | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
 | 네트워크 | `curl -I` | `status_code`, `headers{}` | O |
-| 네트워크 | `netstat` | `connections[]` — proto, local/foreign address, state | O |
-| 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 || O |
-| 네트워크 | `ss` | `entries[]`: 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 || O |
-| 네트워크 | `dig` | `query`, `answers[]`: 타입, 값, TTL, `query_time_ms` || O |
-| 텍스트 | `grep -n` | `matches[]` — 파일, 라인 번호, 텍스트 | O |
-| 텍스트 | `wc` | `entries[]` — count, 파일명 | O |
+| 네트워크 | `netstat` | `connections[]`: proto, local/foreign address, state | O |
+| 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 | O |
+| 네트워크 | `ss` | `entries[]`: 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 | O |
+| 네트워크 | `dig` | `query`, `answers[]`: 타입, 값, TTL, `query_time_ms` | O |
+| 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트 | O |
+| 텍스트 | `wc` | `entries[]`: count, 파일명 | O |
 | 텍스트 | `head`, `tail`, `cat` | `lines[]` | O |
 | Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]` — hash, message | O |
+| Git | `git log --oneline` | `commits[]`: hash, message | O |
 | Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]` — 이름, current, upstream, ahead/behind | O |
-| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]` — 상태, 재시도, 이벤트 사유/메시지 | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`/`stats[]` — 이미지, 상태, CPU/MEM/IO | O |
-| DevOps | `gh pr list` | `pull_requests[]` — 번호, 제목, 상태, 작성자, 라벨 | O |
-| DevOps | `helm list` | `releases[]` — name, namespace, status, chart, app_version | O |
-| DevOps | `terraform plan` | `summary` — to_add, to_change, to_destroy | O |
-| 환경 | `env` | `vars{}` — 키-값 맵 | O |
+| Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind | O |
+| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]`: 상태, 재시도, 이벤트 사유/메시지 | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`/`stats[]`: 이미지, 상태, CPU/MEM/IO | O |
+| DevOps | `gh pr list` | `pull_requests[]`: 번호, 제목, 상태, 작성자, 라벨 | O |
+| DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
+| DevOps | `terraform plan` (build 프로필) | `summary`: to_add, to_change, to_destroy | O |
+| 환경 | `env` | `vars{}`: 키-값 맵 | O |
 | 환경 | `pwd` | `path` | O |
 | 환경 | `which` | `paths[]` | O |
-| 시스템 | `free` | `rows{}`: mem/swap별 total, used, free, available (기본 KB, `*_bytes`는 bytes) || O |
+| 시스템 | `free` | `rows{}`: mem/swap별 total, used, free, available (기본 KB, `*_bytes`는 bytes) | O |
 | 시스템 | `uname` | `kernel`, `hostname`, `release`, `version`, `arch`, `os` | O |
-| 시스템 | `id` | `uid`, `gid`, `username`, `groups[]`: id, name || O |
-| 시스템 | `systemctl list-units` | `units[]` — name, load, active, sub, description (Linux) | O |
-| 시스템 | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
-| 시스템 | `apt list --installed` | `packages[]` — name, version, arch, status | O |
-| 시스템 | `brew list --versions` | `packages[]` — name, version | O |
-| 패키지 | `npm list`, `pnpm list` | `dependencies[]` - name, version, depth | O |
-| 패키지 | `yarn list`(build 프로필) | `dependencies[]` - name, version, depth | X |
-| 패키지 | `cargo tree`(build 프로필) | `crates[]`: name, version, path | O |
-| Windows | `dir` | `directory`, `entries[]` — 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
-| Windows | `tasklist` | `processes[]` — 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
-| Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
+| 시스템 | `id` | `uid`, `gid`, `username`, `groups[]`: id, name | O |
+| 시스템 | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
+| 시스템 | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
+| 시스템 | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| 시스템 | `brew list --versions` | `packages[]`: name, version | O |
+| 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| 패키지 | `yarn list` (build 프로필) | `dependencies[]`: name, version, depth | X |
+| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path | O |
+| Windows | `dir` | `directory`, `entries[]`: 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
+| Windows | `tasklist` | `processes[]`: 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
+| Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
 | Windows | `systeminfo` | `hostname`, `os_name`, 메모리, `hotfixes[]`, `network_cards[]` | X |
 
 기본 허용(O)=DEFAULT_CONFIG에 포함. X=prism.config.json에서 명시적 허용 필요. (build 프로필) 표시는 `guard.profile: "build"`가 필요하다.

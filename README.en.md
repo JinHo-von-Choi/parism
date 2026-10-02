@@ -153,48 +153,48 @@ The agent receives the block reason in the same envelope structure as any other 
 
 | Category | Command | Parsed Output | Default |
 |---|---|---|---|
-| Filesystem | `ls` | `entries[]` — name, type, permissions, size, modified time, owner | O |
-| Filesystem | `find` | `paths[]` — list of paths | O |
+| Filesystem | `ls` | `entries[]`: name, type, permissions, size, modified time, owner | O |
+| Filesystem | `find` | `paths[]`: list of paths | O |
 | Filesystem | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps | O |
-| Filesystem | `du` | `entries[]` — size, path | O |
-| Filesystem | `df` | `filesystems[]` — partition, usage, mount point | O |
-| Filesystem | `tree` | `root`, `tree{}` — hierarchical node map, `total_files`, `total_dirs` | O |
-| Process | `ps` | `processes[]` — PID, CPU%, MEM%, command | O |
+| Filesystem | `du` | `entries[]`: size, path | O |
+| Filesystem | `df` | `filesystems[]`: partition, usage, mount point | O |
+| Filesystem | `tree` | `root`, `tree{}`: hierarchical node map, `total_files`, `total_dirs` | O |
+| Process | `ps` | `processes[]`: PID, CPU%, MEM%, command | O |
 | Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
 | Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
 | Network | `curl -I` | `status_code`, `headers{}` | O |
-| Network | `netstat` | `connections[]` — proto, local/foreign address, state | O |
-| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state || O |
-| Network | `ss` | `connections[]`: state, recv/send queue, local/peer address || O |
-| Network | `dig` | `query`, `answers[]`: type, value, TTL, `query_time_ms` || O |
-| Text | `grep -n` | `matches[]` — file, line number, text | O |
-| Text | `wc` | `entries[]` — count, filename | O |
+| Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
+| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state | O |
+| Network | `ss` | `connections[]`: state, recv/send queue, local/peer address | O |
+| Network | `dig` | `query`, `answers[]`: type, value, TTL, `query_time_ms` | O |
+| Text | `grep -n` | `matches[]`: file, line number, text | O |
+| Text | `wc` | `entries[]`: count, filename | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
 | Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]` — hash, message | O |
+| Git | `git log --oneline` | `commits[]`: hash, message | O |
 | Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]` — name, current, upstream, ahead/behind | O |
-| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]` — status, restarts, reasons, messages | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]` — image, status, CPU/MEM/IO | O |
-| DevOps | `gh pr list` | `pull_requests[]` — number, title, state, author, labels | O |
-| DevOps | `helm list` | `releases[]` — name, namespace, status, chart, app_version | O |
-| DevOps | `terraform plan` | `summary` — to_add, to_change, to_destroy | O |
-| Env | `env` | `vars{}` — key-value map (secrets filtered) | O |
+| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind | O |
+| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]`: image, status, CPU/MEM/IO | O |
+| DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
+| DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
+| DevOps | `terraform plan` (build profile) | `summary`: to_add, to_change, to_destroy | O |
+| Env | `env` | `vars{}`: key-value map (secrets filtered) | O |
 | Env | `pwd` | `path` | O |
 | Env | `which` | `paths[]` | O |
-| System | `free` | `mem`, `swap`: total, used, free, available (default unit KB; `*_bytes` in bytes) || O |
+| System | `free` | `mem`, `swap`: total, used, free, available (default unit KB; `*_bytes` in bytes) | O |
 | System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
-| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name || O |
-| System | `systemctl list-units` | `units[]` — name, load, active, sub, description (Linux) | O |
-| System | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
-| System | `apt list --installed` | `packages[]` — name, version, arch, status | O |
-| System | `brew list --versions` | `packages[]` — name, version | O |
-| Package | `npm list`, `pnpm list` | `dependencies[]` - name, version, depth | O |
-| Package | `yarn list` (build profile) | `dependencies[]` - name, version, depth | X |
+| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name | O |
+| System | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
+| System | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
+| System | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| System | `brew list --versions` | `packages[]`: name, version | O |
+| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| Package | `yarn list` (build profile) | `dependencies[]`: name, version, depth | X |
 | Package | `cargo tree` (build profile) | `crates[]`: name, version, path | O |
-| Windows | `dir` | `directory`, `entries[]` — name, type, size, modified time, `free_bytes` | X |
-| Windows | `tasklist` | `processes[]` — name, PID, session, memory. CSV format supported | X |
-| Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, subnet, gateway, DNS, MAC | X |
+| Windows | `dir` | `directory`, `entries[]`: name, type, size, modified time, `free_bytes` | X |
+| Windows | `tasklist` | `processes[]`: name, PID, session, memory. CSV format supported | X |
+| Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, subnet, gateway, DNS, MAC | X |
 | Windows | `systeminfo` | `hostname`, `os_name`, memory, `hotfixes[]`, `network_cards[]` | X |
 
 Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "(build profile)" requires `guard.profile: "build"`.
