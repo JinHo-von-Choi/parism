@@ -71,11 +71,12 @@ export const DEFAULT_CONFIG: PrismConfig = {
     allowed_commands: [
       "ls", "find", "stat", "du", "df", "tree",
       "ps",
-      "ping", "curl", "netstat",
+      "ping", "curl", "netstat", "lsof", "ss", "dig",
       "grep", "wc", "head", "tail", "cat",
       "git",
       "env", "pwd", "which",
       "echo", "date", "uname", "hostname",
+      "free", "id",
       "kubectl", "docker", "gh",
       "systemctl", "journalctl",
       "helm", "terraform", "apt", "brew",
