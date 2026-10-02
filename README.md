@@ -181,9 +181,9 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 네트워크 | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
 | 네트워크 | `curl -I` | `status_code`, `headers{}` | O |
 | 네트워크 | `netstat` | `connections[]` — proto, local/foreign address, state | O |
-| 네트워크 | `lsof -i` | `entries[]` — PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 | X |
-| 네트워크 | `ss` | `entries[]` — 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 | X |
-| 네트워크 | `dig` | `query`, `answers[]` — 타입, 값, TTL, `query_time_ms` | X |
+| 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 || O |
+| 네트워크 | `ss` | `entries[]`: 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 || O |
+| 네트워크 | `dig` | `query`, `answers[]`: 타입, 값, TTL, `query_time_ms` || O |
 | 텍스트 | `grep -n` | `matches[]` — 파일, 라인 번호, 텍스트 | O |
 | 텍스트 | `wc` | `entries[]` — count, 파일명 | O |
 | 텍스트 | `head`, `tail`, `cat` | `lines[]` | O |
@@ -199,9 +199,9 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 환경 | `env` | `vars{}` — 키-값 맵 | O |
 | 환경 | `pwd` | `path` | O |
 | 환경 | `which` | `paths[]` | O |
-| 시스템 | `free` | `rows{}` — mem/swap별 total, used, free, available (bytes) | X |
+| 시스템 | `free` | `rows{}`: mem/swap별 total, used, free, available (기본 KB, `*_bytes`는 bytes) || O |
 | 시스템 | `uname` | `kernel`, `hostname`, `release`, `version`, `arch`, `os` | O |
-| 시스템 | `id` | `uid`, `gid`, `username`, `groups[]` — id, name | X |
+| 시스템 | `id` | `uid`, `gid`, `username`, `groups[]`: id, name || O |
 | 시스템 | `systemctl list-units` | `units[]` — name, load, active, sub, description (Linux) | O |
 | 시스템 | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
 | 시스템 | `apt list --installed` | `packages[]` — name, version, arch, status | O |
@@ -247,7 +247,7 @@ node dist/index.js
 
 ## 라이브러리 모드
 
-MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v1.0.0 부터 정식 API 다. Semantic Versioning 을 따르며, breaking change 는 v2.0.0 에서만 발생한다.
+MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v1.0.0 부터 정식 API 다. Semantic Versioning 을 따르며, v2.0.0 의 변경 사항은 CHANGELOG 에 있다. 다음 breaking change 는 v3.0.0 에서만 발생한다.
 
 최소 예시:
 

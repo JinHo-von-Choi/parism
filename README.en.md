@@ -164,9 +164,9 @@ The agent receives the block reason in the same envelope structure as any other 
 | Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
 | Network | `curl -I` | `status_code`, `headers{}` | O |
 | Network | `netstat` | `connections[]` — proto, local/foreign address, state | O |
-| Network | `lsof -i` | `entries[]` — PID, process name, protocol, local/remote address, state | X |
-| Network | `ss` | `connections[]` — state, recv/send queue, local/peer address | X |
-| Network | `dig` | `query`, `answers[]` — type, value, TTL, `query_time_ms` | X |
+| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state || O |
+| Network | `ss` | `connections[]`: state, recv/send queue, local/peer address || O |
+| Network | `dig` | `query`, `answers[]`: type, value, TTL, `query_time_ms` || O |
 | Text | `grep -n` | `matches[]` — file, line number, text | O |
 | Text | `wc` | `entries[]` — count, filename | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
@@ -182,9 +182,9 @@ The agent receives the block reason in the same envelope structure as any other 
 | Env | `env` | `vars{}` — key-value map (secrets filtered) | O |
 | Env | `pwd` | `path` | O |
 | Env | `which` | `paths[]` | O |
-| System | `free` | `mem`, `swap` — total, used, free, available in bytes | X |
+| System | `free` | `mem`, `swap`: total, used, free, available (default unit KB; `*_bytes` in bytes) || O |
 | System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
-| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]` — id, name | X |
+| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name || O |
 | System | `systemctl list-units` | `units[]` — name, load, active, sub, description (Linux) | O |
 | System | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
 | System | `apt list --installed` | `packages[]` — name, version, arch, status | O |

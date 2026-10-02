@@ -32,6 +32,7 @@
 추가 변경:
 - `guard.env_secret_patterns` 키를 제거했다. 설정에 남아 있으면 stderr에 경고하고 무시한다. `guard.secrets.env_patterns`를 사용한다.
 - `yarn`은 기본 `allowed_commands`와 기본 정책에서 빠졌고 `build` 프로필에서만 허용된다.
+- 기본 `allowed_commands`에 읽기 전용 명령 `free`, `id`, `lsof`, `ss`, `dig`를 추가했다. 프로젝트 설정이 가드를 넓히지 못하므로 파서가 있는 명령을 기본 목록에 둔다.
 - 실행 디렉터리가 `/`이면 기본 `allowed_paths`는 홈 디렉터리이며 stderr에 경고한다.
 - 숫자가 아닌 `PARISM_TIMEOUT_MS`, `PARISM_MAX_OUTPUT_BYTES`, `PARISM_MAX_ITEMS`, `PARISM_DEFAULT_PAGE_SIZE`, `PARISM_ADAPTIVE_FORMAT_*` 값은 무시하고 stderr에 경고한다.
 - 객체 프로토타입 키 이름(`constructor` 등)의 명령은 정책이 없는 명령으로 검사한다.
@@ -48,10 +49,10 @@
 ### Changed
 - 적응형 포맷: `json_no_raw` 임계값 이상이면 compact이면서 raw를 비우고, `compact` 임계값 이상이면 compact로 응답한다.
 - 실행기: stderr에도 `max_output_bytes`를 적용하고 버퍼 상한 초과를 `output_overflow`로 분류한다.
-- 파서: `ls`(setuid, sticky, 장치, ACL, 심볼릭 링크), `free`(단위 환산), `id -u/-g/-G`, `grep`(출력 형식 판정, 옵션 값을 파일 인자로 세지 않음), `git`(앞에 오는 전역 옵션을 건너뛰고 서브커맨드 판정), `npm ls`(ASCII 트리), `netstat`(UDP), `uname -a`, `apt`(`name`과 `suite` 분리), `tree`(들여쓰기 기반 디렉터리 판정).
+- 파서: `ls`(setuid, sticky, 장치, ACL, 심볼릭 링크), `free`(단위 환산), `id -u/-g/-G`, `grep`(출력 형식 판정, 옵션 값을 파일 인자로 세지 않음), `git`(앞에 오는 전역 옵션을 건너뛰고 서브커맨드 판정), `npm ls`(ASCII 트리), `netstat`(UDP), `uname -a`, `apt`(`name`과 `suite` 분리), `tree`(들여쓰기 기반 디렉터리 판정), `systemctl list-units`(대기 작업이 있을 때 붙는 `JOB` 열과 `job` 필드).
 - `curl`: `-w`/`--write-out` 값의 `%output{` 지시어를 차단한다.
 - `git`: 서브커맨드 조회가 객체 프로토타입 키에 영향을 받지 않는다.
-- 운영 의존성 취약점 0건.
+- `@modelcontextprotocol/sdk`를 1.31.0으로 갱신했다.
 
 ### Removed
 - `guard.env_secret_patterns`(위 Breaking 참조).
