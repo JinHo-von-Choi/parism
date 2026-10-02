@@ -24,22 +24,40 @@ export interface CommandPolicy {
   numericFlag?: boolean;
   /** 서브커맨드별 하위 동사 허용목록. 지정된 서브커맨드는 첫 위치 인자가 목록에 있어야 한다. */
   subVerbs?: Record<string, string[]>;
+  /** 값이 @로 시작하면 로컬 파일을 읽는 값 플래그. @ 값은 허용하지 않는다. */
+  fileRefFlags?: string[];
+  /** 첫 위치 인자(스크립트 경로, 실행 대상 이름) 이후 인자는 대상 프로그램 몫으로 보고 검사하지 않는다. */
+  stopAtPositional?: boolean;
 }
 
 export type PolicySource = "default" | "build" | "config";
 
 export interface ParsedArg {
-  kind:   "flag" | "positional";
-  name:   string;
-  value?: string;
+  kind:         "flag" | "positional";
+  name:         string;
+  value?:       string;
+  /** stopAtPositional 이후 분류 없이 넘긴 인자 */
+  passthrough?: boolean;
+}
+
+export interface TokenizeOptions {
+  /** 플래그 자리의 -5 같은 숫자 축약을 하나의 플래그 토큰으로 본다. */
+  numericFlag?:      boolean;
+  /** 첫 위치 인자 이후 인자는 passthrough 위치 인자로 넘긴다. */
+  stopAtPositional?: boolean;
 }
 
 /**
  * 인자 배열을 플래그/위치 인자로 분해한다.
  * --long=value, 짧은 플래그 묶음(-abc), 값이 붙은 짧은 플래그(-nVALUE)를 정규화한다.
- * 값 소비 여부는 정책의 FlagKind로 판단한다.
+ * 값 소비 여부는 정책의 FlagKind로 판단한다. 값 플래그가 소비한 인자는 숫자 축약으로 보지 않는다.
  */
-export function tokenizeArgs(args: string[], flags: Record<string, FlagKind>, singleDashLong = false): ParsedArg[] {
+export function tokenizeArgs(
+  args:           string[],
+  flags:          Record<string, FlagKind>,
+  singleDashLong: boolean         = false,
+  opts:           TokenizeOptions = {},
+): ParsedArg[] {
   const out: ParsedArg[] = [];
   let   endOfFlags       = false;
 
@@ -48,9 +66,17 @@ export function tokenizeArgs(args: string[], flags: Record<string, FlagKind>, si
 
     if (endOfFlags || arg === "-" || !arg.startsWith("-")) {
       out.push({ kind: "positional", name: arg });
+      if (opts.stopAtPositional) {
+        for (const rest of args.slice(i + 1)) out.push({ kind: "positional", name: rest, passthrough: true });
+        break;
+      }
       continue;
     }
     if (arg === "--") { endOfFlags = true; continue; }
+    if (opts.numericFlag && /^-[0-9]+$/.test(arg)) {
+      out.push({ kind: "flag", name: arg });
+      continue;
+    }
 
     if (arg.startsWith("--") || (singleDashLong && arg.length > 2)) {
       const eq   = arg.indexOf("=");
@@ -129,11 +155,14 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
       "--connect-timeout": "value", "-w": "value", "--write-out": "value", "-f": "bool",
       "--fail": "bool", "-k": "bool", "--compressed": "bool", "-A": "value", "--user-agent": "value",
     },
-    positionals: "url",
+    positionals:  "url",
+    fileRefFlags: ["-H", "--header", "-w", "--write-out"],
   },
   node:   { flags: { "--version": "bool", "-v": "bool" }, positionals: "none" },
   npx:    { flags: { "--version": "bool" }, positionals: "none" },
   npm:    { subcommands: ["ls", "list", "outdated", "view", "info", "audit", "--version", "-v"], flags: { "--depth": "value", "--json": "bool", "--all": "bool", "--omit": "value", "--prod": "bool", "--long": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
+  pnpm:   { subcommands: ["list", "ls", "outdated", "why", "info", "--version"], flags: { "--depth": "value", "--json": "bool", "--long": "bool", "--prod": "bool", "-P": "bool", "--dev": "bool", "-D": "bool", "-r": "bool", "--recursive": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
+  yarn:   { subcommands: ["list", "ls", "outdated", "why", "info", "--version"], flags: { "--depth": "value", "--json": "bool", "--pattern": "value" }, positionals: "any" },
   docker: { subcommands: ["ps", "images", "inspect", "logs", "version", "info", "stats"], flags: { "-a": "bool", "--all": "bool", "-q": "bool", "--format": "value", "--no-trunc": "bool", "--tail": "value", "--since": "value", "--no-stream": "bool", "-f": "value", "--filter": "value" }, positionals: "any" },
   kubectl: { subcommands: ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-l": "value", "--selector": "value", "--tail": "value", "--since": "value", "-c": "value", "--container": "value", "--context": "value", "-w": "bool", "--show-labels": "bool", "--previous": "bool" }, positionals: "any" },
   helm:   { subcommands: ["list", "ls", "status", "history", "version"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-a": "bool", "--all": "bool" }, positionals: "any" },
@@ -159,14 +188,16 @@ function extendSubcommands(base: CommandPolicy, extra: string[], overrides: Part
  */
 export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   npm:       extendSubcommands(DEFAULT_POLICIES.npm!, ["run", "test", "ci"]),
+  pnpm:      extendSubcommands(DEFAULT_POLICIES.pnpm!, ["run", "test"]),
+  yarn:      extendSubcommands(DEFAULT_POLICIES.yarn!, ["run", "test"]),
   cargo:     extendSubcommands(DEFAULT_POLICIES.cargo!, ["build", "test", "check"], {
     subPositionals: { build: "none", check: "none" },
   }),
   terraform: extendSubcommands(DEFAULT_POLICIES.terraform!, ["plan", "init"], {
     subPositionals: { plan: "none", init: "none" },
   }),
-  node:      { flags: { "--version": "bool", "-v": "bool" }, positionals: "path" },
-  npx:       { flags: { "--version": "bool" }, positionals: "any" },
+  node:      { flags: { "--version": "bool", "-v": "bool" }, positionals: "path", stopAtPositional: true },
+  npx:       { flags: { "--version": "bool" }, positionals: "any", stopAtPositional: true },
   docker:    extendSubcommands(DEFAULT_POLICIES.docker!, ["compose"], {
     subVerbs: { compose: ["ps", "logs"] },
   }),
@@ -195,28 +226,35 @@ export function policySource(guard: PrismGuardConfig, cmd: string): PolicySource
 }
 
 const GIT_CONFIG_OVERRIDES = ["-c", "core.fsmonitor=false", "-c", "core.pager=cat"];
-const GIT_DIFF_SUBCOMMANDS = new Set(["log", "show", "diff"]);
-const GIT_DIFF_OVERRIDES   = ["--no-textconv", "--no-ext-diff"];
+
+/** 서브커맨드 뒤에 붙일 옵션. blame은 외부 diff 옵션을 받지 않으므로 textconv만 끈다. */
+const GIT_SUBCOMMAND_OVERRIDES: Record<string, string[]> = {
+  log:   ["--no-textconv", "--no-ext-diff"],
+  show:  ["--no-textconv", "--no-ext-diff"],
+  diff:  ["--no-textconv", "--no-ext-diff"],
+  blame: ["--no-textconv"],
+};
 
 /**
  * 실제 실행에 쓸 인자 배열을 만든다. 입력 배열은 변경하지 않는다.
  * git이면 저장소 설정의 fsmonitor·pager를 끄는 -c 옵션을 맨 앞에 두고,
- * log·show·diff 서브커맨드 뒤에는 textconv·외부 diff 비활성 옵션을 붙인다.
- * 서브커맨드 위치는 git 정책의 leadingFlags(--no-pager 등)를 건너뛰어 찾는다.
+ * log·show·diff·blame 서브커맨드 뒤에는 textconv(및 외부 diff) 비활성 옵션을 붙인다.
+ * 서브커맨드 위치는 유효 git 정책의 leadingFlags를 건너뛰어 찾는다. guard가 없으면 기본 정책을 쓴다.
  */
-export function buildExecArgs(cmd: string, args: string[]): string[] {
+export function buildExecArgs(cmd: string, args: string[], guard?: PrismGuardConfig): string[] {
   if (cmd !== "git") return [...args];
 
-  const leading = DEFAULT_POLICIES.git!.leadingFlags ?? [];
+  const policy  = guard ? resolvePolicies(guard).git : DEFAULT_POLICIES.git;
+  const leading = policy?.leadingFlags ?? [];
   let   subIdx  = 0;
   while (subIdx < args.length && leading.includes(args[subIdx]!)) subIdx++;
 
-  const sub = args[subIdx];
-  if (sub === undefined || !GIT_DIFF_SUBCOMMANDS.has(sub)) return [...GIT_CONFIG_OVERRIDES, ...args];
+  const extra = GIT_SUBCOMMAND_OVERRIDES[args[subIdx] ?? ""];
+  if (!extra) return [...GIT_CONFIG_OVERRIDES, ...args];
   return [
     ...GIT_CONFIG_OVERRIDES,
     ...args.slice(0, subIdx + 1),
-    ...GIT_DIFF_OVERRIDES,
+    ...extra,
     ...args.slice(subIdx + 1),
   ];
 }

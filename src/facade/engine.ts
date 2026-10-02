@@ -103,7 +103,7 @@ export class ParismEngine {
 
     timer?.markStart("exec");
     const executed = await execute(
-      cmd, buildExecArgs(cmd, args), cwd,
+      cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
       this.config.guard.timeout_ms,
       this.config.guard.max_output_bytes,
@@ -250,7 +250,7 @@ export class ParismEngine {
     // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
     // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
     const executed               = await execute(
-      cmd, buildExecArgs(cmd, args), cwd,
+      cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
       this.config.guard.timeout_ms,
       0,

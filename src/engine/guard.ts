@@ -204,17 +204,19 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
   }
   const paths: string[] = [];
   const positionalMode  = (sub && policy.subPositionals?.[sub]) ?? policy.positionals;
-  const tokens          = tokenizeArgs(
-    policy.numericFlag ? rest.filter(a => !/^-[0-9]+$/.test(a)) : rest,
-    policy.flags, policy.singleDashLong,
-  );
+  const tokens          = tokenizeArgs(rest, policy.flags, policy.singleDashLong, {
+    numericFlag:      policy.numericFlag,
+    stopAtPositional: policy.stopAtPositional,
+  });
   const verbs           = sub !== undefined ? policy.subVerbs?.[sub] : undefined;
   let   verbChecked     = verbs === undefined;
 
   for (const t of tokens) {
+    if (t.passthrough) continue;
     if (t.kind === "flag") {
       const kind = policy.flags[t.name];
-      if (!kind) deny(cmd, t.name, source);
+      if (!kind && !(policy.numericFlag && /^-[0-9]+$/.test(t.name))) deny(cmd, t.name, source);
+      if (t.value?.startsWith("@") && policy.fileRefFlags?.includes(t.name)) deny(cmd, `${t.name} ${t.value}`, source);
       if (kind === "path" && t.value) paths.push(t.value);
       continue;
     }
@@ -232,15 +234,30 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
 }
 
 /**
- * 정책이 없는 명령에서 플래그에 붙은 경로형 값(--x=/p, -x/p)을 추출한다.
+ * 경로로 해석될 수 있는 플래그 부착 값인지 판단한다.
+ */
+function isPathLikeValue(value: string): boolean {
+  return value.includes("/") || value.startsWith("~") || value.startsWith(".");
+}
+
+/**
+ * 정책이 없는 명령에서 플래그에 붙은 경로형 값을 추출한다.
+ * --x=value는 value를, 짧은 플래그 묶음(-abVALUE)은 어느 글자가 값을 받는지 알 수 없으므로
+ * 플래그 글자로 볼 수 있는 각 문자 뒤의 나머지 문자열 중 경로형인 것을 모두 검사 대상으로 삼는다.
  */
 function attachedFlagPaths(args: string[]): string[] {
   const out: string[] = [];
   for (const a of args) {
-    if (!a.startsWith("-")) continue;
-    const eq = a.indexOf("=");
-    const v  = eq >= 0 ? a.slice(eq + 1) : a.replace(/^-[A-Za-z]/, "");
-    if (v.startsWith("/") || v.startsWith("../") || v.startsWith("~")) out.push(v);
+    if (!a.startsWith("-") || a === "-" || a === "--") continue;
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq >= 0 && isPathLikeValue(a.slice(eq + 1))) out.push(a.slice(eq + 1));
+      continue;
+    }
+    for (let j = 2; j < a.length && /[A-Za-z0-9]/.test(a[j - 1]!); j++) {
+      const suffix = a.slice(j);
+      if (isPathLikeValue(suffix)) out.push(suffix);
+    }
   }
   return out;
 }

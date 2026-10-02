@@ -135,11 +135,106 @@ describe("정책 가드: 보강", () => {
   });
 
   it("BUILD_PROFILE_POLICIES는 목록에 있는 명령만 정의한다", () => {
-    expect(Object.keys(BUILD_PROFILE_POLICIES).sort()).toEqual(["cargo", "docker", "node", "npm", "npx", "terraform"]);
+    expect(Object.keys(BUILD_PROFILE_POLICIES).sort()).toEqual(["cargo", "docker", "node", "npm", "npx", "pnpm", "terraform", "yarn"]);
+  });
+});
+
+describe("인자 분류 규칙", () => {
+  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_commands: [...cfg.guard.allowed_commands, "node", "npx"] } };
+
+  it("숫자 축약 플래그는 플래그 자리에서만 인식하고 토큰을 버리지 않는다", () => {
+    expect(tokenizeArgs(["-5", "x"], {}, false, { numericFlag: true })).toEqual([
+      { kind: "flag", name: "-5" }, { kind: "positional", name: "x" },
+    ]);
+    expect(tokenizeArgs(["-12"], {}, false, { numericFlag: true })).toEqual([{ kind: "flag", name: "-12" }]);
+    expect(tokenizeArgs(["--format", "-5", "x"], { "--format": "value" }, false, { numericFlag: true })).toEqual([
+      { kind: "flag", name: "--format", value: "-5" }, { kind: "positional", name: "x" },
+    ]);
+  });
+
+  it("값 플래그 뒤의 숫자 축약 인자는 값으로 소비되고 다음 위치 인자는 위치 인자 규칙을 받는다", () => {
+    expect(reason(() => checkGuard("git", ["branch", "--format", "-5", "newname"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("git", ["tag", "--format", "-1", "v9"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("git", ["log", "--oneline", "-3", "HEAD"], root, cfg))).toBe("pass");
+  });
+
+  it("숫자 축약 플래그는 numericFlag 정책에서만 허용된다", () => {
+    expect(reason(() => checkGuard("docker", ["ps", "-5"], root, cfg))).toBe("arg_not_allowed");
+  });
+
+  it("정책 없는 명령: 짧은 플래그 묶음 중간 글자에 붙은 경로 값을 검사한다", () => {
+    expect(reason(() => checkGuard("grep", ["-rf/etc/hostname", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("grep", ["-ea/b", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("grep", ["-rnA3", "-e.x", "."], root, cfg))).toBe("pass");
+  });
+
+  it("정책 없는 명령: --x= 값이 ./ 또는 슬래시를 포함한 상대경로면 검사한다", () => {
+    expect(reason(() => checkGuard("grep", ["--file=./../../etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("grep", ["--file=sub/../../etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("grep", ["--file=./patterns.txt", "x", "."], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("grep", ["--include=*.ts", "-rn", "x", "."], root, cfg))).toBe("pass");
+  });
+
+  it("curl의 파일 참조(@) 값은 허용하지 않는다", () => {
+    for (const a of [["-H", "@/etc/hostname", "https://example.com"], ["--header=@h.txt", "https://example.com"], ["-sH@h.txt", "https://example.com"], ["-w", "@fmt.txt", "https://example.com"], ["--write-out=@fmt.txt", "https://example.com"]]) {
+      expect(reason(() => checkGuard("curl", a, root, cfg))).toBe("arg_not_allowed");
+    }
+    expect(reason(() => checkGuard("curl", ["-H", "Accept: text/plain", "-w", "%{http_code}", "https://example.com"], root, cfg))).toBe("pass");
+  });
+
+  it("pnpm, yarn 기본 정책은 조회 서브커맨드만 허용한다", () => {
+    for (const [cmd, a] of [["pnpm", ["list"]], ["pnpm", ["why", "react"]], ["pnpm", ["outdated"]], ["yarn", ["info", "react"]], ["yarn", ["--version"]]] as const) {
+      expect(reason(() => checkGuard(cmd, [...a], root, cfg))).toBe("pass");
+    }
+    for (const [cmd, a] of [["pnpm", ["run", "build"]], ["pnpm", ["dlx", "x"]], ["pnpm", ["exec", "x"]], ["yarn", []], ["yarn", ["build"]], ["yarn", ["test"]]] as const) {
+      expect(reason(() => checkGuard(cmd, [...a], root, cfg))).toBe("arg_not_allowed");
+    }
+  });
+
+  it("build 프로필에서 pnpm, yarn은 run과 test를 추가로 허용한다", () => {
+    for (const [cmd, a] of [["pnpm", ["run", "build"]], ["pnpm", ["test"]], ["yarn", ["run", "build"]], ["yarn", ["test"]], ["pnpm", ["list"]]] as const) {
+      expect(reason(() => checkGuard(cmd, [...a], root, build))).toBe("pass");
+    }
+    for (const [cmd, a] of [["pnpm", ["install"]], ["yarn", ["add", "x"]]] as const) {
+      expect(reason(() => checkGuard(cmd, [...a], root, build))).toBe("arg_not_allowed");
+    }
+  });
+
+  it("build 프로필의 node, npx는 첫 위치 인자 이후 플래그를 검사하지 않는다", () => {
+    expect(reason(() => checkGuard("npx", ["tsc", "--noEmit"], root, build))).toBe("pass");
+    expect(reason(() => checkGuard("node", ["dist/index.js", "--port", "1"], root, build))).toBe("pass");
+    expect(reason(() => checkGuard("npx", ["--foo", "tsc"], root, build))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("node", ["--inspect", "dist/index.js"], root, build))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("node", ["../evil.js", "--port", "1"], root, build))).toBe("path_not_allowed");
+  });
+
+  it("stopAtPositional이면 첫 위치 인자 이후 인자는 passthrough로 분류한다", () => {
+    expect(tokenizeArgs(["-v", "a.js", "--x", "y"], { "-v": "bool" }, false, { stopAtPositional: true })).toEqual([
+      { kind: "flag", name: "-v" },
+      { kind: "positional", name: "a.js" },
+      { kind: "positional", name: "--x", passthrough: true },
+      { kind: "positional", name: "y", passthrough: true },
+    ]);
   });
 });
 
 describe("buildExecArgs", () => {
+  it("blame에는 --no-textconv만 주입된다", () => {
+    expect(buildExecArgs("git", ["blame", "f.ts"])).toEqual(
+      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "blame", "--no-textconv", "f.ts"],
+    );
+  });
+
+  it("유효 git 정책의 leadingFlags를 기준으로 서브커맨드를 찾는다", () => {
+    const guard = { ...cfg.guard, command_policies: { git: { ...DEFAULT_POLICIES.git!, leadingFlags: ["--no-pager", "--literal-pathspecs"] } } };
+    expect(buildExecArgs("git", ["--literal-pathspecs", "log"], guard)).toEqual(
+      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "--literal-pathspecs", "log", "--no-textconv", "--no-ext-diff"],
+    );
+    expect(buildExecArgs("git", ["--literal-pathspecs", "log"])).toEqual(
+      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "--literal-pathspecs", "log"],
+    );
+  });
+
   it("git 실행 인자에 저장소 설정 무력화 옵션이 주입된다", () => {
     expect(buildExecArgs("git", ["diff", "--stat"])).toEqual(
       ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "diff", "--no-textconv", "--no-ext-diff", "--stat"],
