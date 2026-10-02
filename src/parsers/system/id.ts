@@ -1,3 +1,5 @@
+import { UnrecognizedOutputError } from "../registry.js";
+
 export interface IdResult {
   uid:    number;
   user:   string;
@@ -26,6 +28,7 @@ export function parseId(cmd: string, args: string[], raw: string): IdResult | { 
 
   const uidMatch   = raw.match(/uid=(\d+)\(([^)]+)\)/);
   const gidMatch   = raw.match(/gid=(\d+)\(([^)]+)\)/);
+  if (!uidMatch || !gidMatch) throw new UnrecognizedOutputError("id output has no uid=/gid= fields");
   const groupsPart = raw.match(/groups=(.+)/);
 
   const groups: Array<{ id: number; name: string }> = [];
@@ -36,10 +39,10 @@ export function parseId(cmd: string, args: string[], raw: string): IdResult | { 
   }
 
   return {
-    uid:   uidMatch ? parseInt(uidMatch[1]!, 10) : 0,
-    user:  uidMatch ? uidMatch[2]! : "",
-    gid:   gidMatch ? parseInt(gidMatch[1]!, 10) : 0,
-    group: gidMatch ? gidMatch[2]! : "",
+    uid:   parseInt(uidMatch[1]!, 10),
+    user:  uidMatch[2]!,
+    gid:   parseInt(gidMatch[1]!, 10),
+    group: gidMatch[2]!,
     groups,
   };
 }

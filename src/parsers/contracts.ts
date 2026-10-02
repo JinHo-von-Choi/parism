@@ -76,8 +76,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     rowsKey: "paths",
   },
   stat: {
-    acceptedFlags:       bools("-L", "--dereference"),
-    acceptedPositionals: { max: 1 },
+    acceptedFlags: bools("-L", "--dereference"),
   },
   du: {
     acceptedFlags: {

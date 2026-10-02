@@ -1,4 +1,4 @@
-import type { ParseContext } from "../registry.js";
+import { UnrecognizedOutputError, type ParseContext } from "../registry.js";
 
 export interface GrepMatch {
   file:         string;
@@ -204,7 +204,7 @@ function operandIsDirectory(operand: string, lines: string[]): boolean {
   const hits   = lines.filter(l => l.startsWith(prefix)).length;
   if (hits === lines.length) return true;
   if (hits === 0) return false;
-  throw new Error(`Cannot tell whether grep operand '${operand}' is a file or a directory from its output`);
+  throw new UnrecognizedOutputError(`Cannot tell whether grep operand '${operand}' is a file or a directory from its output`);
 }
 
 export function parseGrep(

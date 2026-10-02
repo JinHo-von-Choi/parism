@@ -2,11 +2,22 @@ import { describe, it, expect } from "vitest";
 import { z }                    from "zod";
 import {
   ParserRegistry,
+  UnrecognizedOutputError,
   exportJsonSchema,
   type ParseContext,
 } from "../../src/parsers/registry.js";
 import type { ParserPack } from "../../src/parsers/registry.js";
 import { createRegistry }    from "../../src/parsers/index.js";
+
+describe("UnrecognizedOutputError", () => {
+  it("파서가 던지면 parser_exception이 아니라 unrecognized_output이다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => { throw new UnrecognizedOutputError("no fields"); });
+    registry.register("y", () => { throw new Error("boom"); });
+    expect(registry.parse("x", [], "data").parse_error).toEqual({ reason: "unrecognized_output", message: "no fields" });
+    expect(registry.parse("y", [], "data").parse_error?.reason).toBe("parser_exception");
+  });
+});
 
 describe("ParserRegistry", () => {
   it("등록된 파서가 없으면 parsed=null을 반환한다", () => {

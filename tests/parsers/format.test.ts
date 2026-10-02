@@ -137,7 +137,7 @@ describe("내장 파서 허용 형식", () => {
 
   it.each<[string, string[]]>([
     ["ls", ["-l"]], ["ls", ["-la", "/etc"]], ["ls", ["-ltr"]], ["ls", ["--format=long"]], ["ls", ["-l", "--color=never"]],
-    ["find", [".", "-name", "*.ts", "-type", "f"]], ["stat", ["a.txt"]], ["du", ["-sh", "dir"]], ["du", ["-d", "1"]],
+    ["find", [".", "-name", "*.ts", "-type", "f"]], ["stat", ["a.txt"]], ["stat", ["a", "b"]], ["du", ["-sh", "dir"]], ["du", ["-d", "1"]],
     ["df", ["-h"]], ["df", []], ["df", ["-B", "1K"]], ["ps", ["aux"]], ["ps", ["aux", "--sort=-%cpu"]], ["ping", ["-c", "2", "host"]],
     ["curl", ["-sI", "https://example.com"]], ["netstat", ["-tlnp"]], ["ss", ["-tuln"]], ["ss", ["-4"]],
     ["lsof", ["-i", "-n", "-P"]], ["lsof", ["-iTCP", "-sTCP:LISTEN"]], ["dig", ["example.com", "MX"]], ["dig", ["+tcp", "@1.1.1.1", "example.com"]],
@@ -156,7 +156,7 @@ describe("내장 파서 허용 형식", () => {
   it.each<[string, string[]]>([
     ["ls", ["-lR"]], ["ls", ["-lF"]], ["ls", ["-lp"]], ["ls", ["-lh"]], ["ls", ["-l", "a", "b"]], ["ls", []], ["ls", ["-l", "--color=always"]],
     ["find", [".", "-ls"]], ["find", [".", "-print0"]], ["find", [".", "-exec", "ls", "{}", ";"]],
-    ["stat", ["a", "b"]], ["stat", ["-c", "%s", "a"]], ["du", ["--time"]], ["du", ["-0"]], ["df", ["-m"]], ["df", ["-B1M"]], ["df", ["-T"]],
+    ["stat", ["-c", "%s", "a"]], ["du", ["--time"]], ["du", ["-0"]], ["df", ["-m"]], ["df", ["-B1M"]], ["df", ["-T"]],
     ["ps", ["auxf"]], ["ps", ["aux", "--no-headers"]], ["ps", ["aux", "--forest"]], ["ps", ["-ef"]],
     ["curl", ["-s", "https://example.com"]], ["curl", ["-sIL", "http://example.com"]], ["netstat", ["-s"]],
     ["ss", ["-a"]], ["ss", ["-H"]], ["ss", ["-tlnp"]], ["ss", ["-tum"]], ["lsof", ["-p", "1"]], ["lsof", ["-c", "bash"]],

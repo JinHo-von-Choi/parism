@@ -92,6 +92,22 @@ describe("parseStat()", () => {
     expect(result.permissions).toBe("-rw-r--r--");
   });
 
+  it("심볼릭 링크는 이름과 대상을 나눠 담는다", () => {
+    const raw = statLinuxRaw.replace("File: /home/user/project/src/index.ts", "File: link-to-a -> a.txt");
+    expect(parseStat("stat", [], raw)).toMatchObject({ file: "link-to-a", link_target: "a.txt", size_bytes: 4096 });
+  });
+
+  it("파일 여러 개는 files 배열로 구간마다 담는다", () => {
+    const second = statLinuxRaw.replace("/home/user/project/src/index.ts", "/tmp/b").replace("Size: 4096", "Size: 7");
+    const result = parseStat("stat", [], `${statLinuxRaw}\n${second}\n`) as { files: Array<{ file: string; size_bytes: number }> };
+    expect(result.files.map(f => [f.file, f.size_bytes])).toEqual([["/home/user/project/src/index.ts", 4096], ["/tmp/b", 7]]);
+  });
+
+  it("한 구간이라도 읽지 못하면 { lines } 폴백", () => {
+    const result = parseStat("stat", [], `${statLinuxRaw}\n  File: /tmp/broken\n`) as { lines: string[] };
+    expect(Array.isArray(result.lines)).toBe(true);
+  });
+
   it("File/Size만 있고 나머지 필드 없으면 0/빈 문자열", () => {
     const minimal = "  File: /tmp/x\n  Size: 1024";
     const result = parseStat("stat", [], minimal) as { file: string; size_bytes: number; blocks: number; io_block: number };

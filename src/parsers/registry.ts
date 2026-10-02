@@ -135,6 +135,17 @@ export type ParseErrorReason = "parser_exception" | "schema_violation" | "unsupp
 const PACK_DEFINITION_KEYS = ["name", "parse", "schema", "fixtures", "meta"] as const;
 
 /**
+ * 파서가 출력에서 값을 얻지 못했거나 줄 해석이 모호해 결과를 만들 수 없을 때 던진다.
+ * 레지스트리는 이 예외를 parser_exception이 아닌 unrecognized_output으로 보고한다.
+ */
+export class UnrecognizedOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnrecognizedOutputError";
+  }
+}
+
+/**
  * 명령어 → 파서 함수의 매핑 테이블.
  * 파서가 없으면 parsed=null. 파서가 예외를 던지면 parsed=null, parse_error 설정.
  */
@@ -221,6 +232,7 @@ export class ParserRegistry {
       parsed = fn(cmd, args, raw, ctx);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof UnrecognizedOutputError) return { parsed: null, parse_error: { reason: "unrecognized_output", message } };
       return { parsed: null, parse_error: { reason: "parser_exception", message } };
     }
 

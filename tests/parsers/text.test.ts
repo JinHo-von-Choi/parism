@@ -5,6 +5,7 @@ import { parseCat }  from "../../src/parsers/text/cat.js";
 import { parseHead } from "../../src/parsers/text/head.js";
 import { parseTail } from "../../src/parsers/text/tail.js";
 import { createRegistry } from "../../src/parsers/index.js";
+import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("parseWc()", () => {
   it("wc 출력을 파싱한다", () => {
@@ -104,7 +105,7 @@ describe("parseGrep() 문맥 줄과 파일 판정", () => {
   });
 
   it("-r 단일 피연산자가 파일인지 디렉터리인지 출력으로 가릴 수 없으면 예외다", () => {
-    expect(() => run(["-r", "x", "sub"], "sub/a.txt:hit\nplain line\n")).toThrow(/file or a directory/);
+    expect(() => run(["-r", "x", "sub"], "sub/a.txt:hit\nplain line\n")).toThrow(UnrecognizedOutputError);
   });
 
   it("단일 파일 -n에서 문맥 줄은 context로 표시하고 구분자 줄은 버린다", () => {

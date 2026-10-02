@@ -81,7 +81,7 @@ describe("failure.hint 안내 인자", () => {
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
       ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
-      ["curl", ["-s", "https://example.com"]], ["ss", ["-a"]], ["apt", ["list"]], ["docker", ["stats", "--no-stream"]], ["stat", ["a", "b"]],
+      ["curl", ["-s", "https://example.com"]], ["ss", ["-a"]], ["apt", ["list"]], ["docker", ["stats", "--no-stream"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
       expect(r.parse_error?.reason).toBe("unsupported_format");

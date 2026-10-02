@@ -7,6 +7,7 @@ import { parseSystemctl }  from "../../src/parsers/system/systemctl.js";
 import { parseJournalctl } from "../../src/parsers/system/journalctl.js";
 import { parseApt }         from "../../src/parsers/system/apt.js";
 import { parseBrew }       from "../../src/parsers/system/brew.js";
+import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("free 단위 처리 범위", () => {
   it("10진 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
@@ -132,27 +133,24 @@ describe("parseId()", () => {
   const raw = "uid=1000(nirna) gid=1000(nirna) groups=1000(nirna),4(adm),27(sudo)";
 
   it("사용자 정보를 파싱한다", () => {
-    const result = parseId("id", [], raw);
+    const result = parseId("id", [], raw) as { uid: number; user: string; groups: Array<{ name: string }> };
     expect(result.uid).toBe(1000);
     expect(result.user).toBe("nirna");
     expect(result.groups.map(g => g.name)).toContain("sudo");
   });
 
-  it("uid/gid 형식 불일치 시 0과 빈 문자열", () => {
-    const result = parseId("id", [], "invalid format");
-    expect(result.uid).toBe(0);
-    expect(result.user).toBe("");
-    expect(result.gid).toBe(0);
-    expect(result.group).toBe("");
+  it("uid/gid 형식 불일치 시 값을 만들지 않는다", () => {
+    expect(() => parseId("id", [], "invalid format")).toThrow(UnrecognizedOutputError);
+    expect(() => parseId("id", [], "")).toThrow(UnrecognizedOutputError);
   });
 
   it("groups 없으면 빈 배열", () => {
-    const result = parseId("id", [], "uid=1000(nirna) gid=1000(nirna)");
+    const result = parseId("id", [], "uid=1000(nirna) gid=1000(nirna)") as { groups: unknown[] };
     expect(result.groups).toEqual([]);
   });
 
   it("groups 배열에 uid/gid가 중복 포함되지 않는다", () => {
-    const result = parseId("id", [], raw);
+    const result = parseId("id", [], raw) as { groups: Array<{ name: string }> };
     // uid=1000, gid=1000 은 groups 파싱 대상이 아님 — groups= 섹션만 파싱
     const names = result.groups.map(g => g.name);
     // "nirna"가 groups에 한 번만 등장해야 함
