@@ -262,7 +262,9 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 `guard.allowed_paths`가 설정된 경우 두 가지를 검사한다.
 
 1. `cwd`가 허용 경로의 하위인지 (`path.resolve` 후 접미 슬래시 기반 prefix 비교)
-2. 경로 인자: `/`, `./`, `../`로 시작하는 인자 + `PATH_TAKING_COMMANDS`(`cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`, `node`, `npx`, `npm`)의 positional 인자
+2. 경로 인자: `/`, `./`, `../`로 시작하는 인자 + `PATH_TAKING_COMMANDS`(`cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`, `node`, `npx`, `npm`)의 positional 인자 + 정책 `path` 플래그 값. 정책이 없는 명령은 슬래시를 포함한 인자, `cwd` 기준으로 존재하는 항목을 가리키는 인자, 플래그에 붙은 경로형 값 또는 존재하는 항목을 가리키는 값도 검사한다.
+
+비교는 심볼릭 링크를 해석한 실경로로 한다. 프로젝트 설정의 `allowed_paths`는 실경로로 바꿔 전역 기준 경로 안에 있는 항목만 남긴다.
 
 `allowed_paths`가 빈 배열이면 경로 제한이 생략된다. 기본값은 `[process.cwd()]`다 (서버 시작 시점 CWD).
 

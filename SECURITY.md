@@ -50,7 +50,7 @@ Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 �
 
 - 경로 검사는 검사 시점과 실행 시점 사이의 경합을 막지 못한다. 심볼릭 링크를 해석해 비교하지만, 검사 직후 실행 직전에 경로의 대상이 바뀌면 검사 결과와 실제 접근 대상이 달라질 수 있다.
 - 허용된 바이너리 자체의 동작. 허용된 `git`은 저장소의 `.gitattributes`가 지정한 clean/smudge 필터를 실행할 수 있다. 저장소 설정에서 외부 프로그램이 실행되는 일부 경로는 주입 옵션(`core.fsmonitor=false`, `core.pager=cat`, `--no-textconv`, `--no-ext-diff`)으로 줄였으나 모든 경로를 막지는 못한다. 신뢰할 수 없는 저장소를 다룰 때는 컨테이너 격리를 사용한다.
-- `build` 프로필은 프로젝트 코드를 실행한다. `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose`, `node <script>`, `npx <bin>`은 저장소가 정의한 스크립트와 설정을 실행하므로 신뢰하는 저장소에서만 켠다. `yarn`은 저장소가 지정한 `yarnPath`를 따르므로 `build` 프로필에서만 허용된다.
+- `build` 프로필은 프로젝트 코드를 실행한다. `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose`, `node <script>`, `npx <bin>`은 저장소가 정의한 스크립트와 설정을 실행하므로 신뢰하는 저장소에서만 켠다. `yarn`은 저장소가 지정한 `yarnPath`를 따르고, `cargo tree`, `cargo metadata` 등 cargo 조회 서브커맨드는 저장소 `.cargo/config.toml`이 지정한 rustc 래퍼를 실행할 수 있으므로 `build` 프로필에서만 허용된다. `npx`에는 `--no`를 붙여 이미 설치된 실행 파일만 실행하게 한다.
 - 실행되는 바이너리의 커널 수준 익스플로잇, 컨테이너 탈출, 공급망 침해
 - 타이밍 사이드 채널, 파일 잠금 경합 등 부채널 공격
 - Node.js 프로세스 메모리를 직접 조작하는 공격
@@ -67,9 +67,9 @@ Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 �
 
 ### (b) allowed_paths 경로 제한
 
-`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자, 플래그에 붙은 경로형 값(`--file=./x`, `-C../x`), 경로를 받는 명령의 위치 인자가 허용 경로 밖이면 차단된다. 비교는 심볼릭 링크 해석 후의 실경로로 한다.
+`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자, 플래그에 붙은 경로형 값(`--file=./x`, `-C../x`), 경로를 받는 명령의 위치 인자가 허용 경로 밖이면 차단된다. 정책이 없는 명령은 슬래시를 포함한 위치 인자와, `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 위치 인자와 플래그 부착 값도 검사한다. 비교는 심볼릭 링크 해석 후의 실경로로 한다. 프로젝트 설정의 `allowed_paths`도 실경로로 바꿔 전역 기준 경로 안에 있는지 비교한 뒤 실경로로 저장한다.
 
-한계: 커널이 강제하지 않으며 검사 시점과 실행 시점 사이에 경로가 바뀔 수 있다. 경로를 받지 않는 명령(예: `env`, `id`, `uname`)에는 적용되지 않는다. `allowed_paths`가 비어 있으면 이 계층은 생략된다.
+한계: 커널이 강제하지 않으며 검사 시점과 실행 시점 사이에 경로가 바뀔 수 있다. 실경로 비교는 인자로 이름이 주어진 경로에만 적용된다. 재귀 탐색 중 만나는 심볼릭 링크를 따라가는 옵션(정책이 없는 `grep -R`, `du -L`, `tree -l` 등)을 쓰면 허용 경로 아래의 링크를 통해 밖의 파일을 읽을 수 있다. `find` 정책은 이 때문에 `-L`을 허용하지 않는다. 경로를 받지 않는 명령(예: `env`, `id`, `uname`)에는 적용되지 않는다. `allowed_paths`가 비어 있으면 이 계층은 생략된다.
 
 ### (c) 인젝션 패턴 차단
 
@@ -79,12 +79,14 @@ Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 �
 
 ### (d) 명령별 정책 (command_policies)
 
-명령마다 서브커맨드, 플래그(종류: bool, value, path), 위치 인자 규칙을 허용목록으로 정의한다. 기본 정책은 읽기 전용 조회만 허용한다. 정책이 없는 명령은 기존 방식(`command_arg_restrictions`와 경로 검사)만 적용된다.
+명령마다 서브커맨드, 플래그(종류: bool, value, path, attached, count), 위치 인자 규칙을 허용목록으로 정의한다. `attached` 플래그는 `--pretty=oneline`, `-U3`처럼 붙은 값만 받고 다음 인자를 값으로 소비하지 않으므로 다음 인자도 허용목록 검사를 받는다. `count` 플래그(journalctl `-n`, `--lines`)는 다음 인자가 줄 수 형식(N, +N, all)일 때만 값으로 받는다. 실제 명령이 서브커맨드마다 다르게 해석하는 플래그(git `blame`·`shortlog`의 `-n`, docker `logs`의 `-f` 등)는 `subFlags`로 서브커맨드별 종류를 정한다. 기본 정책은 읽기 전용 조회만 허용한다. 정책이 없는 명령은 기존 방식(`command_arg_restrictions`와 경로 검사)만 적용된다.
 
 - `guard.profile: "readonly"`(기본): 기본 정책만 적용한다.
 - `guard.profile: "build"`: 빌드와 시험 실행에 필요한 서브커맨드(`npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 등)를 더한다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 사용한다.
 - `guard.command_policies`: 명령 단위로 정책을 덮어쓴다. 우선순위는 `command_policies`, `build` 프로필, 기본 정책 순이다.
 - `curl`의 `-H`, `-w` 값이 `@`로 시작하는 로컬 파일 참조와 `-w`/`--write-out` 값의 `%output{` 지시어는 차단한다.
+- `kubectl -o`/`--output`은 `allowedValues`에 열거된 형식만 허용하며 로컬 템플릿 파일을 읽는 `*-file` 형식은 허용하지 않는다.
+- `npm audit`은 위치 인자를 받지 않는다.
 
 한계: 정책에 없는 플래그는 모두 차단되므로 정상 사용이 막히면 `command_policies`로 명시적으로 허용해야 한다. `describe`의 `guard_summary.policies`로 유효 정책을 확인할 수 있다.
 
