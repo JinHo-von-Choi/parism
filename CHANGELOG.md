@@ -11,24 +11,50 @@
 - 파서 계약의 형식 선언: `acceptedFlags`(출력 형식을 검증한 플래그와 값 방식 `bool`, `value`, `attached`), `acceptedValues`(플래그 값 패턴), `acceptedPositionals`(`min`, `max`, `pattern`), `requiredFlags`(하나 이상 필요), `exclusiveFlags`(하나까지만), `leadingFlags`(서브커맨드 앞 전역 옵션), `subcommands`(서브커맨드별 계약, 빈 문자열 키는 서브커맨드 없는 실행), `plusFlags`, `singleDashLong`. 선언 밖의 인자는 파서를 실행하지 않고 `parse_error.reason = "unsupported_format"`이며 메시지에 원인 인자를 밝힌다. raw와 native JSON 폴백은 그대로다. `supports(args)`는 선언 검사를 통과한 뒤 추가로 적용하는 선택 규칙으로 남는다. `ParserPack`도 같은 필드를 쓴다(`ParserPack`이 `ParserContract`를 확장한다).
 - 출력 계약 필드 `rowsKey`(데이터 줄마다 행 하나를 담는 배열의 키), `rowLine`(행이 되는 데이터 줄 패턴), `rowFields`(행 필드 이름 목록).
 - 파서 불변식 모듈 `src/parsers/invariants.ts`: `checkInvariants(parsed, raw, contract)`가 조용한 빈 결과(`silent_empty`), 행 수와 데이터 줄 수 불일치(`row_count`), 유한하지 않은 숫자(`non_finite`), 스키마 밖 필드(`field_names`)를 위반 목록으로 돌려준다. `countDataLines`, `countRowLines`도 내보낸다. 런타임에는 기존 `unrecognized_output` 판정만 이 모듈을 쓴다.
-- `failure.hint = { args, reason }`와 `stdout.parse_error.hint`: `unsupported_format`일 때 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자를 안내한다. 예: `uname -r` → `-a`, `ls -lh` → `-l`, `git status -s` → `status`, `git log --graph` → `log --format=%h %s`, `git branch` → `branch -v`, `journalctl -n 5` → `-n 5 -o short-iso`, `free -h` → `-b`, `ss -tlnp` → `-tlnp -u`, `docker ps -q` → `ps`, `kubectl get pods -o yaml` → `get pods -o json`, `gh issue list` → `--json` 필드 추가, `npm ls --all` → `ls --all --json`. 같은 정보를 얻을 인자가 없으면 hint가 없다. 안내 인자는 readonly 기본 정책을 통과한다.
+- `failure.hint = { args, reason }`와 `stdout.parse_error.hint`: `unsupported_format`일 때 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자를 안내한다. 예: `uname -r` → `-a`, `ls -lh` → `-l`, `git status -s` → `status`, `git log --graph` → `log --format=%h %s`, `git branch` → `branch -v`, `journalctl -o json -n 5` → `-n 5 -o short-iso`, `free --tera` → `-b`, `docker ps -q` → `ps`, `kubectl get pods -o yaml` → `get pods -o json`, `gh issue list` → `--json` 필드 추가, `npm ls --parseable` → `ls --json`. 같은 정보를 얻을 인자가 없으면 hint가 없다. 안내 인자는 readonly 기본 정책을 통과한다.
 - `ParserRegistry.contractFor(cmd, args)`(서브커맨드를 반영한 유효 계약)와 `ParserRegistry.parseWithFallback(...)`(native JSON 폴백까지 적용한 결과, 엔진이 쓰는 경로).
+- `UnrecognizedOutputError`(`src/parsers/registry.ts`): 파서가 값을 얻을 수 없거나 줄 해석이 모호할 때 던지면 레지스트리가 `parse_error.reason = "unrecognized_output"`으로 보고한다(`parser_exception`이 아니다).
+- 내장 파서의 선택 출력 필드(해당 형식일 때만 나타난다): `ls`의 `directory`, `stat`의 `link_target`과 `files[]`, `du`의 `modified_at`, `df`의 `type`, `size`, `block_size`, `ps`의 `depth`, `curl -I`의 `header_values`와 `history`, `grep`의 `byte_offset`과 `context`, `git status`의 `renamed`, `ignored`, `unmerged`, `detached`, `detached_at`, `git log`의 `refs`, `git diff`의 `files[].status`, `old_path`, `binary`, `git branch`의 `detached`, `points_to`, `worktree`, `apt search`의 `description`, `npm ls`의 `deduped`, `problem`, `cargo tree`의 `depth`, `deduped`, `proc_macro`, `source`.
 
 ### Changed
 - 내장 파서의 `supports()` 함수(`src/parsers/supports.ts`)를 명령별 선언(`src/parsers/contracts.ts`)으로 바꿨다. 실측에서 처리를 확인한 인자만 허용하고, 조용히 틀린 결과를 내던 인자는 교정 전까지 `unsupported_format`이다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 이 호스트에서 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)은 인자를 제한하지 않는다.
 - `parism init-parser` 템플릿이 `supports` 대신 `acceptedFlags` 예시를 만든다.
 - Breaking notes: 다음 인자는 이제 `unsupported_format`이다(raw는 그대로, JSON 출력이면 native JSON 폴백).
-  - `ls`: `-R`, `-F`, `-p`, `-Q`, `-b`, `-g`, `-o`, `-G`, `-i`, `-s`, `--full-time`, `--time-style`, `--quoting-style`, `--indicator-style`, `--color=always`, 위치 인자 2개 이상.
-  - `find`: `-ls`, `-print0`, `-printf`, `-exec` 등 출력을 바꾸는 식. `stat`: 위치 인자 2개 이상, `-c`, `-t`, `-f`, `--printf`. `du`: `--time`, `-0`. `df`: `-m`, `-B`(1K 외).
-  - `ps`: `f` 글자와 `--forest`, `--no-headers`, `--headers`. `ss`: 유닉스 소켓이 섞이는 조합(종류 필터 없음이고 `-4`/`-6`/`-f inet`도 없음, `-x`), `-H`, `-m`, `-i`, `-e`, `-o`. `lsof`: `-p`, `-c`, `-u`, `-t`, `-F`, `-R`.
-  - `dig`: `+trace`, `+nocomments`, `+noquestion`, `+multi`, `+multiline`, `-u`. `curl -I`: `-L`, `-i`, `-w`, URL 2개 이상.
-  - `grep`: `-A`, `-B`, `-C`, `-NUM`, `-b`, `-Z`, `-z`, `-L`. `env -0`. `free`: `-h`, `--human`, `-w`, 10진 단위, `--tebi`, `--pebi`. `id`: `-n`, `-r`, `-z` 조합.
-  - `systemctl`: `list-units` 외의 서브커맨드, `--no-legend`, `--plain` 없는 `--all`/`-a`와 not-found 유닛을 포함하는 `--state`. `journalctl`: `-o short-iso`, `-o short-iso-precise` 외의 형식, `--no-hostname`.
-  - `apt`: `list`는 `--installed` 또는 `--upgradable`이 있어야 하고, `search`, `show`, `policy`는 형식 밖이다. `npm`: `ls`/`list`의 `--all`, `--depth` 1 이상, `--json`, `--parseable`, 패키지 위치 인자, 그 밖의 서브커맨드. `cargo`: 모든 서브커맨드.
-  - `docker`: `ps`의 `-q`, `-s`, `--format`, `ps` 외의 서브커맨드(`stats` 포함). `gh`: `pr list` 외의 서브커맨드, `-q`, `-w`. `kubectl get`: `-o` 값 `wide` 외, `-A`, `-w`, `--show-labels`.
-  - `git`: `status`의 `-s`, `--porcelain`, `-z`, `--ignored`. `log`는 `--oneline`, `--format=oneline|%h %s|%H %s`, `--pretty=oneline` 가운데 하나가 있어야 하며 `--decorate`, `--graph`, `--stat`, `-p`는 형식 밖이다. `branch`는 `-v`가 있어야 하며 `-a`, `-r`는 형식 밖이다. `diff`의 `-M`, `--find-renames`, `--diff-filter`, `--stat` 계열, `--no-prefix`.
+  - `ls`: `-Q`, `-b`, `-g`, `-o`, `-G`, `-i`, `-s`, `-h`, `--si`, `--quoting-style`, `--block-size`, `--time-style`(`long-iso`, `full-iso` 외), `--color=always`, `-l` 없는 호출. `-R`, `-F`, `-p`, `--full-time`, 위치 인자 2개 이상은 `-l`과 함께 받는다.
+  - `find`: `-ls`, `-printf`, `-exec` 등 출력을 바꾸는 식. `stat`: `-c`, `-t`, `-f`, `--printf`. `df`: `-B`(1K, 1M 외), `-i`, `--output`.
+  - `ps`: BSD user 형식(`ps aux` 계열) 외의 대시 형식(`-ef`, `-eo`, `-p` 등). `ss`: `-s`. `lsof`: `-u`, `-t`, `-F`, `-R`.
+  - `dig`: `+short`, `+trace`, `+nocomments`, 뒤에 `+answer`가 없는 `+noall`, `-u`. `curl -I`: `-i`, `-w`, URL 2개 이상.
+  - `grep`: `-n` 없는 `-A`, `-B`, `-C`, `-NUM`, `-o`나 `-c`와 함께 쓴 문맥 옵션, `-l`/`-L` 없는 `-Z`, `-z`. `free`: `-w`, `--tera`, `--peta`, `--tebi`, `--pebi`. `id`: `-n`, `-r`, `-z` 조합.
+  - `systemctl`: `list-units` 외의 서브커맨드. `journalctl`: short 계열 외의 `-o`(`json`, `cat`, `verbose`, `export`).
+  - `apt`: `show`, `policy`. `npm`: `ls`/`list`의 `--json`, `--parseable`, 그 밖의 서브커맨드. `cargo`: `tree` 외의 서브커맨드와 `--prefix`(`none`, `indent` 외), `-e`.
+  - `docker`: `ps`의 `-q`, `-s`, `--format`, `ps`와 `stats --no-stream` 외의 서브커맨드. `gh`: `pr list` 외의 서브커맨드, `-q`, `-w`. `kubectl get`: `-o` 값 `wide` 외, `-A`, `-w`, `--show-labels`.
+  - `git`: `status`의 `-s`, `--porcelain`, `-z`. `log`는 `--oneline`, `--format=oneline|%h %s|%H %s`, `--pretty=oneline` 가운데 하나가 있어야 하며 `--graph`, `--stat`, `-p`는 형식 밖이다. `branch`는 `-v`가 있어야 한다. `diff`의 `--stat` 계열, `--name-only`, `--summary`.
   - 서브커맨드를 선언한 명령(`git`, `docker`, `gh`, `kubectl`, `helm`, `npm`, `apt`, `systemctl`, `cargo`)의 선언 밖 서브커맨드(`git show`, `docker images`, `gh issue list` 등)는 `failure.reason`이 `parser_not_found` 대신 `unsupported_format`이다. 출력이 JSON이면 이전과 같이 native JSON 폴백이 `parsed`를 채운다.
   - `dir`은 Windows에서만 파싱한다.
+- Breaking notes: 기존 필드의 값이 다음과 같이 정해진다.
+  - `git status.branch`: detached HEAD는 `HEAD`. `git diff.files_changed`: 새 파일, 삭제 파일, 이름 바꾼 파일(새 경로)을 포함한다. `git branch.upstream`: `-v`의 `[ahead N]`, `[gone]`는 `null`이고 상류 이름은 `-vv`에서만 채운다. `message`가 대괄호로 시작해도 상류로 읽지 않는다.
+  - `dig.query_type`: QUESTION 섹션이 없으면 빈 문자열. `systemctl.units[].failed`: ACTIVE 열이 `failed`인 유닛(행 앞 기호와 무관). `lsof.entries[].state`: TCP 상태 이름일 때만 채우고 `(readlink: ...)` 같은 안내는 `name`에 남는다. `lsof.entries[].device`: 값이 없는 열은 빈 문자열.
+  - `df.filesystems[].blocks_1k`: 1K 블록과 단위 붙은 크기(`-h`)일 때만 있고 다른 블록 단위는 `size`와 `block_size`다. `stat.file`: 링크 이름만(대상은 `link_target`). `curl -I.headers`: 같은 이름의 헤더는 `, `로 이은 값. `apt.packages[].status`: 설치되지 않은 패키지는 빈 문자열.
+  - `ss.connections[]`: 유닛 소켓은 `local_address`가 경로, `local_port`가 inode, `peer_port`가 상대 inode. Netid 열이 없는 출력은 `netid`가 필터에서 정해지며(`-t`면 `tcp`) 정할 수 없으면 빈 문자열이고, State 열이 없으면 `state`는 빈 문자열.
+  - `ls.entries[].name`, `target`: `-F`, `-p`의 표시 기호는 포함하지 않는다. `ps.processes[].command`: 공백을 그대로 보존한다. `journalctl.entries[].hostname`: `--no-hostname`이면 빈 문자열. `free.unit`: 10진 단위는 `kilo`, `mega`, `giga`.
+  - `ping`, `id`, `curl -I`, `lsof`, `env`는 값을 얻지 못하면 기본값으로 채운 결과 대신 `unrecognized_output`이다.
+
+### Fixed
+- `git status`: 이름 바꾸기(`renamed: a -> b`)를 경로로 쓰지 않고 `renamed[]`의 `{old, new}`로 가르며 `staged`에는 새 경로를 둔다. 따옴표로 감싼 비ASCII 경로를 푼다. detached HEAD는 `branch: "HEAD"`와 `detached`, `detached_at`로 나타낸다. `--ignored` 대상은 `untracked`와 따로 `ignored[]`에 담는다. 병합 충돌 항목은 `unmerged[]`다.
+- `git diff`: 새 파일, 삭제 파일, 이름 바꾸기, 모드만 바뀐 파일, 바이너리 변경이 `files_changed`에 들어가며 이름을 바꾼 파일의 `path`는 새 경로다. 따옴표 경로와 끝 탭이 붙은 공백 경로를 푼다.
+- `git branch`: detached HEAD 항목(`* (HEAD detached at abc1234) ...`)과 `-a`의 `origin/HEAD -> origin/main` 줄을 읽는다. `-v`에서 `[ahead 2]`는 상류 이름이 아니라 `ahead`로 읽는다. `git log --decorate`의 참조는 `refs[]`로 가른다.
+- `grep`: `-r`에 피연산자가 하나일 때 파일인지 디렉터리인지 출력으로 가린다(가릴 수 없으면 `unrecognized_output`). 문맥 줄(`-A/-B/-C/-NUM`, `-n` 필요)을 `context`로 표시하고 `--` 구분자를 버린다. `-b`, `-L`, `-Z`(파일 목록), `-T`를 읽는다.
+- `stat`: 파일 여러 개는 `files[]`로, 심볼릭 링크는 `file`과 `link_target`으로 가른다. `curl -I`: 리다이렉트를 따라간 응답(`-L`)은 최종 응답을 본문으로 하고 앞선 응답을 `history`에 담으며, 반복 헤더는 `header_values`로 보존한다.
+- `ping`, `id`, `curl -I`: 통계 줄, `uid=`/`gid=`, HTTP 상태 줄이 없으면 0과 빈 값으로 채운 결과 대신 `unrecognized_output`이다. `ping`은 `+N errors` 구획과 소수 손실률을 읽는다. `env`: `NAME=value`가 아닌 줄(여러 줄 값)이 있으면 `unrecognized_output`이며 `-0` 출력을 읽는다.
+- `apt list`/`apt search`: 대괄호가 없는 줄(설치되지 않은 패키지)을 포함한 모든 행을 읽고 `search`의 설명 줄을 `description`으로 담는다.
+- `npm ls`: UTF-8 트리의 부모 행(`├─┬`)을 읽고, `deduped` 표시를 이름과 버전에서 떼며, 마지막 자식 아래 들여쓰기까지 반영해 깊이를 센다.
+- `ss`: Netid, State 열이 없는 출력과 머리 줄이 없는(`-H`) 출력을 읽고, 유닉스 소켓의 경로와 inode를 주소와 포트로 읽으며, `-i`의 이어지는 줄을 행으로 세지 않는다. `lsof`: 머리 줄의 열 위치로 가르므로 DEVICE, SIZE/OFF, NODE가 빈 줄에서도 NAME이 밀리지 않는다. `state`는 TCP 상태 이름(`LISTEN`)일 때만 담고 `(readlink: Permission denied)` 같은 안내는 `name`에 둔다.
+- `systemctl list-units`: `failed`는 ACTIVE 열이 `failed`인 유닛이다. 행 앞 기호는 not-found 같은 로드 상태에도 붙으므로 쓰지 않는다. `--no-legend`와 `--plain` 출력을 읽는다. `journalctl`: short 계열 형식(기본 `short`, `short-precise`, `short-iso`, `short-iso-precise`, `short-full`, `short-unix`, `short-monotonic`, `with-unit`)과 `--no-hostname`을 읽으며 시각으로 시작하지 않는 줄은 직전 항목의 `message`에 붙인다.
+- `dig`: QUESTION 섹션이 없으면 `query_type`은 `A`가 아니라 빈 문자열이다. `+multiline` 괄호 레코드와 `+noall +answer` 출력을 읽는다. `df`: 1K가 아닌 블록 단위(`-m`, `-B1M`)는 `blocks_1k`에 담지 않고 `size`와 `block_size`로 나타내며 공백이 든 마운트 위치를 지킨다. `-T`의 종류 열을 읽는다.
+- `ls -l`: `-R`과 피연산자 둘 이상의 구획을 `directory`로 나누고 `-F`, `-p`의 표시 기호를 이름과 링크 대상에서 뗀다. `--time-style=long-iso`, `--full-time`의 시각을 읽는다.
+- `ps`: `--no-headers`의 첫 줄과 `--headers`가 되풀이하는 머리 줄을 올바르게 처리하고, `f`, `--forest` 트리의 가지를 떼어 `depth`로 나타내며 command의 공백을 보존한다. `du --time`, `du -0`, `find -print0`을 읽는다.
+- `free -h`의 `0B`와 `--si`, `--kilo`, `--mega`, `--giga`를 읽는다. `docker stats --no-stream`의 pids `0`은 `null`이 아니라 `0`이다. `cargo tree`는 `(*)`, `(proc-macro)`를 경로로 읽지 않는다.
+- `compact` 형식은 객체 배열의 모든 행에서 키를 모아 열을 만든다(첫 행에 없는 선택 필드도 열이 된다).
 
 ## [2.0.2] - 2026-10-03
 

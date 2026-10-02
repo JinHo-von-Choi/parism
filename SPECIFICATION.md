@@ -247,7 +247,7 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 | false |
 | `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
 
-`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. 같은 정보를 얻는 인자가 없으면(`ls -lR`, `git diff --stat` 등) `hint`가 없다.
+`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. 같은 정보를 얻는 인자가 없으면(`ls -li`, `git diff --stat` 등) `hint`가 없다.
 
 `kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다.
 
@@ -361,6 +361,29 @@ export interface ParserContract {
 `src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드를 반영한 유효 계약을 돌려준다.
 
 내장 파서의 계약은 `src/parsers/contracts.ts`에 있다. 허용 플래그는 실측으로 처리를 확인한 것만 둔다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)에는 형식 선언이 없다.
+
+파서는 출력에서 값을 얻을 수 없거나 줄 해석이 모호하면 `UnrecognizedOutputError`(`src/parsers/registry.ts`)를 던진다. 레지스트리는 이 예외를 `parser_exception`이 아닌 `unrecognized_output`으로 보고한다. 기본값을 채운 결과 객체를 돌려주지 않기 위한 장치로, `ping`(통계 줄 없음), `id`(uid, gid 없음), `curl -I`(상태 줄 없음), `lsof`(머리 줄 없음), `env`(NAME=value가 아닌 줄), `grep`(-r 단일 피연산자의 파일 여부를 가릴 수 없음)가 쓴다.
+
+내장 파서의 선택 출력 필드는 해당 형식일 때만 나타난다.
+
+| 파서 | 선택 필드 | 의미 |
+|-|-|-|
+| `ls -l` | `directory` | `-R`이나 피연산자 둘 이상의 구획 머리줄(`./sub:`). 파일 피연산자의 항목에는 없다 |
+| `stat` | `link_target`, `files[]` | 링크 대상. 파일이 여럿이면 최상위가 `files[]`이다 |
+| `du` | `modified_at` | `--time` |
+| `df` | `type`, `size`, `block_size` | `-T`의 종류. 1K가 아닌 블록 단위(`-m`, `-B1M`)의 크기는 `blocks_1k`가 아니라 `size`에 담고 단위는 결과의 `block_size` |
+| `ps` | `depth` | `f`, `--forest` 트리의 깊이(루트 0) |
+| `curl -I` | `header_values`, `history` | 반복 헤더의 값 목록(`headers`에는 `, `로 이은 값), `-L`로 따라간 앞선 응답 |
+| `grep` | `byte_offset`, `context` | `-b`의 오프셋, `-A/-B/-C` 문맥 줄 표시(문맥 줄 옵션은 `-n`이 있어야 받는다) |
+| `git status` | `renamed`, `ignored`, `unmerged`, `detached`, `detached_at` | 이름 바꾸기 `{old, new}`(staged에는 새 경로), `--ignored` 대상, 충돌 항목, detached HEAD(`branch`는 `HEAD`) |
+| `git log` | `refs` | `--decorate` 참조 |
+| `git diff` | `files[].status`, `old_path`, `binary` | 변경 종류(`modified`, `added`, `deleted`, `renamed`, `copied`), 이름 바꾸기 전 경로, 바이너리 변경 |
+| `git branch` | `detached`, `points_to`, `worktree` | detached HEAD 항목, `origin/HEAD -> origin/main`의 대상, 다른 작업 트리에서 쓰는 브랜치 |
+| `apt search` | `description` | 패키지 줄 아래 설명 |
+| `npm ls` | `deduped`, `problem` | `deduped` 표시, `UNMET DEPENDENCY`나 `extraneous` 같은 문제 표시 |
+| `cargo tree` | `depth`, `deduped`, `proc_macro`, `source` | 깊이, `(*)`, `(proc-macro)`, git 같은 경로가 아닌 소스 |
+
+`compact` 형식은 객체 배열의 모든 행에서 키를 모아 열을 만든다. 일부 행에만 있는 선택 필드도 열로 남는다.
 
 `schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
 

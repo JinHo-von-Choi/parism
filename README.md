@@ -170,29 +170,29 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 | 카테고리 | 명령어 | 파싱 결과 | 기본 허용 |
 |---|---|---|---|
-| 파일시스템 | `ls` | `entries[]`: 이름, 타입, 권한, 크기, 수정 시각, 소유자 | O |
+| 파일시스템 | `ls -l` | `entries[]`: 이름, 타입, 권한, 크기, 수정 시각, 소유자, 링크 대상, `directory`(`-R`과 피연산자 둘 이상의 구획) | O |
 | 파일시스템 | `find` | `paths[]`: 경로 목록 | O |
-| 파일시스템 | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프 | O |
-| 파일시스템 | `du` | `entries[]`: 크기, 경로 | O |
-| 파일시스템 | `df` | `filesystems[]`: 파티션, 사용량, 마운트 위치 | O |
+| 파일시스템 | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프. 파일이 여럿이면 `files[]` | O |
+| 파일시스템 | `du` | `entries[]`: 크기, 경로, `modified_at`(`--time`) | O |
+| 파일시스템 | `df` | `filesystems[]`: 파티션, `type`(`-T`), 크기, 사용량, 마운트 위치. 1K가 아닌 블록 단위는 `size`와 `block_size` | O |
 | 파일시스템 | `tree` | `root`, `tree{}`: 계층 구조 노드, `total_files`, `total_dirs` | O |
-| 프로세스 | `ps` | `processes[]`: PID, CPU%, MEM%, 명령어 | O |
+| 프로세스 | `ps aux` | `processes[]`: PID, CPU%, MEM%, 명령어, `depth`(트리 출력) | O |
 | 프로세스 | `kill` | raw pass-through (기본 차단, prism.config.json에서 명시적 허용 시 사용) | X |
 | 네트워크 | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
-| 네트워크 | `curl -I` | `status_code`, `headers{}` | O |
+| 네트워크 | `curl -I` | `status_code`, `headers{}`, `header_values{}`(반복 헤더), `history[]`(`-L`의 앞선 응답) | O |
 | 네트워크 | `netstat` | `connections[]`: proto, local/foreign address, state | O |
 | 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 | O |
-| 네트워크 | `ss` | `entries[]`: 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 | O |
-| 네트워크 | `dig` | `query`, `answers[]`: 타입, 값, TTL, `query_time_ms` | O |
-| 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트 | O |
+| 네트워크 | `ss` | `connections[]`: netid, 상태, 수신/발신 큐, 로컬/피어 주소와 포트 | O |
+| 네트워크 | `dig` | `query`, `query_type`(QUESTION 섹션이 없으면 빈 문자열), `answers[]`: 타입, 값, TTL, `query_time_ms` | O |
+| 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트, `byte_offset`(`-b`), `context`(`-A/-B/-C`의 문맥 줄) | O |
 | 텍스트 | `wc` | `entries[]`: count, 파일명 | O |
 | 텍스트 | `head`, `tail`, `cat` | `lines[]` | O |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message | O |
-| Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind | O |
+| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]`(`--decorate`) | O |
+| Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
+| Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]`: 상태, 재시도, 이벤트 사유/메시지 | O |
-| DevOps | `docker ps` | `containers[]`: 이미지, 상태, 포트, 이름 (`docker stats`는 현재 허용 형식 밖) | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: 이미지, 상태, 포트, 이름 / `stats[]`: CPU, 메모리, 네트워크, 블록 I/O, pids | O |
 | DevOps | `gh pr list` | `pull_requests[]`: 번호, 제목, 상태, 작성자, 라벨 | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build 프로필) | `summary`: to_add, to_change, to_destroy | O |
@@ -203,12 +203,12 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 시스템 | `uname` | `kernel`, `hostname`, `release`, `version`, `arch`, `os` | O |
 | 시스템 | `id` | `uid`, `gid`, `username`, `groups[]`: id, name | O |
 | 시스템 | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
-| 시스템 | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
-| 시스템 | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| 시스템 | `journalctl` (short 계열 `-o`) | `entries[]`: timestamp, hostname(`--no-hostname`이면 빈 문자열), unit, pid, message (Linux) | O |
+| 시스템 | `apt list`, `apt search` | `packages[]`: name, suite, version, arch, status, description(search) | O |
 | 시스템 | `brew list --versions` | `packages[]`: name, version | O |
-| 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth, `deduped`, `problem` | O |
 | 패키지 | `yarn list` (build 프로필) | `dependencies[]`: name, version, depth | X |
-| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path (현재 허용 형식 없음) | O |
+| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path, source, depth, deduped, proc_macro | O |
 | Windows | `dir` | `directory`, `entries[]`: 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
@@ -232,13 +232,12 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | `ls -lh` | `["-l"]` |
 | `git status -s` | `["status"]` |
 | `git log --oneline --graph` | `["log", "--format=%h %s"]` |
-| `journalctl -n 20` | `["-n", "20", "-o", "short-iso"]` |
-| `ss -tlnp` | `["-tlnp", "-u"]` |
+| `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
 | `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
 | `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
-| `npm ls --all` | `["ls", "--all", "--json"]` |
+| `npm ls --parseable` | `["ls", "--json"]` |
 
-같은 정보를 얻는 인자가 없으면(`ls -lR`, `git diff --stat`, `grep -A1` 등) `hint`가 없다.
+같은 정보를 얻는 인자가 없으면(`ls -li`, `git diff --stat`, `grep -z` 등) `hint`가 없다.
 
 ### 네이티브 JSON 패스스루
 

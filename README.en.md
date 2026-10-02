@@ -153,29 +153,29 @@ The agent receives the block reason in the same envelope structure as any other 
 
 | Category | Command | Parsed Output | Default |
 |---|---|---|---|
-| Filesystem | `ls` | `entries[]`: name, type, permissions, size, modified time, owner | O |
+| Filesystem | `ls -l` | `entries[]`: name, type, permissions, size, modified time, owner, link target, `directory` (`-R` and multiple operands) | O |
 | Filesystem | `find` | `paths[]`: list of paths | O |
-| Filesystem | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps | O |
-| Filesystem | `du` | `entries[]`: size, path | O |
-| Filesystem | `df` | `filesystems[]`: partition, usage, mount point | O |
+| Filesystem | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps. `files[]` for several files | O |
+| Filesystem | `du` | `entries[]`: size, path, `modified_at` (`--time`) | O |
+| Filesystem | `df` | `filesystems[]`: partition, `type` (`-T`), size, usage, mount point. Block units other than 1K use `size` and `block_size` | O |
 | Filesystem | `tree` | `root`, `tree{}`: hierarchical node map, `total_files`, `total_dirs` | O |
-| Process | `ps` | `processes[]`: PID, CPU%, MEM%, command | O |
+| Process | `ps aux` | `processes[]`: PID, CPU%, MEM%, command, `depth` (tree output) | O |
 | Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
 | Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
-| Network | `curl -I` | `status_code`, `headers{}` | O |
+| Network | `curl -I` | `status_code`, `headers{}`, `header_values{}` (repeated headers), `history[]` (earlier responses of `-L`) | O |
 | Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
 | Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state | O |
-| Network | `ss` | `connections[]`: state, recv/send queue, local/peer address | O |
-| Network | `dig` | `query`, `answers[]`: type, value, TTL, `query_time_ms` | O |
-| Text | `grep -n` | `matches[]`: file, line number, text | O |
+| Network | `ss` | `connections[]`: netid, state, recv/send queue, local/peer address and port | O |
+| Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms` | O |
+| Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`) | O |
 | Text | `wc` | `entries[]`: count, filename | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message | O |
-| Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind | O |
+| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (`--decorate`) | O |
+| Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
+| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
-| DevOps | `docker ps` | `containers[]`: image, status, ports, names (`docker stats` is currently outside the accepted formats) | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: image, status, ports, names / `stats[]`: CPU, memory, network, block I/O, pids | O |
 | DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build profile) | `summary`: to_add, to_change, to_destroy | O |
@@ -186,12 +186,12 @@ The agent receives the block reason in the same envelope structure as any other 
 | System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
 | System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name | O |
 | System | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
-| System | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
-| System | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| System | `journalctl` (short `-o` formats) | `entries[]`: timestamp, hostname (empty with `--no-hostname`), unit, pid, message (Linux) | O |
+| System | `apt list`, `apt search` | `packages[]`: name, suite, version, arch, status, description (search) | O |
 | System | `brew list --versions` | `packages[]`: name, version | O |
-| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth, `deduped`, `problem` | O |
 | Package | `yarn list` (build profile) | `dependencies[]`: name, version, depth | X |
-| Package | `cargo tree` (build profile) | `crates[]`: name, version, path (no accepted format yet) | O |
+| Package | `cargo tree` (build profile) | `crates[]`: name, version, path, source, depth, deduped, proc_macro | O |
 | Windows | `dir` | `directory`, `entries[]`: name, type, size, modified time, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: name, PID, session, memory. CSV format supported | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, subnet, gateway, DNS, MAC | X |
@@ -215,13 +215,12 @@ When other args give the same information in a handled format, `result.failure.h
 | `ls -lh` | `["-l"]` |
 | `git status -s` | `["status"]` |
 | `git log --oneline --graph` | `["log", "--format=%h %s"]` |
-| `journalctl -n 20` | `["-n", "20", "-o", "short-iso"]` |
-| `ss -tlnp` | `["-tlnp", "-u"]` |
+| `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
 | `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
 | `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
-| `npm ls --all` | `["ls", "--all", "--json"]` |
+| `npm ls --parseable` | `["ls", "--json"]` |
 
-There is no `hint` when no args give the same information (`ls -lR`, `git diff --stat`, `grep -A1`, and so on).
+There is no `hint` when no args give the same information (`ls -li`, `git diff --stat`, `grep -z`, and so on).
 
 ### Native JSON Passthrough
 
