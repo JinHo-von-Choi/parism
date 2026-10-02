@@ -24,8 +24,6 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["df", ["-m"], [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n"],
   ["ps", ["auxf"], ["aux"], "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1000 200 ? Ss 10:00 0:01 /sbin/init\n"],
   ["ps", ["aux", "--no-headers"], ["aux"], "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1000 200 ? Ss 10:00 0:01 /sbin/init\n"],
-  ["ss", ["-tlnp"], ["-tlnp", "-u"], "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port\ntcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n"],
-  ["ss", ["-H", "-tu"], ["-tu"], "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port\nudp UNCONN 0 0 0.0.0.0:68 0.0.0.0:*\n"],
   ["dig", ["+short", "example.com"], ["example.com"],
     ";; QUESTION SECTION:\n;example.com. IN A\n\n;; ANSWER SECTION:\nexample.com. 300 IN A 93.184.215.14\n"],
   ["grep", ["-Z", "x", "a", "b"], ["x", "a", "b"], "a:hit\nb:hit\n"],
@@ -81,7 +79,7 @@ describe("failure.hint 안내 인자", () => {
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
       ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
-      ["curl", ["-s", "https://example.com"]], ["ss", ["-a"]], ["apt", ["show", "bash"]], ["docker", ["stats", "--no-stream"]], ["stat", ["-c", "%s", "a"]],
+      ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["stats", "--no-stream"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
       expect(r.parse_error?.reason).toBe("unsupported_format");

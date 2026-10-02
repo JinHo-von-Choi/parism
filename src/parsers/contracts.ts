@@ -12,7 +12,7 @@ import type { ParserContract } from "./registry.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
 import { supportsGrep }     from "./text/grep.js";
-import { lsHint, findHint, duHint, dfHint, psHint, ssHint, digHint, grepHint, envHint, freeHint, unameHint, idHint,
+import { lsHint, findHint, duHint, dfHint, psHint, digHint, grepHint, envHint, freeHint, unameHint, idHint,
          journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
          ghPrListHint, npmListHint, npmHint } from "./hints.js";
 
@@ -32,22 +32,6 @@ const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "
 
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
-
-/** ss 소켓 종류 필터 플래그 */
-const SS_KINDS = ["t", "u", "w"];
-const SS_LONG_KINDS = ["--tcp", "--udp", "--raw"];
-
-/**
- * ss: Netid 열이 있고(종류 필터가 정확히 1개가 아님) 유닉스 소켓이 섞이지 않는 경우만 받는다.
- * 종류 필터가 없으면 -4, -6, -f inet 같은 인터넷 계열 지정이 있어야 유닉스 소켓이 빠진다.
- */
-function supportsSsTable(args: string[]): boolean {
-  const shorts = new Set(args.filter(a => /^-[A-Za-z0-9]+$/.test(a)).flatMap(a => [...a.slice(1)]));
-  const kinds  = SS_KINDS.filter(c => shorts.has(c)).length + SS_LONG_KINDS.filter(n => args.includes(n)).length;
-  const inet   = shorts.has("4") || shorts.has("6") || args.includes("--ipv4") || args.includes("--ipv6")
-               || args.some((a, i) => /^(-f|--family)$/.test(a) && /^inet6?$/.test(args[i + 1] ?? "")) || args.some(a => /^--family=inet6?$/.test(a));
-  return kinds !== 1 && (kinds >= 2 || inet);
-}
 
 /** 명령별 내장 계약 */
 export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
@@ -124,21 +108,20 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     rowFields: ["proto", "local_address", "foreign_address", "state"],
   },
   lsof: {
-    acceptedFlags: { ...bools("-n", "-P", "-U", "-a", "-l", "-w", "-b"), ...flags("attached", "-i", "-s"), ...values("-d", "+D") },
+    acceptedFlags: { ...bools("-n", "-P", "-U", "-a", "-l", "-w", "-b"), ...flags("attached", "-i", "-s"), ...values("-d", "+D", "-p", "-c") },
     plusFlags:     true,
     headerLines: 1, rowsKey: "entries", rowFields: LSOF_FIELDS,
   },
   ss: {
     acceptedFlags: {
-      ...bools("-t", "-u", "-w", "-l", "-n", "-a", "-p", "-4", "-6", "-r",
-        "--tcp", "--udp", "--raw", "--listening", "--numeric", "--all", "--processes", "--ipv4", "--ipv6", "--resolve"),
+      ...bools("-t", "-u", "-w", "-x", "-l", "-n", "-a", "-p", "-4", "-6", "-r", "-H", "-e", "-m", "-i", "-o",
+        "--tcp", "--udp", "--raw", "--unix", "--listening", "--numeric", "--all", "--processes", "--ipv4", "--ipv6", "--resolve", "--no-header",
+        "--extended", "--memory", "--info", "--options"),
       ...values("-f", "--family"),
     },
     acceptedValues:      { "-f": /^inet6?$/, "--family": /^inet6?$/ },
     acceptedPositionals: { max: 0 },
-    supports:            supportsSsTable,
-    hint:                ssHint,
-    headerLines: 1, rowsKey: "connections", rowFields: SS_FIELDS,
+    noise: /^(Netid|State|Recv-Q)\s|^\s/, rowsKey: "connections", rowFields: SS_FIELDS,
   },
   dig: {
     acceptedFlags: { ...bools("+tcp", "+stats", "+nostats", "-4", "-6", "-m", "-r"), ...values("-x", "-t", "-c", "-p", "-q", "-b") },

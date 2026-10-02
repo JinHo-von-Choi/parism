@@ -140,21 +140,12 @@ export function idHint(rest: string[]): HintDraft | null {
   return { args: rest.filter(a => !a.startsWith("-")), reason: "the full id output carries the same ids together with names" };
 }
 
-/* ---------------- ps, ss, dig ---------------- */
+/* ---------------- ps, dig ---------------- */
 
 export function psHint(rest: string[]): HintDraft | null {
   const args = dropFlags(rest, table("bool", "--forest", "--no-headers", "--headers"), table("value", "--sort", "--width"))
     .map(a => (/^[A-Za-z]+$/.test(a) ? a.replace(/f/g, "") : a));
   return { args, reason: "BSD user format (ps aux) without the process tree is parsed" };
-}
-
-export function ssHint(rest: string[]): HintDraft | null {
-  const args  = dropFlags(rest, table("bool", "-H", "--no-header"), table("value", "-f", "--family", "-A", "--query"));
-  const tcp   = hasFlag(args, "-t", "--tcp");
-  const udp   = hasFlag(args, "-u", "--udp");
-  const other = hasFlag(args, "-w", "--raw", "-x", "--unix");
-  if (tcp !== udp && !other) args.push(tcp ? "-u" : "-t");
-  return { args, reason: "ss output with the Netid column (two socket kinds, no unix sockets) is parsed" };
 }
 
 const DIG_DISPLAY = table("bool", "+short", "+noall", "+answer", "+nocomments", "+noquestion", "+nocmd", "+multi", "+multiline", "+yaml");
