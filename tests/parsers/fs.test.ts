@@ -42,6 +42,22 @@ describe("parseLs()", () => {
   });
 });
 
+describe("parseLs() 특수 표기", () => {
+  it("setuid, sticky, 장치, ACL, 심볼릭 링크 표기를 인식한다", () => {
+    const raw = [
+      "-rwsr-xr-x 1 root root 55680 Mar 23  2024 sudo",
+      "drwxrwxrwt 20 root root 4096 Oct  3 01:00 tmp",
+      "crw-rw-rw- 1 root root 1, 3 Oct  3 01:00 null",
+      "-rw-r--r--+ 1 a a 10 Oct  3 01:00 acl.txt",
+      "lrwxrwxrwx 1 a a 4 Oct  3 01:00 link -> dest",
+    ].join("\n");
+    const { entries } = parseLs("ls", ["-l"], raw) as { entries: { name: string; type: string; target?: string }[] };
+    expect(entries.map(e => e.name)).toEqual(["sudo", "tmp", "null", "acl.txt", "link"]);
+    expect(entries[2]!.type).toBe("char_device");
+    expect(entries[4]!).toMatchObject({ name: "link", target: "dest" });
+  });
+});
+
 describe("parseStat()", () => {
   const statLinuxRaw = [
     "  File: /home/user/project/src/index.ts",

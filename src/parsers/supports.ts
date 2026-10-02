@@ -97,9 +97,9 @@ export function supportsWc(args: string[]): boolean {
   return ["l", "w", "c", "m", "L"].filter(c => f.has(c)).length === 1;
 }
 
-/** id: 옵션 없는 전체 형식만 처리한다. */
+/** id: 옵션 없는 전체 형식과 단일 값 형식(-u, -g, -G)만 처리한다. */
 export function supportsId(args: string[]): boolean {
-  return !args.some(a => a.startsWith("-"));
+  return args.every(a => !a.startsWith("-") || a === "-u" || a === "-g" || a === "-G");
 }
 
 /** uname: -a 전체 형식만 처리한다. */

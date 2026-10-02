@@ -63,6 +63,18 @@ describe("parseGrep()", () => {
   });
 });
 
+describe("parseGrep() 형식 판정", () => {
+  it("단일 파일 -n 출력은 file 없이 line만 갖는다", () => {
+    expect((parseGrep("grep", ["-n", "x", "a.txt"], "12:text\n") as { matches: unknown[] }).matches[0]).toMatchObject({ line: 12, text: "text" });
+  });
+  it("-n 없는 다중 파일 출력의 콜론 포함 텍스트를 줄 번호로 오인하지 않는다", () => {
+    expect((parseGrep("grep", ["x", "a.txt", "b.txt"], "a.txt:12:00 x\n") as { matches: unknown[] }).matches[0]).toMatchObject({ file: "a.txt", text: "12:00 x" });
+  });
+  it("-l 은 파일 이름만 file 로 담는다", () => {
+    expect((parseGrep("grep", ["-rl", "x", "."], "./a.txt\n") as { matches: unknown[] }).matches[0]).toMatchObject({ file: "./a.txt", text: "" });
+  });
+});
+
 describe("parseCat()", () => {
   it("라인 배열을 반환한다", () => {
     const result = parseCat("cat", [], "line1\nline2\nline3");

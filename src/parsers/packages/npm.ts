@@ -18,7 +18,8 @@ export interface NpmResult {
   dependencies: NpmDependency[];
 }
 
-const TREE_LINE = /^[├└│\s]*──\s+(.+?)(?:@(\S+))?\s*$/;
+const TREE_LINE       = /^[├└│\s]*──\s+(.+?)(?:@(\S+))?\s*$/;
+const TREE_LINE_ASCII = /^[|\s]*[+`]--\s+(.+?)(?:@(\S+))?\s*$/;
 
 /**
  * npm list / pnpm list 트리 출력을 파싱한다.
@@ -33,12 +34,13 @@ export function parseNpm(
   const dependencies: NpmDependency[] = [];
 
   for (const line of lines) {
-    const m = line.match(TREE_LINE);
+    const ascii = TREE_LINE_ASCII.test(line);
+    const m     = ascii ? line.match(TREE_LINE_ASCII) : line.match(TREE_LINE);
     if (!m) continue;
 
     const name    = (m[1] ?? "").trim();
     const version = (m[2] ?? "").trim();
-    const depth   = (line.match(/[├└│]/g)?.length ?? 0);
+    const depth   = ascii ? (line.match(/[|+`]/g)?.length ?? 0) : (line.match(/[├└│]/g)?.length ?? 0);
 
     if (!name) continue;
 

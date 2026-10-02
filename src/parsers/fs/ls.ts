@@ -8,7 +8,8 @@ export interface LsEntry {
   size_bytes:  number;
   modified_at: string;
   name:        string;
-  type:        "file" | "directory" | "symlink" | "other";
+  type:        "file" | "directory" | "symlink" | "char_device" | "block_device" | "other";
+  target:      string | null;
 }
 
 export interface LsSummary {
@@ -26,24 +27,32 @@ export function parseLs(
     if (!line || line.startsWith("total ")) continue;
 
     const m = line.match(
-      /^([dlbcsp-])([rwx-]{9})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(.+)$/,
+      /^([bcdlps-])([rwxsStT-]{9})[.+@]?\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+(?:,\s*\d+)?)\s+(\w+\s+\d+\s+[\d:]+)\s+(.+)$/,
     );
     if (!m) continue;
 
-    const [, typeChar, perms, links, owner, group, size, mtime, name] = m;
+    const [, typeChar, perms, links, owner, group, size, mtime, rawName] = m;
+
+    const isDevice = typeChar === "c" || typeChar === "b";
+    const arrow    = typeChar === "l" ? rawName.indexOf(" -> ") : -1;
+    const name     = arrow >= 0 ? rawName.slice(0, arrow) : rawName;
+    const target   = arrow >= 0 ? rawName.slice(arrow + 4) : null;
 
     entries.push({
       permissions: typeChar + perms,
       links:       parseInt(links, 10),
       owner,
       group,
-      size_bytes:  parseInt(size, 10),
+      size_bytes:  isDevice ? 0 : parseInt(size, 10),
       modified_at: mtime.trim(),
       name:        name.trim(),
       type:        typeChar === "d" ? "directory"
                  : typeChar === "l" ? "symlink"
                  : typeChar === "-" ? "file"
+                 : typeChar === "c" ? "char_device"
+                 : typeChar === "b" ? "block_device"
                  : "other",
+      target,
     });
   }
 
