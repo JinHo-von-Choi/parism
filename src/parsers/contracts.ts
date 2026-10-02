@@ -251,7 +251,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   npm: {
     subcommands: { ls: npmList(), list: npmList() },
     hint:        npmHint,
-    rowsKey: "dependencies", rowLine: /^[\s│├└|`+─┬-]*[├└`+][─-]/, rowFields: ["name", "version", "depth"],
+    rowsKey: "dependencies", rowLine: /^(?:[│| ] )*[├└+`][─-][─┬-] /, rowFields: ["name", "version", "depth", "deduped", "problem"],
   },
   cargo: { subcommands: {} },
   git: {
@@ -326,12 +326,11 @@ function helmList(): ParserContract {
   };
 }
 
-/** npm ls 트리 형식. 깊이 0만 deduped 표기와 깊이 계산 문제가 없다. */
+/** npm ls 트리 형식 */
 function npmList(): ParserContract {
   return {
-    acceptedFlags:       { ...bools("--prod", "--long", "-g", "--global"), ...values("--depth", "--omit") },
-    acceptedValues:      { "--depth": /^0$/ },
-    acceptedPositionals: { max: 0 },
-    hint:                npmListHint,
+    acceptedFlags:  { ...bools("--prod", "--long", "-g", "--global", "--all", "-a"), ...values("--depth", "--omit") },
+    acceptedValues: { "--depth": /^\d+$/, "--omit": /^(dev|optional|peer)$/ },
+    hint:           npmListHint,
   };
 }

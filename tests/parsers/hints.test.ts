@@ -48,7 +48,7 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["gh", ["repo", "view"], ["repo", "view", "--json", "name,owner,description,url,defaultBranchRef"], "{\"name\":\"r\"}\n"],
   ["gh", ["run", "list", "-L", "3"], ["run", "list", "-L", "3", "--json", "databaseId,name,status,conclusion,headBranch,createdAt"], "[]\n"],
   ["gh", ["release", "list"], ["release", "list", "--json", "tagName,name,isLatest,publishedAt"], "[]\n"],
-  ["npm", ["ls", "--all"], ["ls", "--all", "--json"], "{\"name\":\"p\",\"dependencies\":{}}\n"],
+  ["npm", ["ls", "--parseable"], ["ls", "--json"], "{\"name\":\"p\",\"dependencies\":{}}\n"],
   ["npm", ["outdated"], ["outdated", "--json"], "{}\n"],
 ];
 

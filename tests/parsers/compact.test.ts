@@ -81,4 +81,9 @@ describe("toCompact()", () => {
       },
     });
   });
+
+  it("뒤쪽 행에만 있는 선택 필드도 열로 남긴다", () => {
+    const result = toCompact({ rows: [{ name: "a" }, { name: "b", flag: true }] }) as { rows: { schema: string[]; rows: unknown[][] } };
+    expect(result.rows).toEqual({ schema: ["name", "flag"], rows: [["a", undefined], ["b", true]] });
+  });
 });

@@ -9,6 +9,44 @@ describe("parseNpm() ASCII 트리", () => {
   });
 });
 
+describe("parseNpm() 트리 해석", () => {
+  type Deps = { dependencies: Array<{ name: string; version: string; depth: number; deduped?: true; problem?: string }> };
+  const parse = (raw: string): Deps["dependencies"] => (parseNpm("npm", ["ls", "--all"], raw) as Deps).dependencies;
+
+  it("UTF-8 트리의 부모 행(├─┬)과 마지막 자식 아래 들여쓰기를 깊이로 센다", () => {
+    const rows = parse([
+      "a@1.0.0 /p",
+      "├─┬ cross-spawn@7.0.6",
+      "│ ├── path-key@3.1.1",
+      "│ └─┬ which@2.0.2",
+      "│   └── isexe@2.0.0",
+      "└── zod@3.25.76",
+    ].join("\n"));
+    expect(rows.map(r => [r.name, r.depth])).toEqual([["cross-spawn", 1], ["path-key", 2], ["which", 2], ["isexe", 3], ["zod", 1]]);
+  });
+
+  it("ASCII 트리도 같은 깊이 규칙을 따른다", () => {
+    const rows = parse(["a@1 /p", "+-- cross-spawn@7.0.6", "| `-- which@2.0.2", "|   `-- isexe@2.0.0", "`-- zod@3.25.76"].join("\n"));
+    expect(rows.map(r => [r.name, r.depth])).toEqual([["cross-spawn", 1], ["which", 2], ["isexe", 3], ["zod", 1]]);
+  });
+
+  it("deduped 표시를 이름과 버전에서 떼어 deduped 필드로 담는다", () => {
+    const rows = parse("a@1 /p\n+-- ajv-formats@3.0.1\n| `-- ajv@8.18.0 deduped\n");
+    expect(rows[1]).toEqual({ name: "ajv", version: "8.18.0", depth: 2, deduped: true });
+  });
+
+  it("UNMET 표시는 problem으로 담고 범위를 버전 자리에 둔다", () => {
+    const rows = parse("a@1 /p\n+-- UNMET OPTIONAL DEPENDENCY @cfworker/json-schema@^4.1.1\n+-- left-pad@1.0.0 extraneous\n");
+    expect(rows[0]).toEqual({ name: "@cfworker/json-schema", version: "^4.1.1", depth: 1, problem: "UNMET OPTIONAL DEPENDENCY" });
+    expect(rows[1]).toMatchObject({ name: "left-pad", version: "1.0.0", problem: "extraneous" });
+  });
+
+  it("들여쓰기 한 칸이 4칸인 트리(pnpm 형식)는 첫 중첩 줄 너비로 깊이를 센다", () => {
+    const rows = parse(["root", "├── a@1", "│   ├── b@2", "│   └── c@3", "└── d@4"].join("\n"));
+    expect(rows.map(r => r.depth)).toEqual([1, 2, 2, 1]);
+  });
+});
+
 describe("parseNpm()", () => {
   const raw = [
     "@nerdvana/parism@0.2.0 /home/nirna/job/nerdvana-prism",
