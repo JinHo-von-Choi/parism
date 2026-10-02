@@ -231,6 +231,7 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `guard` | `arg_not_allowed` | `command_arg_restrictions` 차단 플래그 | false |
 | `exec` | `timeout` | 프로세스 `killed=true` 또는 `ETIMEDOUT` | false |
 | `exec` | `spawn_failed` | `ENOENT` 또는 `EACCES` (바이너리 없음/권한) | false |
+| `exec` | `output_overflow` | 출력이 실행기 버퍼 상한(10MB)을 넘음 | false |
 | `exec` | `non_zero_exit` | 비정상 종료 코드 | false |
 | `parse` | `parser_exception` | 파서 함수가 예외 던짐 | false |
 | `parse` | `parser_not_found` | 등록된 파서 없고 native JSON도 아님 | **true** (정보성) |

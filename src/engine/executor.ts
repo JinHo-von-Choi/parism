@@ -22,6 +22,18 @@ function buildSanitizedEnv(secretPatterns: string[]): NodeJS.ProcessEnv {
   return sanitized;
 }
 
+/**
+ * 텍스트가 maxBytes(UTF-8)를 넘으면 마지막 완전한 줄까지 잘라 표지 줄을 붙인다. maxBytes 가 0 이하면 그대로 둔다.
+ */
+export function truncateUtf8Lines(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  if (maxBytes <= 0 || Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return { text, truncated: false };
+  }
+  const partial     = Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
+  const lastNewline = partial.lastIndexOf("\n");
+  const kept        = lastNewline > 0 ? partial.slice(0, lastNewline + 1) : partial;
+  return { text: `${kept}...[truncated: output exceeded ${maxBytes} bytes]\n`, truncated: true };
+}
 
 /**
  * 지정한 명령을 execFile로 실행하고 ResponseEnvelope를 반환한다.
@@ -52,18 +64,11 @@ export async function execute(
 
     const after = includeDiff ? await takeSnapshot(cwd) : null;
 
-    // stdout 크기 제한: 초과 시 마지막 완전한 줄까지 잘라내고 truncated=true 표시
-    let   outRaw:    string           = stdout;
-    let   truncated: boolean | undefined;
-
-    if (maxOutputBytes > 0 && Buffer.byteLength(outRaw, "utf8") > maxOutputBytes) {
-      const buf        = Buffer.from(outRaw, "utf8").subarray(0, maxOutputBytes);
-      const partial    = buf.toString("utf8");
-      const lastNewline = partial.lastIndexOf("\n");
-      outRaw    = lastNewline > 0 ? partial.slice(0, lastNewline + 1) : partial;
-      outRaw   += `...[truncated: output exceeded ${maxOutputBytes} bytes]\n`;
-      truncated = true;
-    }
+    // 출력 크기 제한: 초과 시 마지막 완전한 줄까지 잘라내고 truncated=true 표시
+    const out = truncateUtf8Lines(stdout, maxOutputBytes);
+    const err = truncateUtf8Lines(stderr, maxOutputBytes);
+    const outRaw    = out.text;
+    const truncated = out.truncated || err.truncated ? true : undefined;
 
     return {
       ok:          true,
@@ -73,7 +78,7 @@ export async function execute(
       cwd,
       duration_ms: Date.now() - start,
       stdout:      { raw: outRaw, parsed: null },
-      stderr:      { raw: stderr, parsed: null },
+      stderr:      { raw: err.text, parsed: null },
       diff:        before && after ? computeDiff(before, after) : null,
       truncated,
     };
@@ -91,16 +96,22 @@ export async function execute(
 
     // failure.reason 분류:
     //   killed=true (execFile timeout → SIGTERM) 또는 ETIMEDOUT → timeout
+    //   maxBuffer 초과 → output_overflow
     //   ENOENT/EACCES (스폰 실패) → spawn_failed
     //   그 외 비정상 종료 → non_zero_exit
     let failure: FailureInfo;
     if (e.killed === true || e.code === "ETIMEDOUT") {
       failure = { kind: "exec", reason: "timeout",       message: e.message };
+    } else if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+      failure = { kind: "exec", reason: "output_overflow", message: e.message };
     } else if (e.code === "ENOENT" || e.code === "EACCES") {
       failure = { kind: "exec", reason: "spawn_failed",  message: e.message };
     } else {
       failure = { kind: "exec", reason: "non_zero_exit", message: e.message };
     }
+
+    const failOut = truncateUtf8Lines(e.stdout ?? "", maxOutputBytes);
+    const failErr = truncateUtf8Lines(e.stderr ?? e.message, maxOutputBytes);
 
     return {
       ok:          false,
@@ -109,10 +120,11 @@ export async function execute(
       args,
       cwd,
       duration_ms: Date.now() - start,
-      stdout:      { raw: e.stdout ?? "", parsed: null },
-      stderr:      { raw: e.stderr ?? e.message, parsed: null },
+      stdout:      { raw: failOut.text, parsed: null },
+      stderr:      { raw: failErr.text, parsed: null },
       diff:        before && after ? computeDiff(before, after) : null,
       failure,
+      ...(failOut.truncated || failErr.truncated ? { truncated: true } : {}),
     };
   }
 }
