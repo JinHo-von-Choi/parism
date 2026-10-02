@@ -240,16 +240,18 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `exec` | `spawn_failed` | `ENOENT` 또는 `EACCES` (바이너리 없음/권한) | false |
 | `exec` | `output_overflow` | 출력이 실행기 버퍼 상한(10MB)을 넘음 | false |
 | `exec` | `non_zero_exit` | 비정상 종료 코드 | false |
-| `parse` | `parser_exception` | 파서 함수가 예외 던짐 | false |
+| `parse` | `parser_exception` | 파서 함수가 예외 던짐 || true |
 | `parse` | `parser_not_found` | 등록된 파서 없고 native JSON도 아님 | **true** (정보성) |
-| `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 | false |
-| `parse` | `unsupported_format` | 인자가 파서 계약의 형식 선언(5.1) 밖이거나 `supports(args)`가 거부함 | false |
-| `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 | false |
+| `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 || true |
+| `parse` | `unsupported_format` | 인자가 파서 계약의 형식 선언(5.1) 밖이거나 `supports(args)`가 거부함 || true |
+| `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 || true |
 | `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
 
-`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. 같은 정보를 얻는 인자가 없으면(`ls -li`, `git diff --stat` 등) `hint`가 없다.
+`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `git log -n 3` → `["log", "-n", "3", "--format=%h%x09%an%x09%aI%x09%s"]`(작성자, 작성 시각 포함), `git status -s --ignored` → `["status", "--ignored"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. 같은 정보를 얻는 인자가 없으면(`ls -li`, `git diff --stat` 등) `hint`가 없다.
 
-`kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다.
+`kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다. `ok`는 실행 결과만 나타내므로 `kind=parse`인 실패는 모두 `ok=true`다.
+
+`kind=parse` 실패는 실행이 성공했을 때만 `failure`가 된다. 실행이 실패했거나(`non_zero_exit`, `timeout`, `spawn_failed`, `output_overflow`) 종료 코드가 0이어도 stdout이 비고 stderr만 있으면, 파싱 오류는 `stdout.parse_error`에만 남고 `failure`는 실행 결과의 것(`kind=exec`와 stderr를 담은 메시지, 실행이 성공했으면 없음)이다. 예: 이름을 풀지 못한 `ping -c 1 no-such-host.invalid`는 `failure = { kind: "exec", reason: "non_zero_exit" }`이고 `stdout.parse_error.reason = "unrecognized_output"`이다. 이때 `unsupported_format`의 안내는 `stdout.parse_error.hint`에만 있다.
 
 `kind=exec, reason=non_zero_exit`는 프로세스 종료 코드가 0이 아닌 모든 경우를 포함한다. `timeout_ms`가 지나 종료시킨 실행은 `timeout`, 버퍼 상한 초과는 `output_overflow`로 분류한다. 분류 로직은 `src/engine/executor.ts`에 위치한다.
 
@@ -342,6 +344,8 @@ export interface ParserContract {
   rowsKey?:             string;
   rowLine?:             RegExp;
   rowFields?:           string[];
+  nulRecords?:          boolean;
+  outputFlags?:         Record<string, Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords">>;
 }
 ```
 
@@ -351,14 +355,14 @@ export interface ParserContract {
 - `acceptedFlags`: 플래그 이름과 값 방식. `bool`은 값이 없고, `value`는 붙은 값(`--x=v`, `-xv`)이나 다음 인자를 값으로 받으며, `attached`는 붙은 값만 받는다(`--color=never`, `-U0`). 단문자 묶음(`-la`)은 글자마다 나눠 검사한다. `-5` 같은 숫자 축약은 `"-<number>"` 이름으로 선언한다. `--` 뒤는 모두 위치 인자다.
 - `acceptedValues`: 플래그 값 패턴. `requiredFlags`: 이 가운데 하나 이상이 있어야 한다(`ls`의 `-l`). `exclusiveFlags`: 이 가운데 하나까지만 받는다(`wc`의 카운터).
 - `acceptedPositionals`: 위치 인자 개수(`min`, `max`)와 모든 위치 인자가 일치해야 하는 `pattern`.
-- `leadingFlags`: 서브커맨드 앞에 올 수 있는 전역 옵션(`git --no-pager`, `git -C <경로>`). `subcommands`: 서브커맨드 낱말(`"log"`, `"pr list"`)별 계약으로, 상위 계약에 덧씌운다. 빈 문자열 키는 서브커맨드 없이 실행한 경우다. 서브커맨드를 선언한 명령에서 선언 밖의 서브커맨드는 `unsupported_format`이다.
+- `leadingFlags`: 서브커맨드 앞에 올 수 있는 전역 옵션(`git --no-pager`, `git -C <경로>`). 선언은 서브커맨드 위치를 찾는 데 쓰며 허용 여부는 guard 정책이 정한다. 기본 정책은 `git`의 전역 옵션으로 `--no-pager`만 받는다(`-c`로 출력 설정을 바꾸면 파서가 처리하지 못하는 출력이 나올 수 있다). `subcommands`: 서브커맨드 낱말(`"log"`, `"pr list"`)별 계약으로, 상위 계약에 덧씌운다. 빈 문자열 키는 서브커맨드 없이 실행한 경우다. 서브커맨드를 선언한 명령에서 선언 밖의 서브커맨드는 `unsupported_format`이다.
 - `plusFlags`: `+`로 시작하는 인자를 플래그로 본다(`dig +tcp`, `lsof +D`). `singleDashLong`: 단일 대시 긴 이름(`find -name`)을 묶음으로 나누지 않는다.
 - `supports(args)`: 선언으로 표현하기 어려운 조건. 선언 검사를 통과한 뒤 추가로 적용하며 `false`면 `unsupported_format`이다.
 - `hint(rest)`: 서브커맨드 다음 인자를 받아 같은 정보를 얻는 대체 인자를 제안한다. 레지스트리는 앞쪽 전역 옵션과 서브커맨드를 다시 붙이고, `native`가 아닌 제안은 같은 계약의 형식 검사를 통과해야 `parse_error.hint`로 내보낸다.
 
-출력 모양 필드는 실패 판정과 불변식 검사에 쓰인다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 실패가 아니다. `rowsKey`는 데이터 줄 하나당 행 하나를 담는 결과 배열의 키, `rowLine`은 데이터 줄 가운데 행이 되는 줄의 패턴(없으면 모든 데이터 줄), `rowFields`는 행 객체가 가질 수 있는 필드 이름이다.
+출력 모양 필드는 실패 판정과 불변식 검사에 쓰인다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 `unrecognized_output`이 아니다. 출력이 비어 있으면 결과를 낼 수 없는 파서(`ping`, `id`, `curl -I`)는 빈 출력에서 `unrecognized_output`을 내지만, 그런 실행은 대개 실패한 실행이므로 `failure`는 실행 실패를 유지한다(3.2절). `rowsKey`는 데이터 줄 하나당 행 하나를 담는 결과 배열의 키, `rowLine`은 데이터 줄 가운데 행이 되는 줄의 패턴(없으면 모든 데이터 줄), `rowFields`는 행 객체가 가질 수 있는 필드 이름이다. `nulRecords`면 행이 줄바꿈 대신 NUL로 끝난다. `outputFlags`는 플래그 이름이나 `"이름=값"`을 키로 하는 출력 모양 표이며, 인자에 그 플래그가 있으면 값의 필드를 유효 계약에 덧씌운다(`find`의 `-print0`, `du`의 `-0`, `grep`의 `-Z`는 `nulRecords`, `wc`의 `--total=only`는 행 배열 없음).
 
-`src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드를 반영한 유효 계약을 돌려준다.
+`src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 출력 전체가 JSON 배열 문서이면(`gh pr list --json`) 행 수는 배열 원소 수다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드와 `outputFlags`를 반영한 유효 계약을 돌려준다.
 
 내장 파서의 계약은 `src/parsers/contracts.ts`에 있다. 허용 플래그는 실측으로 처리를 확인한 것만 둔다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)에는 형식 선언이 없다.
 
@@ -371,12 +375,14 @@ export interface ParserContract {
 | `ls -l` | `directory` | `-R`이나 피연산자 둘 이상의 구획 머리줄(`./sub:`). 파일 피연산자의 항목에는 없다 |
 | `stat` | `link_target`, `files[]` | 링크 대상. 파일이 여럿이면 최상위가 `files[]`이다 |
 | `du` | `modified_at` | `--time` |
-| `df` | `type`, `size`, `block_size` | `-T`의 종류. 1K가 아닌 블록 단위(`-m`, `-B1M`)의 크기는 `blocks_1k`가 아니라 `size`에 담고 단위는 결과의 `block_size` |
+| `df` | `type`, `size`, `block_size` | `-T`의 종류. `blocks_1k`는 1K 블록일 때만 있다. 단위 붙은 크기(`-h`, `-H`, `--si`)는 `size`에 값 그대로("547G"), 다른 블록 단위(`-m`, `-B1M`)는 `size`에 블록 수를 담고 단위는 결과의 `block_size` |
+| `dig` | `queries` | 쿼리가 여럿일 때 응답마다의 `query`, `query_type`, `answers`, `query_time_ms`, `server`. 맨 위 필드는 첫 응답이다. 루트 이름은 `"."`이고 루트를 가리키는 값(`0 .`)은 점을 지킨다 |
+| `wc` | `total` | `--total=only`의 합계. 이때는 `entries`가 없다 |
 | `ps` | `depth` | `f`, `--forest` 트리의 깊이(루트 0) |
 | `curl -I` | `header_values`, `history` | 반복 헤더의 값 목록(`headers`에는 `, `로 이은 값), `-L`로 따라간 앞선 응답 |
 | `grep` | `byte_offset`, `context` | `-b`의 오프셋, `-A/-B/-C` 문맥 줄 표시(문맥 줄 옵션은 `-n`이 있어야 받는다) |
 | `git status` | `renamed`, `ignored`, `unmerged`, `detached`, `detached_at` | 이름 바꾸기 `{old, new}`(staged에는 새 경로), `--ignored` 대상, 충돌 항목, detached HEAD(`branch`는 `HEAD`) |
-| `git log` | `refs` | `--decorate` 참조 |
+| `git log` | `refs`, `author`, `date` | `--decorate` 참조, `--format=%h%x09%an%x09%aI%x09%s`의 작성자와 작성 시각(ISO 8601) |
 | `git diff` | `files[].status`, `old_path`, `binary` | 변경 종류(`modified`, `added`, `deleted`, `renamed`, `copied`), 이름 바꾸기 전 경로, 바이너리 변경 |
 | `git branch` | `detached`, `points_to`, `worktree` | detached HEAD 항목, `origin/HEAD -> origin/main`의 대상, 다른 작업 트리에서 쓰는 브랜치 |
 | `apt search` | `description` | 패키지 줄 아래 설명 |

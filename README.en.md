@@ -157,7 +157,7 @@ The agent receives the block reason in the same envelope structure as any other 
 | Filesystem | `find` | `paths[]`: list of paths | O |
 | Filesystem | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps. `files[]` for several files | O |
 | Filesystem | `du` | `entries[]`: size, path, `modified_at` (`--time`) | O |
-| Filesystem | `df` | `filesystems[]`: partition, `type` (`-T`), size, usage, mount point. Block units other than 1K use `size` and `block_size` | O |
+| Filesystem | `df` | `filesystems[]`: partition, `type` (`-T`), size, usage, mount point. 1K blocks use `blocks_1k`, sizes with units (`-h`) use `size`, other block units use `size` and `block_size` | O |
 | Filesystem | `tree` | `root`, `tree{}`: hierarchical node map, `total_files`, `total_dirs` | O |
 | Process | `ps aux` | `processes[]`: PID, CPU%, MEM%, command, `depth` (tree output) | O |
 | Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
@@ -166,12 +166,12 @@ The agent receives the block reason in the same envelope structure as any other 
 | Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
 | Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state | O |
 | Network | `ss` | `connections[]`: netid, state, recv/send queue, local/peer address and port | O |
-| Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms` | O |
+| Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms`. Several queries add `queries[]`, one per response | O |
 | Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`) | O |
-| Text | `wc` | `entries[]`: count, filename | O |
+| Text | `wc` | `entries[]`: count, filename. `--total=only` gives `total` | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
 | Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (`--decorate`) | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (`--decorate`), `author`, `date` (`--format=%h%x09%an%x09%aI%x09%s`) | O |
 | Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
 | Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
@@ -201,6 +201,8 @@ Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "
 
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
+> When the command failed, or stdout is empty and only stderr has text, `result.failure` keeps the execution failure (`kind: "exec"` with the stderr text) and the parse error stays only in `stdout.parse_error`.
+>
 > `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error`; it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
 
 ### Accepted Formats and Alternative Args
@@ -214,7 +216,9 @@ When other args give the same information in a handled format, `result.failure.h
 | `uname -r` | `["-a"]` |
 | `ls -lh` | `["-l"]` |
 | `git status -s` | `["status"]` |
+| `git status -s --ignored` | `["status", "--ignored"]` |
 | `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
 | `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
 | `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
 | `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |

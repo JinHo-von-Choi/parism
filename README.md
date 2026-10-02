@@ -174,7 +174,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 파일시스템 | `find` | `paths[]`: 경로 목록 | O |
 | 파일시스템 | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프. 파일이 여럿이면 `files[]` | O |
 | 파일시스템 | `du` | `entries[]`: 크기, 경로, `modified_at`(`--time`) | O |
-| 파일시스템 | `df` | `filesystems[]`: 파티션, `type`(`-T`), 크기, 사용량, 마운트 위치. 1K가 아닌 블록 단위는 `size`와 `block_size` | O |
+| 파일시스템 | `df` | `filesystems[]`: 파티션, `type`(`-T`), 크기, 사용량, 마운트 위치. 1K 블록은 `blocks_1k`, 단위 붙은 크기(`-h`)는 `size`, 다른 블록 단위는 `size`와 `block_size` | O |
 | 파일시스템 | `tree` | `root`, `tree{}`: 계층 구조 노드, `total_files`, `total_dirs` | O |
 | 프로세스 | `ps aux` | `processes[]`: PID, CPU%, MEM%, 명령어, `depth`(트리 출력) | O |
 | 프로세스 | `kill` | raw pass-through (기본 차단, prism.config.json에서 명시적 허용 시 사용) | X |
@@ -183,12 +183,12 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 네트워크 | `netstat` | `connections[]`: proto, local/foreign address, state | O |
 | 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 | O |
 | 네트워크 | `ss` | `connections[]`: netid, 상태, 수신/발신 큐, 로컬/피어 주소와 포트 | O |
-| 네트워크 | `dig` | `query`, `query_type`(QUESTION 섹션이 없으면 빈 문자열), `answers[]`: 타입, 값, TTL, `query_time_ms` | O |
+| 네트워크 | `dig` | `query`, `query_type`(QUESTION 섹션이 없으면 빈 문자열), `answers[]`: 타입, 값, TTL, `query_time_ms`. 쿼리가 여럿이면 `queries[]`에 응답마다 | O |
 | 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트, `byte_offset`(`-b`), `context`(`-A/-B/-C`의 문맥 줄) | O |
-| 텍스트 | `wc` | `entries[]`: count, 파일명 | O |
+| 텍스트 | `wc` | `entries[]`: count, 파일명. `--total=only`는 `total` | O |
 | 텍스트 | `head`, `tail`, `cat` | `lines[]` | O |
 | Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]`(`--decorate`) | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]`(`--decorate`), `author`, `date`(`--format=%h%x09%an%x09%aI%x09%s`) | O |
 | Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
 | Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]`: 상태, 재시도, 이벤트 사유/메시지 | O |
@@ -218,6 +218,8 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
+> 실행이 실패했거나 stdout 없이 stderr만 있으면 `result.failure`는 실행 실패(`kind: "exec"`, stderr를 담은 메시지)를 유지하고 파싱 오류는 `stdout.parse_error`에만 남는다.
+>
 > `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"`, `"unsupported_format"`, `"unrecognized_output"` 네 값을 가진다. `unsupported_format` 은 파서가 해당 인자의 출력 형식을 지원하지 않을 때, `unrecognized_output` 은 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못했을 때 반환된다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
 
 ### 허용 형식과 대체 인자 안내
@@ -231,7 +233,9 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | `uname -r` | `["-a"]` |
 | `ls -lh` | `["-l"]` |
 | `git status -s` | `["status"]` |
+| `git status -s --ignored` | `["status", "--ignored"]` |
 | `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
 | `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
 | `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
 | `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
