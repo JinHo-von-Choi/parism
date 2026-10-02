@@ -146,7 +146,7 @@ describe("내장 파서 허용 형식", () => {
     ["systemctl", ["list-units", "--all", "--plain"]], ["systemctl", ["list-units", "--all"]], ["systemctl", ["list-units", "--state=inactive"]],
     ["systemctl", ["list-units", "--no-legend"]], ["journalctl", ["-n", "20"]], ["journalctl", ["-o", "short-iso", "--no-hostname"]], ["journalctl", ["-o", "short-full", "-n", "5"]], ["systemctl", ["--user", "list-units", "--state=running"]],
     ["journalctl", ["-o", "short-iso", "-n", "20"]], ["apt", ["list", "--installed"]], ["apt", ["list"]], ["apt", ["list", "-a", "bash"]], ["apt", ["search", "--names-only", "x"]], ["apt", ["search", "x"]], ["npm", ["ls"]], ["npm", ["ls", "--depth=0"]], ["npm", ["ls", "--all"]], ["npm", ["ls", "--depth=2", "--omit=dev"]], ["npm", ["ls", "zod"]],
-    ["docker", ["ps", "-a"]], ["docker", ["stats", "--no-stream"]], ["docker", ["stats", "--no-stream", "--no-trunc"]], ["gh", ["pr", "list", "--json", "number,title"]], ["kubectl", ["get", "pods", "-o", "wide"]], ["helm", ["list"]],
+    ["docker", ["ps", "-a"]], ["docker", ["stats", "--no-stream"]], ["docker", ["stats", "--no-stream", "--no-trunc"]], ["gh", ["pr", "list", "--json", "number,title"]], ["kubectl", ["get", "pods", "-o", "wide"]], ["helm", ["list"]], ["cargo", ["tree", "--offline", "--prefix", "none"]], ["cargo", ["tree", "-p", "dep-a", "--depth", "1"]],
     ["git", ["status"]], ["git", ["--no-pager", "log", "--oneline", "-5"]], ["git", ["log", "--format=%h %s"]], ["git", ["branch", "-vv"]],
     ["git", ["diff", "--cached"]], ["git", ["status", "--ignored"]], ["git", ["log", "--oneline", "--decorate"]], ["git", ["branch", "-av"]],
     ["git", ["diff", "--diff-filter=A"]], ["git", ["diff", "-M"]], ["head", ["-n", "5", "f"]], ["cat", ["-A", "f"]],
@@ -169,7 +169,7 @@ describe("내장 파서 허용 형식", () => {
     ["journalctl", ["-o", "json"]], ["journalctl", ["-o", "cat", "-n", "5"]],
     ["apt", ["show", "x"]], ["npm", ["ls", "--json"]], 
     ["docker", ["ps", "-q"]], ["docker", ["ps", "--format", "json"]],  ["docker", ["images"]],
-    ["gh", ["issue", "list"]], ["kubectl", ["get", "pods", "-o", "json"]], ["kubectl", ["get", "pods", "-A"]], ["cargo", ["tree"]],
+    ["gh", ["issue", "list"]], ["kubectl", ["get", "pods", "-o", "json"]], ["kubectl", ["get", "pods", "-A"]], ["cargo", ["--version"]], ["cargo", ["tree", "--prefix", "depth"]],
     ["git", ["status", "-s"]], ["git", ["log"]],
     ["git", ["log", "--oneline", "--graph"]], ["git", ["branch"]], ["git", ["diff", "--stat"]], ["git", ["show"]],
   ])("%s %j 는 unsupported_format", (cmd, args) => {

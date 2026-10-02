@@ -82,6 +82,43 @@ describe("parseNpm()", () => {
   });
 });
 
+describe("parseCargo() 표시와 깊이", () => {
+  type Crates = { crates: Array<{ name: string; version: string; depth?: number; path?: string; source?: string; deduped?: true; proc_macro?: true }> };
+
+  it("(*)는 deduped, (proc-macro)는 proc_macro, 경로는 path로 담고 깊이를 센다", () => {
+    const raw = [
+      "root-crate v0.2.0 (/w/root-crate)",
+      "├── dep-a v1.2.3 (/w/dep-a)",
+      "│   └── dep-macro v0.1.0 (proc-macro) (/w/dep-macro)",
+      "└── dep-b v0.0.9 (/w/dep-b)",
+      "    └── dep-a v1.2.3 (/w/dep-a) (*)",
+    ].join("\n");
+    const r = parseCargo("cargo", ["tree", "--offline"], raw) as Crates;
+    expect(r.crates.map(c => [c.name, c.depth])).toEqual([["root-crate", 0], ["dep-a", 1], ["dep-macro", 2], ["dep-b", 1], ["dep-a", 2]]);
+    expect(r.crates[2]).toMatchObject({ proc_macro: true, path: "/w/dep-macro" });
+    expect(r.crates[4]).toMatchObject({ deduped: true, path: "/w/dep-a" });
+    expect(r.crates[1]!.proc_macro).toBeUndefined();
+  });
+
+  it("레지스트리 크레이트의 (*)를 경로로 읽지 않는다", () => {
+    const r = parseCargo("cargo", ["tree"], "app v1.0.0 (/w/app)\n├── serde v1.0.0\n└── syn v2.0.1 (*)\n") as Crates;
+    expect(r.crates[2]).toEqual({ name: "syn", version: "v2.0.1", depth: 1, deduped: true });
+  });
+
+  it("git 소스는 source로 담는다", () => {
+    const r = parseCargo("cargo", ["tree"], "app v1.0.0 (/w/app)\n└── dep v0.1.0 (https://github.com/o/dep?branch=main#abc123)\n") as Crates;
+    expect(r.crates[1]).toMatchObject({ source: "https://github.com/o/dep?branch=main#abc123" });
+    expect(r.crates[1]!.path).toBeUndefined();
+  });
+
+  it("--prefix none은 깊이를 담지 않고 ASCII 트리도 읽는다", () => {
+    const flat = parseCargo("cargo", ["tree", "--prefix", "none"], "root v1.0.0 (/w)\ndep-a v1.2.3 (/d)\n") as Crates;
+    expect(flat.crates.map(c => c.depth)).toEqual([undefined, undefined]);
+    const ascii = parseCargo("cargo", ["tree", "--charset", "ascii"], "root v1.0.0 (/w)\n|-- a v1.0.0\n|   `-- b v1.0.0\n`-- c v1.0.0\n") as Crates;
+    expect(ascii.crates.map(c => [c.name, c.depth])).toEqual([["root", 0], ["a", 1], ["b", 2], ["c", 1]]);
+  });
+});
+
 describe("parseCargo()", () => {
   const raw = [
     "myproject v0.1.0 (/path/to/project)",

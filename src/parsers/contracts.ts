@@ -254,7 +254,16 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     hint:        npmHint,
     rowsKey: "dependencies", rowLine: /^(?:[│| ] )*[├└+`][─-][─┬-] /, rowFields: ["name", "version", "depth", "deduped", "problem"],
   },
-  cargo: { subcommands: {} },
+  cargo: {
+    subcommands: {
+      tree: {
+        acceptedFlags:  { ...bools("--offline", "--no-dedupe", "--duplicates", "-d"), ...values("--prefix", "--charset", "--depth", "-p", "--package") },
+        acceptedValues: { "--prefix": /^(none|indent)$/, "--charset": /^(utf8|ascii)$/, "--depth": /^\d+$/ },
+        rowsKey: "crates", rowLine: /^(?:(?:│|\|)\s{3}|\s{4})*(?:(?:├|└)──\s|(?:\||`)--\s)?\S+ v\d/,
+        rowFields: ["name", "version", "path", "source", "depth", "deduped", "proc_macro"],
+      },
+    },
+  },
   git: {
     leadingFlags: { ...bools("--no-pager"), ...values("-C", "-c", "--git-dir", "--work-tree", "--namespace") },
     subcommands:  {
