@@ -185,6 +185,19 @@ describe("parseSystemctl()", () => {
     expect(result.units[2].failed).toBe(true);
   });
 
+  it("JOB 열이 있으면 job과 description을 열 위치로 분리한다", () => {
+    const withJob = [
+      "  UNIT             LOAD   ACTIVE   SUB     JOB   DESCRIPTION",
+      "  cron.service     loaded active   running       Regular background program",
+      "  apt-daily.timer  loaded inactive dead    start Daily apt download activities",
+    ].join("\n");
+    const result = parseSystemctl("systemctl", ["list-units"], withJob) as { units: Array<{ name: string; sub: string; job?: string; description: string }> };
+    expect(result.units).toHaveLength(2);
+    expect(result.units[0]).toMatchObject({ name: "cron.service", sub: "running", description: "Regular background program" });
+    expect(result.units[0].job).toBeUndefined();
+    expect(result.units[1]).toMatchObject({ name: "apt-daily.timer", job: "start", description: "Daily apt download activities" });
+  });
+
   it("헤더 없으면 { lines } 폴백", () => {
     const result = parseSystemctl("systemctl", [], "line1\nline2") as { lines: string[] };
     expect(result.lines).toEqual(["line1", "line2"]);

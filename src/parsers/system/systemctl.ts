@@ -14,6 +14,7 @@ export interface SystemctlUnit {
   active:       string;
   sub:          string;
   description:  string;
+  job?:         string;
   failed?:      boolean;
 }
 
@@ -21,11 +22,12 @@ export interface SystemctlResult {
   units: SystemctlUnit[];
 }
 
-const HEADER_PATTERN = /^\s*UNIT\s+LOAD\s+ACTIVE\s+SUB\s+DESCRIPTION\s*$/i;
+const HEADER_PATTERN = /^\s*UNIT\s+LOAD\s+ACTIVE\s+SUB\s+(?:JOB\s+)?DESCRIPTION\s*$/i;
 
 /**
  * systemctl list-units 출력을 파싱한다.
- * 헤더(UNIT LOAD ACTIVE SUB DESCRIPTION) 다음 행부터 유닛 정보 추출.
+ * 헤더(UNIT LOAD ACTIVE SUB [JOB] DESCRIPTION) 다음 행부터 유닛 정보 추출.
+ * 대기 중인 작업이 있으면 systemctl이 JOB 열을 추가하므로, 그때는 헤더 열 위치로 JOB과 DESCRIPTION을 자른다.
  */
 export function parseSystemctl(
   _cmd: string,
@@ -40,6 +42,10 @@ export function parseSystemctl(
   const headerIdx = allLines.findIndex(l => HEADER_PATTERN.test(l));
   if (headerIdx < 0) return { lines };
 
+  const header  = allLines[headerIdx]!;
+  const jobCol  = header.search(/\bJOB\b/);
+  const descCol = header.search(/\bDESCRIPTION\b/);
+
   /** 유닛 이름은 공백을 이스케이프하므로 앞 4열은 공백 1개 이상으로 구분된다. 첫 빈 줄 뒤는 범례다. */
   const units: SystemctlUnit[] = [];
   for (const line of allLines.slice(headerIdx + 1)) {
@@ -52,12 +58,16 @@ export function parseSystemctl(
     const m = content.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/);
     if (!m) continue;
 
+    const job         = jobCol >= 0 ? line.slice(jobCol, descCol).trim() : "";
+    const description = jobCol >= 0 ? line.slice(descCol).trim() : (m[5] ?? "").trim();
+
     units.push({
       name:        m[1]!,
       load:        m[2]!,
       active:      m[3]!,
       sub:         m[4]!,
-      description: (m[5] ?? "").trim(),
+      description,
+      job:         job || undefined,
       failed:      failed || undefined,
     });
   }

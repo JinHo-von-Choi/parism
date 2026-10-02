@@ -38,7 +38,7 @@ describe("execute()", () => {
   });
 
   it("cwd가 응답에 포함된다", async () => {
-    const result = await execute("pwd", [], "/tmp");
+    const result = await execute("pwd", [], "/tmp", [], 10000, 0, false);
 
     expect(result.cwd).toBe("/tmp");
     expect(result.stdout.raw.trim()).toBe("/tmp");
