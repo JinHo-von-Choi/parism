@@ -267,3 +267,36 @@ describe("adaptive_format_threshold", () => {
     expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
   });
 });
+
+describe("ParismEngine.runPaged() 실행 결과 재사용", () => {
+  const makeDir = (n: number): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-pg-"));
+    for (let i = 0; i < n; i++) writeFileSync(path.join(dir, `f${i}`), "x");
+    return dir;
+  };
+  const engineFor = (dir: string) => new ParismEngine(
+    { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [dir] } },
+    createRegistry(),
+  );
+
+  it("page 0 은 항상 실행하고 page 1 은 저장된 결과를 재사용한다", async () => {
+    const dir    = makeDir(4);
+    const engine = engineFor(dir);
+    const first  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 2 });
+    writeFileSync(path.join(dir, "late"), "x");
+    const second = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 2 });
+    expect(first.page_info?.cache?.hit).toBe(false);
+    expect(second.page_info?.cache?.hit).toBe(true);
+    expect(second.page_info?.total_lines).toBe(first.page_info?.total_lines);
+  });
+
+  it("page 0 을 다시 요청하면 새로 실행한다", async () => {
+    const dir    = makeDir(2);
+    const engine = engineFor(dir);
+    await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 10 });
+    writeFileSync(path.join(dir, "late"), "x");
+    const again  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 10 });
+    expect(again.page_info?.cache?.hit).toBe(false);
+    expect(again.page_info?.total_lines).toBe(3);
+  });
+});

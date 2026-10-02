@@ -48,6 +48,7 @@ export interface PageInfo {
   page_size:   number;   // 페이지당 줄 수
   total_lines: number;   // stdout 전체 줄 수
   has_next:    boolean;  // 다음 페이지 존재 여부
+  cache?:      { hit: boolean; age_ms: number }; // run_paged 가 저장된 실행 결과를 재사용했는지
 }
 
 /**

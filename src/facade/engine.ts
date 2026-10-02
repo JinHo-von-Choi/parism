@@ -6,6 +6,7 @@
  * 작성일: 2026-04-15
  */
 
+import { realpathSync }                                                             from "node:fs";
 import path                                                                         from "node:path";
 import { loadConfig, loadConfigMultiLayer } from "../config/loader.js";
 import type { PrismConfig }                                                         from "../config/loader.js";
@@ -16,6 +17,7 @@ import type { ResponseEnvelope }                                                
 import { execute }                                                                  from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
 import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
+import { PageCache }                                                                from "../engine/page-cache.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
@@ -72,7 +74,12 @@ function buildGuardErrorEnvelope(
   return envelope;
 }
 
+const PAGE_CACHE_TTL_MS      = 30_000;
+const PAGE_CACHE_MAX_ENTRIES = 16;
+
 export class ParismEngine {
+  private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES);
+
   constructor(
     private readonly config:   PrismConfig,
     private readonly registry: ParserRegistry,
@@ -255,15 +262,27 @@ export class ParismEngine {
     // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
     // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
     // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
-    const executed               = await execute(
-      cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
-      this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
-      this.config.guard.timeout_ms,
-      0,
-      includeDiff,
-    );
-    const envelope               = { ...executed, args };
+    const cacheKey = JSON.stringify([cmd, args, resolveRealCwd(cwd)]);
+    const cached   = page > 0 ? this.pageCache.get(cacheKey) : undefined;
+    let envelope: ResponseEnvelope;
+    let cacheInfo: { hit: boolean; age_ms: number };
+    if (cached) {
+      envelope  = cached.envelope;
+      cacheInfo = { hit: true, age_ms: Date.now() - cached.createdAt };
+    } else {
+      const executed = await execute(
+        cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
+        this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
+        this.config.guard.timeout_ms,
+        0,
+        includeDiff,
+      );
+      envelope  = { ...executed, args };
+      this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
+      cacheInfo = { hit: false, age_ms: 0 };
+    }
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
+    page_info.cache              = cacheInfo;
     const pagedRaw               = lines.join("\n") + (lines.length > 0 ? "\n" : "");
     let   enriched               = {
       ...envelope,
@@ -281,6 +300,15 @@ export class ParismEngine {
     }
 
     return enriched as ResponseEnvelope;
+  }
+}
+
+/** 캐시 키용 실경로. 해석에 실패하면 절대 경로로 대체한다. */
+function resolveRealCwd(cwd: string): string {
+  try {
+    return realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
   }
 }
 
