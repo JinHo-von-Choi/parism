@@ -124,6 +124,36 @@ export function tokenizeArgs(
   return out;
 }
 
+/**
+ * 플래그 표가 없는 인자 배열을 분해한다. 어느 플래그가 값을 받는지 모르므로 가능한 해석을 모두 남긴다.
+ * 대시로 시작하지 않는 인자는 위치 인자, --x=value는 값이 붙은 플래그다.
+ * 짧은 플래그 묶음(-abVALUE)은 플래그 글자로 볼 수 있는 각 문자(영숫자)마다 그 뒤 나머지를 값으로 가진 플래그를 낸다.
+ * `-`와 `--`는 버린다.
+ */
+export function tokenizePolicyless(args: string[]): ParsedArg[] {
+  const out: ParsedArg[] = [];
+  for (const arg of args) {
+    if (arg === "-" || arg === "--") continue;
+    if (!arg.startsWith("-")) {
+      out.push({ kind: "positional", name: arg });
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
+      out.push(eq >= 0 ? { kind: "flag", name: arg.slice(0, eq), value: arg.slice(eq + 1) } : { kind: "flag", name: arg });
+      continue;
+    }
+    if (arg.length === 2) {
+      out.push({ kind: "flag", name: arg });
+      continue;
+    }
+    for (let j = 2; j < arg.length && /[A-Za-z0-9]/.test(arg[j - 1]!); j++) {
+      out.push({ kind: "flag", name: "-" + arg[j - 1], value: arg.slice(j) });
+    }
+  }
+  return out;
+}
+
 /** 플래그 종류 조회. 객체 프로토타입 키는 플래그로 보지 않는다. */
 export function flagKind(flags: Record<string, FlagKind>, name: string): FlagKind | undefined {
   return Object.hasOwn(flags, name) ? flags[name] : undefined;

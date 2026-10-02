@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, symlinkSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, symlinkSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { tokenizeArgs, buildExecArgs, resolvePolicies, policySource, DEFAULT_POLICIES, BUILD_PROFILE_POLICIES } from "../../src/engine/policy.js";
-import { checkGuard, GuardError } from "../../src/engine/guard.js";
+import { tokenizeArgs, tokenizePolicyless, buildExecArgs, resolvePolicies, policySource, DEFAULT_POLICIES, BUILD_PROFILE_POLICIES } from "../../src/engine/policy.js";
+import { checkGuard, collectPathCandidates, GuardError } from "../../src/engine/guard.js";
 import { DEFAULT_CONFIG } from "../../src/config/loader.js";
 
 const root = mkdtempSync(path.join(tmpdir(), "parism-guard-"));
@@ -450,5 +450,74 @@ describe("정책 없는 명령의 경로 검사", () => {
       expect(reason(() => checkGuard("date", a, base, c))).toBe("pass");
     }
     expect(reason(() => checkGuard("echo", ["hello", "a/b"], base, c))).toBe("pass");
+  });
+});
+
+describe("정책 명령의 경로 후보", () => {
+  const base    = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-cand-")));
+  const outside = mkdtempSync(path.join(tmpdir(), "parism-cand-out-"));
+  const c       = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [base] } };
+  symlinkSync(outside, path.join(base, "ext"));
+  symlinkSync(outside, path.join(base, "list"));
+  mkdirSync(path.join(base, "sub"));
+  symlinkSync(path.join(base, "sub"), path.join(base, "near"));
+
+  const cases: [string, string[]][] = [
+    ["systemctl", ["status", "unit/../../x"]],
+    ["systemctl", ["status", "ext"]],
+    ["apt",       ["show", "pkg/../../x"]],
+    ["apt",       ["show", "ext"]],
+    ["gh",        ["pr", "view", "a/../../x"]],
+    ["gh",        ["pr", "view", "ext"]],
+  ];
+
+  for (const [cmd, args] of cases) {
+    it(`${cmd} ${args.join(" ")}: 허용 경로 밖으로 해석되는 위치 인자는 차단한다`, () => {
+      expect(reason(() => checkGuard(cmd, args, base, c))).toBe("path_not_allowed");
+    });
+  }
+
+  it("정책 명령의 값 플래그도 허용 경로 밖으로 해석되면 차단한다", () => {
+    expect(reason(() => checkGuard("gh", ["pr", "list", "-R", "a/../../x"], base, c))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("systemctl", ["show", "--property=ext"], base, c))).toBe("path_not_allowed");
+  });
+
+  it("허용 경로 안을 가리키는 이름과 경로가 아닌 값은 통과한다", () => {
+    expect(reason(() => checkGuard("systemctl", ["status", "nginx", "--no-pager"], base, c))).toBe("pass");
+    expect(reason(() => checkGuard("systemctl", ["status", "near"], base, c))).toBe("pass");
+    expect(reason(() => checkGuard("apt", ["show", "sub/x"], base, c))).toBe("pass");
+    expect(reason(() => checkGuard("gh", ["pr", "list", "-R", "owner/repo"], base, c))).toBe("pass");
+  });
+
+  it("하위 동사 자리의 인자는 경로 후보가 아니다", () => {
+    expect(reason(() => checkGuard("gh", ["pr", "list"], base, c))).toBe("pass");
+  });
+});
+
+describe("collectPathCandidates", () => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-collect-")));
+  writeFileSync(path.join(base, "present"), "x");
+  const policy = { flags: { "-f": "path" as const, "-n": "value" as const, "-q": "bool" as const }, positionals: "any" as const };
+
+  it("경로형이거나 존재하는 항목을 가리키는 위치 인자와 플래그 값을 모은다", () => {
+    const tokens = tokenizeArgs(["-n", "present", "word", "a/b", ".hidden", "~x", "-q"], policy.flags);
+    expect(collectPathCandidates(tokens, policy, base)).toEqual(["present", "a/b", ".hidden", "~x"]);
+  });
+
+  it("path 종류 플래그 값과 path 위치 인자는 형식과 관계없이 모은다", () => {
+    const tokens = tokenizeArgs(["-f", "word", "name"], policy.flags);
+    expect(collectPathCandidates(tokens, { ...policy, positionals: "path" }, base)).toEqual(["word", "name"]);
+  });
+
+  it("정책이 없으면 짧은 플래그 묶음의 각 글자 뒤 나머지를 값 후보로 본다", () => {
+    expect(collectPathCandidates(tokenizePolicyless(["-abc/x", "--k=./y", "plain", "-", "--"]), undefined, base))
+      .toEqual(["bc/x", "c/x", "/x", "./y"]);
+  });
+
+  it("stopAtPositional 이후 인자도 정책 없는 규칙으로 검사한다", () => {
+    const flags  = { "--version": "bool" as const };
+    const tokens = tokenizeArgs(["script.js", "--out=/x", "../y"], flags, false, { stopAtPositional: true });
+    expect(collectPathCandidates(tokens, { flags, positionals: "path", stopAtPositional: true }, base))
+      .toEqual(["script.js", "/x", "../y"]);
   });
 });
