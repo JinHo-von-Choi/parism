@@ -159,6 +159,12 @@ describe("ParismEngine.describe()", () => {
     expect(desc.guard_summary.policies.npm.subcommands).toContain("run");
     expect(desc.guard_summary.policies.env.flags).toEqual(["-0"]);
   });
+
+  it("기본 허용 명령 중 정책이 없는 명령은 없다", () => {
+    const desc    = engine.describe();
+    const missing = desc.allowed_commands.filter(c => !Object.hasOwn(desc.guard_summary.policies, c));
+    expect(missing).toEqual([]);
+  });
 });
 
 /* ─── dryRun() ─── */

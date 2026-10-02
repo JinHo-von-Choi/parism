@@ -180,10 +180,216 @@ const KUBECTL_OUTPUT_FORMATS = ["json", "yaml", "wide", "name", "jsonpath=", "js
 
 const COMMON_GIT_READ = ["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "describe", "shortlog", "tag", "remote"];
 
+/** 이름 목록을 bool 플래그 표로 만든다. */
+function bools(...names: string[]): Record<string, FlagKind> {
+  return Object.fromEntries(names.map(n => [n, "bool" as const]));
+}
+
+/** head, tail 공통 플래그. tail의 추적(-f, -F, --follow)은 끝나지 않으므로 넣지 않는다. */
+const HEAD_TAIL_FLAGS: Record<string, FlagKind> = {
+  ...bools("-q", "--quiet", "--silent", "-v", "--verbose", "-z", "--zero-terminated"),
+  "-n": "value", "--lines": "value", "-c": "value", "--bytes": "value",
+};
+
+/**
+ * 파일·시스템 조회 명령 정책.
+ * 출력 파일을 지정하는 옵션, 시스템 상태를 바꾸는 옵션과 위치 인자, 끝나지 않는 반복 실행 옵션,
+ * 재귀 중 심볼릭 링크를 따라가는 옵션(ls -L, du -L, tree -l, grep -R)은 넣지 않는다.
+ */
+const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
+  ls: {
+    flags: {
+      ...bools(
+        "-a", "-A", "-l", "-h", "-R", "-t", "-S", "-r", "-1", "-d", "-F", "-i", "-n", "-s", "-g", "-o", "-p",
+        "-c", "-u", "-U", "-X", "-v", "-x", "-C", "-m", "-Q", "-b", "-B", "-G", "-k", "-N", "-Z",
+        "--all", "--almost-all", "--human-readable", "--si", "--recursive", "--reverse", "--directory", "--classify",
+        "--inode", "--numeric-uid-gid", "--size", "--full-time", "--group-directories-first", "--no-group", "--author",
+        "--escape", "--literal", "--quote-name", "--ignore-backups", "--kibibytes", "--context", "--file-type",
+      ),
+      "--sort": "value", "--time": "value", "--time-style": "value", "--format": "value", "--color": "attached",
+      "--indicator-style": "value", "--quoting-style": "value", "--block-size": "value",
+      "-I": "value", "--ignore": "value", "--hide": "value", "-w": "value", "--width": "value",
+    },
+    positionals: "path",
+  },
+  stat: {
+    flags: {
+      ...bools("-L", "--dereference", "-f", "--file-system", "-t", "--terse"),
+      "-c": "value", "--format": "value", "--printf": "value",
+    },
+    positionals: "path",
+  },
+  du: {
+    flags: {
+      ...bools(
+        "-s", "-h", "-a", "-c", "-k", "-m", "-b", "-x", "-H", "-D", "-P", "-0", "-l", "-S",
+        "--summarize", "--human-readable", "--all", "--total", "--apparent-size", "--si", "--bytes",
+        "--one-file-system", "--count-links", "--separate-dirs", "--null", "--no-dereference", "--dereference-args", "--inodes",
+      ),
+      "-d": "value", "--max-depth": "value", "--exclude": "value", "-t": "value", "--threshold": "value",
+      "-B": "value", "--block-size": "value", "--time": "attached", "--time-style": "value",
+    },
+    positionals: "path",
+  },
+  df: {
+    flags: {
+      ...bools(
+        "-h", "-H", "-k", "-m", "-g", "-a", "-i", "-l", "-P", "-T",
+        "--total", "--si", "--human-readable", "--inodes", "--local", "--portability", "--print-type", "--all", "--no-sync",
+      ),
+      "-t": "value", "--type": "value", "-x": "value", "--exclude-type": "value",
+      "-B": "value", "--block-size": "value", "--output": "attached",
+    },
+    positionals: "path",
+  },
+  tree: {
+    flags: {
+      ...bools(
+        "-a", "-d", "-f", "-i", "-s", "-h", "-D", "-p", "-u", "-g", "-F", "-C", "-n", "-J", "-X", "-N", "-Q",
+        "-r", "-t", "-c", "-U", "-v", "-x", "-A", "-S", "-q",
+        "--dirsfirst", "--noreport", "--du", "--prune", "--si", "--inodes", "--device", "--gitignore", "--matchdirs", "--ignore-case",
+      ),
+      "-L": "value", "-I": "value", "-P": "value", "--charset": "value", "--filelimit": "value", "--sort": "attached", "--timefmt": "value",
+    },
+    positionals: "path",
+  },
+  ps: {
+    flags: {
+      ...bools("-e", "-A", "-a", "-d", "-N", "-f", "-F", "-l", "-j", "-H", "-w", "-x", "-y", "-L", "-T", "-M", "-Z",
+        "--forest", "--no-headers", "--headers", "--cumulative"),
+      "-o": "value", "-O": "value", "--format": "value", "-p": "value", "--pid": "value", "--ppid": "value",
+      "-u": "value", "-U": "value", "--user": "value", "-g": "value", "-G": "value", "-C": "value", "-t": "value", "--sort": "value",
+    },
+    positionals: "any",
+  },
+  ping: {
+    flags: {
+      ...bools("-q", "-n", "-4", "-6", "-D", "-O", "-v"),
+      "-c": "value", "-i": "value", "-W": "value", "-w": "value", "-s": "value", "-t": "value", "-I": "value",
+    },
+    positionals: "any",
+  },
+  netstat: {
+    flags: {
+      ...bools(
+        "-t", "-u", "-l", "-n", "-p", "-a", "-r", "-i", "-s", "-e", "-W", "-4", "-6", "-x", "-o", "-w", "-g", "-v",
+        "--tcp", "--udp", "--listening", "--numeric", "--programs", "--all", "--route", "--interfaces", "--statistics",
+        "--extend", "--wide", "--timers", "--raw", "--unix", "--groups", "--verbose",
+      ),
+      "-f": "value", "-A": "value", "--protocol": "value",
+    },
+    positionals: "none",
+  },
+  lsof: {
+    flags: {
+      ...bools("-n", "-P", "-t", "-a", "-l", "-R", "-U", "-w", "-V", "-b", "-N", "-X", "-h"),
+      "-i": "attached", "-s": "attached", "-F": "attached", "-g": "attached",
+      "-p": "value", "-u": "value", "-c": "value", "-d": "value",
+    },
+    positionals: "path",
+  },
+  ss: {
+    flags: {
+      ...bools(
+        "-t", "-u", "-l", "-n", "-p", "-a", "-x", "-w", "-4", "-6", "-s", "-e", "-m", "-i", "-o", "-H", "-r", "-0",
+        "-S", "-d", "-M", "-Z", "-z", "-b", "-O",
+        "--tcp", "--udp", "--listening", "--numeric", "--processes", "--all", "--unix", "--raw", "--ipv4", "--ipv6",
+        "--summary", "--extended", "--memory", "--info", "--options", "--no-header", "--resolve", "--packet", "--dccp",
+        "--sctp", "--mptcp", "--oneline", "--context", "--contexts", "--bpf",
+      ),
+      "-f": "value", "--family": "value", "-A": "value", "--query": "value",
+    },
+    positionals: "any",
+  },
+  dig: {
+    flags: {
+      ...bools("-4", "-6", "-m", "-u", "-r"),
+      "-x": "value", "-t": "value", "-c": "value", "-p": "value", "-q": "value", "-b": "value",
+    },
+    positionals: "any",
+  },
+  grep: {
+    flags: {
+      ...bools(
+        "-r", "-n", "-l", "-L", "-i", "-v", "-w", "-x", "-c", "-o", "-h", "-H", "-E", "-F", "-G", "-P", "-s", "-q", "-a",
+        "-I", "-z", "-Z", "-U", "-b", "-T", "-y",
+        "--recursive", "--line-number", "--files-with-matches", "--files-without-match", "--ignore-case", "--no-ignore-case",
+        "--invert-match", "--word-regexp", "--line-regexp", "--count", "--only-matching", "--no-filename", "--with-filename",
+        "--extended-regexp", "--fixed-strings", "--basic-regexp", "--perl-regexp", "--no-messages", "--quiet", "--silent",
+        "--text", "--null", "--null-data", "--binary", "--byte-offset", "--initial-tab", "--line-buffered",
+      ),
+      "-e": "value", "--regexp": "value", "-f": "path", "--file": "path", "-m": "value", "--max-count": "value",
+      "-A": "value", "--after-context": "value", "-B": "value", "--before-context": "value", "-C": "value", "--context": "value",
+      "--include": "value", "--exclude": "value", "--exclude-dir": "value", "--color": "attached", "--colour": "attached",
+      "--binary-files": "value", "--label": "value", "-d": "value", "--directories": "value", "-D": "value", "--devices": "value",
+    },
+    positionals: "any",
+    numericFlag: true,
+  },
+  wc: {
+    flags: {
+      ...bools("-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"),
+      "--total": "attached",
+    },
+    positionals: "path",
+  },
+  head: { flags: HEAD_TAIL_FLAGS, positionals: "path", numericFlag: true },
+  tail: { flags: HEAD_TAIL_FLAGS, positionals: "path", numericFlag: true },
+  cat: {
+    flags: bools(
+      "-n", "-b", "-A", "-E", "-T", "-v", "-s", "-e", "-t", "-u",
+      "--number", "--number-nonblank", "--show-all", "--show-ends", "--show-tabs", "--squeeze-blank", "--show-nonprinting",
+    ),
+    positionals: "path",
+  },
+  pwd:   { flags: bools("-L", "-P"), positionals: "none" },
+  which: { flags: bools("-a", "-s"), positionals: "any" },
+  echo:  { flags: bools("-n", "-e", "-E"), positionals: "any" },
+  date: {
+    flags: {
+      ...bools("-u", "--utc", "--universal", "-R", "--rfc-email", "--debug"),
+      "-I": "attached", "--iso-8601": "attached", "--rfc-3339": "attached",
+      "-d": "value", "--date": "value", "-r": "path", "--reference": "path",
+    },
+    positionals: "none",
+  },
+  uname: {
+    flags: bools(
+      "-a", "-s", "-n", "-r", "-v", "-m", "-p", "-i", "-o",
+      "--all", "--kernel-name", "--nodename", "--kernel-release", "--kernel-version", "--machine", "--processor",
+      "--hardware-platform", "--operating-system",
+    ),
+    positionals: "none",
+  },
+  hostname: {
+    flags: bools(
+      "-s", "-f", "-d", "-i", "-I", "-A", "-a",
+      "--short", "--fqdn", "--long", "--domain", "--ip-address", "--all-ip-addresses", "--all-fqdns", "--alias",
+    ),
+    positionals: "none",
+  },
+  free: {
+    flags: bools(
+      "-b", "-k", "-m", "-g", "-h", "-w", "-t", "-l", "-v",
+      "--bytes", "--kilo", "--mega", "--giga", "--tera", "--peta", "--kibi", "--mebi", "--gibi", "--tebi", "--pebi",
+      "--human", "--si", "--total", "--wide", "--lohi", "--committed", "--line",
+    ),
+    positionals: "none",
+  },
+  id: {
+    flags: bools(
+      "-u", "-g", "-G", "-n", "-r", "-a", "-z", "-Z",
+      "--user", "--group", "--groups", "--name", "--real", "--zero", "--context",
+    ),
+    positionals: "any",
+  },
+};
+
 /**
  * 기본 정책. 읽기 전용 용도에 필요한 최소 범위만 허용한다.
  */
 export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
+  ...READ_COMMAND_POLICIES,
   env: { flags: {}, positionals: "none" },
   git: {
     subcommands: COMMON_GIT_READ,
