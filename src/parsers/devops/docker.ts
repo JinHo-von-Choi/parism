@@ -69,7 +69,7 @@ function parseDockerStats(raw: string): { resource: "stats"; stats: DockerStatsE
       mem_perc:     cols[4] ?? "",
       net_io:       cols[5] ?? "",
       block_io:     cols[6] ?? "",
-      pids:         cols[7] ? (parseInt(cols[7], 10) || null) : null,
+      pids:         cols[7] !== undefined && /^\d+$/.test(cols[7]) ? parseInt(cols[7], 10) : null,
     });
   }
 

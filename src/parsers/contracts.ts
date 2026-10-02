@@ -28,6 +28,7 @@ const PS_FIELDS      = ["user", "pid", "cpu", "mem", "vsz", "rss", "tty", "stat"
 const SS_FIELDS      = ["netid", "state", "recv_q", "send_q", "local_address", "local_port", "peer_address", "peer_port"] as const;
 const LSOF_FIELDS    = ["command", "pid", "user", "fd", "type", "device", "name", "state"] as const;
 const DOCKER_PS      = ["container_id", "image", "command", "created", "status", "ports", "names"] as const;
+const DOCKER_STATS   = ["container_id", "name", "cpu_perc", "mem_usage", "mem_limit", "mem_perc", "net_io", "block_io", "pids"] as const;
 const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "failed"] as const;
 
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
@@ -167,7 +168,8 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   pwd:   { acceptedFlags: bools("-L", "-P"), acceptedPositionals: { max: 0 } },
   which: { acceptedFlags: bools("-a", "-s"), rowsKey: "paths" },
   free: {
-    acceptedFlags:       bools("-b", "-k", "-m", "-g", "-t", "-l", "-v", "--bytes", "--kibi", "--mebi", "--gibi", "--total", "--lohi", "--committed"),
+    acceptedFlags:       bools("-b", "-k", "-m", "-g", "-h", "-t", "-l", "-v", "--bytes", "--kibi", "--mebi", "--gibi", "--kilo", "--mega", "--giga", "--si",
+      "--human", "--total", "--lohi", "--committed"),
     acceptedPositionals: { max: 0 },
     hint:                freeHint,
   },
@@ -217,6 +219,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         acceptedPositionals: { max: 0 },
         hint:                dockerPsHint,
         rowsKey: "containers", rowFields: DOCKER_PS,
+      },
+      stats: {
+        acceptedFlags:       bools("--no-stream", "--no-trunc", "-a", "--all"),
+        requiredFlags:       ["--no-stream"],
+        rowsKey: "stats", rowFields: DOCKER_STATS,
       },
     },
     headerLines: 1,

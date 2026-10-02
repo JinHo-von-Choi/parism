@@ -143,6 +143,15 @@ describe("parseDocker()", () => {
     expect(result.stats[0]?.pids).toBe(12);
   });
 
+  it("docker stats pids 0은 값 0이다(null이 아니다)", () => {
+    const raw = [
+      "CONTAINER ID   NAME   CPU %   MEM USAGE / LIMIT   MEM %   NET I/O   BLOCK I/O   PIDS",
+      "abc123         web    0.00%   0B / 0B             0.00%   0B / 0B   0B / 0B     0",
+    ].join("\n");
+    const result = parseDocker("docker", ["stats", "--no-stream"], raw) as { stats: Array<{ pids: number | null }> };
+    expect(result.stats[0]?.pids).toBe(0);
+  });
+
   it("docker stats pids 컬럼 없을 때 null", () => {
     const raw = [
       "CONTAINER ID   NAME   CPU %   MEM USAGE / LIMIT   MEM %   NET I/O   BLOCK I/O",

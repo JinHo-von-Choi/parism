@@ -10,12 +10,39 @@ import { parseBrew }       from "../../src/parsers/system/brew.js";
 import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("free 단위 처리 범위", () => {
-  it("10진 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
+  it("테라 이상 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
     const registry = createRegistry();
-    for (const flag of ["--kilo", "--mega", "--giga"]) expect(registry.parse("free", [flag], "").parse_error?.reason).toBe("unsupported_format");
+    for (const flag of ["--tera", "--peta", "--tebi", "--pebi"]) expect(registry.parse("free", [flag], "").parse_error?.reason).toBe("unsupported_format");
     const raw = "              total        used        free      shared  buff/cache   available\nMem:             10           4           6           0           0           6\n";
     expect(parseFree("free", ["--mebi"], raw)).toMatchObject({ unit: "MB", mem: { total_bytes: 10 * 1024 ** 2 } });
     expect(parseFree("free", [], raw)).toMatchObject({ unit: "KB", mem: { total_bytes: 10 * 1024 } });
+  });
+});
+
+describe("parseFree() 단위 표기", () => {
+  const head = "               total        used        free      shared  buff/cache   available\n";
+
+  it("-h의 0B와 소수 Gi 값을 bytes로 읽고 shared를 null로 만들지 않는다", () => {
+    const raw = `${head}Mem:           125Gi        41Gi       9.5Gi         0B        76Gi        84Gi\nSwap:             0B          0B          0B\n`;
+    const r = parseFree("free", ["-h"], raw);
+    expect(r.mem.shared).toBe(0);
+    expect(r.mem.free_bytes).toBe(Math.round(9.5 * 1024 ** 3));
+    expect(r.swap).toMatchObject({ total: 0, used: 0, free: 0 });
+  });
+
+  it("--si -h의 접미사 G는 1000 단위로 읽는다", () => {
+    const raw = `${head}Mem:            135G         44G         10G        829M         82G         90G\n`;
+    const r = parseFree("free", ["-h", "--si"], raw);
+    expect(r.mem.total_bytes).toBe(135 * 1000 ** 3);
+    expect(r.mem.shared_bytes).toBe(829 * 1000 ** 2);
+  });
+
+  it("--si와 --kilo는 1000 단위, --mega, --giga는 그 배수로 환산한다", () => {
+    const raw = `${head}Mem:             10           4           6           0           0           6\n`;
+    expect(parseFree("free", ["--si"], raw)).toMatchObject({ unit: "kilo", mem: { total_bytes: 10_000 } });
+    expect(parseFree("free", ["--mega"], raw)).toMatchObject({ unit: "mega", mem: { total_bytes: 10_000_000 } });
+    expect(parseFree("free", ["--giga"], raw)).toMatchObject({ unit: "giga", mem: { total_bytes: 10_000_000_000 } });
+    expect(parseFree("free", ["--si", "-m"], raw)).toMatchObject({ unit: "mega", mem: { total_bytes: 10_000_000 } });
   });
 });
 

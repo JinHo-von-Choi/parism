@@ -29,7 +29,7 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["grep", ["-Z", "x", "a", "b"], ["x", "a", "b"], "a:hit\nb:hit\n"],
   ["grep", ["-A1", "x", "f"], ["-n", "-A1", "x", "f"], "7:hit\n8-next\n"],
   ["env", ["-0"], [], "HOME=/home/u\n"],
-  ["free", ["-h"], ["-b"], "               total        used        free      shared  buff/cache   available\nMem:      1024 512 512 0 0 512\n"],
+  ["free", ["--tera"], ["-b"], "               total        used        free      shared  buff/cache   available\nMem:      1024 512 512 0 0 512\n"],
   ["uname", ["-r"], ["-a"], "Linux host 6.8.0-1-generic #1 SMP x86_64 x86_64 x86_64 GNU/Linux\n"],
   ["id", ["-un"], [], "uid=1000(u) gid=1000(u) groups=1000(u)\n"],
   ["journalctl", ["-o", "json", "-n", "5"], ["-n", "5", "-o", "short-iso"], "2026-10-03T06:00:00+0900 host cron[12]: started\n"],
@@ -79,7 +79,7 @@ describe("failure.hint 안내 인자", () => {
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
       ["ls", ["-li"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
-      ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["stats", "--no-stream"]], ["stat", ["-c", "%s", "a"]],
+      ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["images"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
       expect(r.parse_error?.reason).toBe("unsupported_format");
