@@ -11,7 +11,7 @@ import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./wi
 import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
 import { parseNpm, parseCargo } from "./packages/index.js";
 import { supportsLs, supportsPs, supportsSs, supportsFree, supportsKubectl, supportsDocker, supportsHelm,
-         supportsDig, supportsCurl, supportsWc, supportsId, supportsUname, supportsDf, supportsGit } from "./supports.js";
+         supportsDig, supportsCurl, supportsWc, supportsId, supportsUname, supportsDf, supportsGit, gitSubcommandIndex } from "./supports.js";
 
 /**
  * 44개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
@@ -63,13 +63,14 @@ export function createRegistry(): ParserRegistry {
   registry.register("yarn",      parseNpm);
   registry.register("cargo",     parseCargo);
 
-  // git은 서브커맨드 기반 — args[0]으로 파서를 선택
+  /** git은 앞의 전역 옵션을 건너뛴 서브커맨드로 파서를 선택하고, 서브커맨드부터의 인자를 넘긴다. */
   registry.register("git", (cmd, args, raw) => {
-    const sub = args[0];
-    if (sub === "status") return parseGitStatus(cmd, args, raw);
-    if (sub === "log")    return parseGitLog(cmd, args, raw);
-    if (sub === "diff")   return parseGitDiff(cmd, args, raw);
-    if (sub === "branch") return parseGitBranch(cmd, args, raw);
+    const subArgs = args.slice(gitSubcommandIndex(args));
+    const sub     = subArgs[0];
+    if (sub === "status") return parseGitStatus(cmd, subArgs, raw);
+    if (sub === "log")    return parseGitLog(cmd, subArgs, raw);
+    if (sub === "diff")   return parseGitDiff(cmd, subArgs, raw);
+    if (sub === "branch") return parseGitBranch(cmd, subArgs, raw);
     return null;
   }, { supports: supportsGit });
 

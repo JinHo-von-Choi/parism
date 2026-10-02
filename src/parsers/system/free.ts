@@ -36,15 +36,15 @@ function parseSize(s: string): number {
   return Math.round(n * (mul[sfx] ?? 1));
 }
 
-/** 플래그에 따라 숫자 한 단위가 몇 bytes인지 돌려준다. -h 는 값 자체가 접미사를 가지므로 1이다. */
+/**
+ * 플래그에 따라 숫자 한 단위가 몇 bytes인지 돌려준다. -h 는 값 자체가 접미사를 가지므로 1이다.
+ * 10진 단위(--kilo, --mega, --giga 등)는 supportsFree가 거부하므로 여기서 다루지 않는다.
+ */
 function unitFactor(args: string[]): { unit: string; factor: number } {
   const shorts = args.filter(a => /^-[A-Za-z]+$/.test(a)).map(a => a.slice(1)).join("");
   const has    = (...names: string[]): boolean => names.some(n => args.includes(n));
   if (has("--human") || shorts.includes("h")) return { unit: "bytes", factor: 1 };
   if (has("--bytes") || shorts.includes("b")) return { unit: "bytes", factor: 1 };
-  if (has("--giga"))                          return { unit: "GB",    factor: 1000 ** 3 };
-  if (has("--mega"))                          return { unit: "MB",    factor: 1000 ** 2 };
-  if (has("--kilo"))                          return { unit: "KB",    factor: 1000 };
   if (has("--gibi") || shorts.includes("g"))  return { unit: "GB",    factor: 1024 ** 3 };
   if (has("--mebi") || shorts.includes("m"))  return { unit: "MB",    factor: 1024 ** 2 };
   return { unit: "KB", factor: 1024 };

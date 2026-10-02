@@ -11,6 +11,14 @@ describe("파서 실패 계약", () => {
     expect(r.parsed).toBeNull();
     expect(r.parse_error?.reason).toBe("unsupported_format");
   });
+  it("git 앞의 전역 옵션을 건너뛰고 서브커맨드 형식을 판정한다", () => {
+    const raw = "commit abc\nAuthor: a\n\n    msg\n";
+    for (const args of [["--no-pager", "log"], ["-C", "repo", "log"], ["-c", "k=v", "log"]]) {
+      expect(parse("git", args, raw).parse_error?.reason).toBe("unsupported_format");
+    }
+    const r = parse("git", ["--no-pager", "log", "--oneline"], "abc1234 first\n") as { parsed: { commits: { hash: string }[] } };
+    expect(r.parsed.commits[0]).toMatchObject({ hash: "abc1234" });
+  });
   it("한 줄도 인식하지 못하면 unrecognized_output", () => {
     const r = parse("ls", ["-l"], "this is not ls output\n");
     expect(r.parsed).toBeNull();

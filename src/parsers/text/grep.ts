@@ -14,25 +14,46 @@ export interface GrepSummary {
 
 type GrepFormat = "file_line_text" | "line_text" | "file_text" | "text" | "file_only";
 
-/** 값을 따로 받는 짧은 옵션. 다음 인자는 패턴 또는 파일이 아니다. */
-const VALUE_FLAGS = new Set(["-A", "-B", "-C", "-m", "-e", "-f", "-d", "-D"]);
+/** 값을 받는 짧은 옵션 글자. 값이 붙어 있지 않으면 다음 인자가 값이다. */
+const SHORT_VALUE_FLAGS = new Set(["A", "B", "C", "m", "e", "f", "d", "D"]);
 
-/** 플래그와 파일 인자 수로 grep 출력 형식을 정한다. */
+/** 값을 받는 긴 옵션. "=" 없이 쓰면 다음 인자가 값이다. */
+const LONG_VALUE_FLAGS = new Set([
+  "--after-context", "--before-context", "--context", "--max-count", "--regexp", "--file",
+  "--devices", "--directories", "--include", "--exclude", "--exclude-dir", "--exclude-from",
+  "--label", "--binary-files", "--group-separator",
+]);
+
+/** 패턴을 지정하는 옵션. 하나라도 있으면 첫 피연산자도 파일이다. */
+const PATTERN_FLAGS = new Set(["e", "f", "--regexp", "--file"]);
+
+/** 플래그와 파일 인자 수로 grep 출력 형식을 정한다. 옵션 값은 피연산자로 세지 않는다. */
 function detectFormat(args: string[]): GrepFormat {
-  const shorts: string[] = [];
-  const longs:  string[] = [];
+  const shorts:   string[] = [];
+  const longs:    string[] = [];
   const operands: string[] = [];
-  let patternGiven = false;
+  let   patternGiven       = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") { operands.push(...args.slice(i + 1)); break; }
-    if (a.startsWith("--")) { longs.push(a.split("=")[0]!); continue; }
-    if (/^-[A-Za-z]+$/.test(a)) {
-      shorts.push(...a.slice(1));
-      if (VALUE_FLAGS.has(a)) { if (a === "-e" || a === "-f") patternGiven = true; i++; }
+    if (a === "-" || !a.startsWith("-")) { operands.push(a); continue; }
+    if (a.startsWith("--")) {
+      const eq   = a.indexOf("=");
+      const name = eq >= 0 ? a.slice(0, eq) : a;
+      longs.push(name);
+      if (PATTERN_FLAGS.has(name)) patternGiven = true;
+      if (eq < 0 && LONG_VALUE_FLAGS.has(name)) i++;
       continue;
     }
-    operands.push(a);
+    if (/^-[0-9]+$/.test(a)) continue;
+    for (let j = 1; j < a.length; j++) {
+      const c = a[j]!;
+      shorts.push(c);
+      if (!SHORT_VALUE_FLAGS.has(c)) continue;
+      if (PATTERN_FLAGS.has(c)) patternGiven = true;
+      if (j === a.length - 1) i++;
+      break;
+    }
   }
   const has       = (c: string, long: string): boolean => shorts.includes(c) || longs.includes(long);
   const files     = patternGiven ? operands : operands.slice(1);

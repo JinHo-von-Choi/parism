@@ -113,10 +113,23 @@ export function supportsDf(args: string[]): boolean {
   return !f.has("T") && !f.has("i") && !hasLong(args, "--print-type", "--inodes", "--output");
 }
 
-/** git: 서브커맨드별 처리 형식. */
+/** 다음 인자를 값으로 받는 git 전역 옵션 */
+const GIT_GLOBAL_VALUE_OPTIONS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
+
+/** 앞에 오는 git 전역 옵션(--no-pager, -C <경로> 등)을 건너뛴 서브커맨드 위치. 없으면 args.length. */
+export function gitSubcommandIndex(args: string[]): number {
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) {
+    i += GIT_GLOBAL_VALUE_OPTIONS.has(args[i]!) ? 2 : 1;
+  }
+  return Math.min(i, args.length);
+}
+
+/** git: 서브커맨드별 처리 형식. 앞에 오는 전역 옵션은 건너뛴다. */
 export function supportsGit(args: string[]): boolean {
-  const sub  = args[0];
-  const rest = args.slice(1);
+  const idx  = gitSubcommandIndex(args);
+  const sub  = args[idx];
+  const rest = args.slice(idx + 1);
   const f    = shortFlags(rest);
   if (sub === "status") return !f.has("s") && !f.has("z") && !hasLong(rest, "--porcelain", "--short");
   if (sub === "log")    return (rest.includes("--oneline") || /^--(pretty|format)=oneline$/.test(rest.find(a => /^--(pretty|format)=/.test(a)) ?? "")) && !rest.includes("--graph");
