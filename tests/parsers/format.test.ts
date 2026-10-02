@@ -137,7 +137,7 @@ describe("내장 파서 허용 형식", () => {
 
   it.each<[string, string[]]>([
     ["ls", ["-l"]], ["ls", ["-la", "/etc"]], ["ls", ["-ltr"]], ["ls", ["--format=long"]], ["ls", ["-l", "--color=never"]],
-    ["find", [".", "-name", "*.ts", "-type", "f"]], ["stat", ["a.txt"]], ["stat", ["a", "b"]], ["du", ["-sh", "dir"]], ["du", ["-d", "1"]],
+    ["ls", ["-lR"]], ["ls", ["-lF"]], ["ls", ["-lp"]], ["ls", ["-l", "a", "b"]], ["ls", ["-l", "--time-style=long-iso"]], ["ls", ["-l", "--full-time"]], ["find", [".", "-name", "*.ts", "-type", "f"]], ["stat", ["a.txt"]], ["stat", ["a", "b"]], ["du", ["-sh", "dir"]], ["du", ["-d", "1"]],
     ["df", ["-h"]], ["df", []], ["df", ["-m"]], ["df", ["-B1M"]], ["df", ["-T"]], ["df", ["-hT"]], ["df", ["-B", "1K"]], ["ps", ["aux"]], ["ps", ["aux", "--sort=-%cpu"]], ["ping", ["-c", "2", "host"]],
     ["curl", ["-sI", "https://example.com"]], ["netstat", ["-tlnp"]], ["ss", ["-tuln"]], ["ss", ["-4"]], ["ss", ["-a"]], ["ss", ["-H"]], ["ss", ["-tlnp"]], ["ss", ["-tum"]], ["ss", ["-x"]], ["lsof", ["-p", "1"]], ["lsof", ["-c", "bash"]],
     ["lsof", ["-i", "-n", "-P"]], ["lsof", ["-iTCP", "-sTCP:LISTEN"]], ["dig", ["example.com", "MX"]], ["dig", ["+noquestion", "example.com"]], ["dig", ["+multi", "example.com"]], ["dig", ["+noall", "+answer", "example.com"]], ["dig", ["+nocmd", "example.com"]], ["dig", ["+tcp", "@1.1.1.1", "example.com"]],
@@ -155,7 +155,7 @@ describe("내장 파서 허용 형식", () => {
   });
 
   it.each<[string, string[]]>([
-    ["ls", ["-lR"]], ["ls", ["-lF"]], ["ls", ["-lp"]], ["ls", ["-lh"]], ["ls", ["-l", "a", "b"]], ["ls", []], ["ls", ["-l", "--color=always"]],
+    ["ls", ["-lh"]], ["ls", ["-li"]], ["ls", ["-l", "--time-style=+%s"]], ["ls", []], ["ls", ["-l", "--color=always"]], ["ls", ["-R"]],
     ["find", [".", "-ls"]], ["find", [".", "-print0"]], ["find", [".", "-exec", "ls", "{}", ";"]],
     ["stat", ["-c", "%s", "a"]], ["du", ["--time"]], ["du", ["-0"]], ["df", ["-i"]], ["df", ["-BG"]], ["df", ["--output"]],
     ["ps", ["auxf"]], ["ps", ["aux", "--no-headers"]], ["ps", ["aux", "--forest"]], ["ps", ["-ef"]],

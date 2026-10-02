@@ -58,6 +58,61 @@ describe("parseLs() 특수 표기", () => {
   });
 });
 
+describe("parseLs() 구획과 표시 기호", () => {
+  type Rows = { entries: Array<{ name: string; type: string; target: string | null; modified_at: string; directory?: string }> };
+  const row = (name: string): string => `-rw-rw-r-- 1 u g 5 Oct  3 06:45 ${name}`;
+
+  it("-R 구획 머리줄을 directory로 담는다", () => {
+    const raw = [".:", "total 8", row("a.txt"), "drwxrwxr-x 2 u g 4096 Oct  3 06:45 sub", "", "./sub:", "total 4", row("c.txt"), ""].join("\n");
+    const r = parseLs("ls", ["-lR"], raw) as Rows;
+    expect(r.entries.map(e => [e.directory, e.name])).toEqual([[".", "a.txt"], [".", "sub"], ["./sub", "c.txt"]]);
+  });
+
+  it("피연산자가 둘 이상이면 파일 피연산자 항목에는 directory가 없다", () => {
+    const raw = [row("a.txt"), "", "sub:", "total 4", row("c.txt"), ""].join("\n");
+    const r = parseLs("ls", ["-l", "a.txt", "sub", "empty"], raw) as Rows;
+    expect(r.entries.map(e => e.directory)).toEqual([undefined, "sub"]);
+  });
+
+  it("이름이 콜론으로 끝나는 파일은 머리줄이 아니라 항목이다", () => {
+    const r = parseLs("ls", ["-l"], row("weird:")) as Rows;
+    expect(r.entries[0]).toMatchObject({ name: "weird:" });
+    expect(r.entries[0]!.directory).toBeUndefined();
+  });
+
+  it("-F 표시 기호를 파일 종류에 맞게 떼고 링크 대상의 기호도 뗀다", () => {
+    const raw = [
+      "-rwxr-xr-x 1 u g 10 Oct  3 06:45 run.sh*",
+      "-rw-r--r-- 1 u g 10 Oct  3 06:45 star*",
+      "drwxr-xr-x 2 u g 4096 Oct  3 06:45 sub/",
+      "prw-r--r-- 1 u g 0 Oct  3 06:45 pipe|",
+      "srwxr-xr-x 1 u g 0 Oct  3 06:45 sock=",
+      "lrwxrwxrwx 1 u g 7 Oct  3 06:45 py -> python3.12*",
+      "lrwxrwxrwx 1 u g 3 Oct  3 06:45 d -> sub/",
+    ].join("\n");
+    const r = parseLs("ls", ["-lF"], raw) as Rows;
+    expect(r.entries.map(e => e.name)).toEqual(["run.sh", "star*", "sub", "pipe", "sock", "py", "d"]);
+    expect(r.entries[5]!.target).toBe("python3.12");
+    expect(r.entries[6]!.target).toBe("sub");
+  });
+
+  it("-p는 디렉터리 슬래시만 뗀다", () => {
+    const r = parseLs("ls", ["-lp"], ["drwxr-xr-x 2 u g 4096 Oct  3 06:45 sub/", row("a|")].join("\n")) as Rows;
+    expect(r.entries.map(e => e.name)).toEqual(["sub", "a|"]);
+  });
+
+  it("표시 기호를 요청하지 않았으면 이름 끝의 기호를 건드리지 않는다", () => {
+    expect((parseLs("ls", ["-l"], row("run.sh*")) as Rows).entries[0]!.name).toBe("run.sh*");
+  });
+
+  it("long-iso와 --full-time 수정 시각을 읽는다", () => {
+    const iso  = parseLs("ls", ["-l", "--time-style=long-iso"], "-rw-rw-r-- 1 u g 28 2026-10-03 06:45 a.txt") as Rows;
+    const full = parseLs("ls", ["-l", "--full-time"], "-rw-rw-r-- 1 u g 28 2026-10-03 06:45:37.860454615 +0900 a b.txt") as Rows;
+    expect(iso.entries[0]).toMatchObject({ modified_at: "2026-10-03 06:45", name: "a.txt" });
+    expect(full.entries[0]).toMatchObject({ modified_at: "2026-10-03 06:45:37.860454615 +0900", name: "a b.txt" });
+  });
+});
+
 describe("parseStat()", () => {
   const statLinuxRaw = [
     "  File: /home/user/project/src/index.ts",

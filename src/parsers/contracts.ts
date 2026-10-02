@@ -23,7 +23,7 @@ function flags(arity: FlagArity, ...names: string[]): Record<string, FlagArity> 
 const bools  = (...names: string[]): Record<string, FlagArity> => flags("bool", ...names);
 const values = (...names: string[]): Record<string, FlagArity> => flags("value", ...names);
 
-const LS_FIELDS      = ["permissions", "links", "owner", "group", "size_bytes", "modified_at", "name", "type", "target"] as const;
+const LS_FIELDS      = ["permissions", "links", "owner", "group", "size_bytes", "modified_at", "name", "type", "target", "directory"] as const;
 const PS_FIELDS      = ["user", "pid", "cpu", "mem", "vsz", "rss", "tty", "stat", "start", "time", "command"] as const;
 const SS_FIELDS      = ["netid", "state", "recv_q", "send_q", "local_address", "local_port", "peer_address", "peer_port"] as const;
 const LSOF_FIELDS    = ["command", "pid", "user", "fd", "type", "device", "name", "state"] as const;
@@ -46,17 +46,18 @@ function supportsDig(args: string[]): boolean {
 export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   ls: {
     acceptedFlags: {
-      ...bools("-l", "-n", "-a", "-A", "-t", "-r", "-S", "-1", "-d", "-U", "-X", "-v", "-c", "-u", "-k", "-N", "-B",
-        "--all", "--almost-all", "--reverse", "--directory", "--numeric-uid-gid", "--ignore-backups", "--literal",
-        "--kibibytes", "--group-directories-first"),
-      ...values("-I", "--ignore", "--hide", "--sort", "--time", "--format"),
+      ...bools("-l", "-n", "-a", "-A", "-t", "-r", "-R", "-S", "-1", "-d", "-U", "-X", "-v", "-c", "-u", "-k", "-N", "-B", "-F", "-p",
+        "--all", "--almost-all", "--reverse", "--recursive", "--directory", "--numeric-uid-gid", "--ignore-backups", "--literal",
+        "--kibibytes", "--group-directories-first", "--full-time"),
+      ...values("-I", "--ignore", "--hide", "--sort", "--time", "--format", "--time-style", "--indicator-style"),
       "--color": "attached",
     },
-    acceptedValues:      { "--format": /^(long|verbose)$/, "--color": /^(never|auto)$/ },
-    requiredFlags:       ["-l", "-n", "--numeric-uid-gid", "--format"],
-    acceptedPositionals: { max: 1 },
-    hint:                lsHint,
-    noise: /^total \d+|^\S.*:$/, rowsKey: "entries", rowFields: LS_FIELDS,
+    acceptedValues: {
+      "--format": /^(long|verbose)$/, "--color": /^(never|auto)$/, "--time-style": /^(long-iso|full-iso)$/, "--indicator-style": /^(none|slash|classify)$/,
+    },
+    requiredFlags: ["-l", "-n", "--numeric-uid-gid", "--format"],
+    hint:          lsHint,
+    noise: /^total \d+|^(?![bcdlps-][rwxsStT-]{9})\S.*:$/, rowsKey: "entries", rowFields: LS_FIELDS,
   },
   find: {
     acceptedFlags: {

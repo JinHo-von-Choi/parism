@@ -18,7 +18,7 @@ const hintFor = (cmd: string, args: string[]) => reg.parse(cmd, args, "").parse_
 const CASES: Array<[string, string[], string[], string]> = [
   ["ls", ["-lh"], ["-l"], "total 4\n-rw-r--r-- 1 u g 12 Oct  3 06:45 a.txt\n"],
   ["ls", ["-a"], ["-a", "-l"], "total 4\ndrwxr-xr-x 2 u g 4096 Oct  3 06:45 .\n"],
-  ["ls", ["-lF", "dir"], ["-l", "dir"], "total 4\n-rwxr-xr-x 1 u g 12 Oct  3 06:45 run.sh\n"],
+  ["ls", ["-lG", "dir"], ["-l", "dir"], "total 4\n-rwxr-xr-x 1 u g 12 Oct  3 06:45 run.sh\n"],
   ["find", [".", "-print0"], ["."], ".\n./a.txt\n"],
   ["du", ["-0", "-s", "dir"], ["-s", "dir"], "8\tdir\n"],
   ["df", ["-BG"], [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n"],
@@ -78,7 +78,7 @@ describe("failure.hint 안내 인자", () => {
 
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
-      ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
+      ["ls", ["-li"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
       ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["stats", "--no-stream"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
