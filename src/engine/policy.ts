@@ -52,6 +52,8 @@ export interface CommandPolicy {
   maxPositionals?: number;
   /** `+`로 시작하는 인자도 `-` 플래그와 같이 플래그로 분해한다(lsof). */
   plusFlags?: boolean;
+  /** 위치 인자가 검색어나 출력 문자열이다(grep, echo). `key=값` 위치 인자의 `=` 뒤 값을 따로 경로 검사하지 않는다. */
+  textPositionals?: boolean;
 }
 
 export type PolicySource = "default" | "build" | "config";
@@ -207,6 +209,9 @@ const HEAD_TAIL_FLAGS: Record<string, FlagKind> = {
 /**
  * ps가 위치 인자로 받는 BSD식 옵션 낱말의 글자.
  * 목록 선택과 출력 형식 글자만 둔다. 환경 변수를 함께 출력하는 수식어(e), 값을 받는 글자, 목록과 무관한 글자는 넣지 않는다.
+ * procps는 대시 옵션 해석이 실패하면 인자 전체를 BSD식으로 다시 읽어 대시 낱말의 e도 수식어로 쓴다.
+ * 그래서 대시 옵션에는 UNIX식 해석이 없는 -x와, 없는 이름을 붙여 해석을 실패시킬 수 있는
+ * 사용자·그룹 선택 옵션(-u, -U, -g, -G, --user)을 두지 않는다.
  */
 const PS_OPTION_LETTERS = "auxfwrljsvhcmnSHTgZ";
 
@@ -279,11 +284,10 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   },
   ps: {
     flags: {
-      ...bools("-e", "-A", "-a", "-d", "-N", "-f", "-F", "-l", "-j", "-H", "-w", "-x", "-y", "-L", "-T", "-M", "-Z",
+      ...bools("-e", "-A", "-a", "-d", "-N", "-f", "-F", "-l", "-j", "-H", "-w", "-y", "-L", "-T", "-M", "-Z",
         "--forest", "--no-headers", "--headers", "--cumulative"),
       "-o": "value", "-O": "value", "--format": "value", "-p": "value", "--pid": "value", "--ppid": "value",
-      "-u": "value", "-U": "value", "--user": "value", "-g": "value", "-G": "value", "-C": "value", "-t": "value", "--sort": "value",
-      "-q": "value", "--width": "value",
+      "-C": "value", "-t": "value", "--sort": "value", "-q": "value", "--width": "value",
     },
     positionals:     "any",
     positionalChars: PS_OPTION_LETTERS,
@@ -331,7 +335,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   dig: {
     flags: {
       ...bools("-4", "-6", "-m", "-u", "-r"),
-      "-x": "value", "-t": "value", "-c": "value", "-p": "value", "-q": "value", "-b": "value", "-f": "path",
+      "-x": "value", "-t": "value", "-c": "value", "-p": "value", "-q": "value", "-b": "value",
     },
     positionals: "any",
   },
@@ -350,8 +354,9 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
       "--include": "value", "--exclude": "value", "--exclude-dir": "value", "--exclude-from": "path", "--color": "attached", "--colour": "attached",
       "--binary-files": "value", "--label": "value", "-d": "value", "--directories": "value", "-D": "value", "--devices": "value",
     },
-    positionals: "any",
-    numericFlag: true,
+    positionals:     "any",
+    numericFlag:     true,
+    textPositionals: true,
   },
   wc: {
     flags: {
@@ -371,7 +376,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   },
   pwd:   { flags: bools("-L", "-P"), positionals: "none" },
   which: { flags: bools("-a", "--all", "-s"), positionals: "any" },
-  echo:  { flags: bools("-n", "-e", "-E"), positionals: "any" },
+  echo:  { flags: bools("-n", "-e", "-E"), positionals: "any", textPositionals: true },
   date: {
     flags: {
       ...bools("-u", "--utc", "--universal", "-R", "--rfc-email", "--debug"),
@@ -583,15 +588,56 @@ const GIT_SUBCOMMAND_OVERRIDES: Record<string, string[]> = {
 const NPX_LOCAL_ONLY = ["--no"];
 
 /**
+ * ps 대시 옵션 낱말의 전체 선택 글자 e를 같은 뜻의 A로 바꾼다.
+ * procps는 대시 옵션 해석이 실패하면 인자 전체를 BSD식으로 다시 읽는데, 그때 대시 낱말의 e는
+ * 환경 변수를 함께 출력하는 수식어가 된다. A는 BSD식 해석에 없는 글자라 다시 읽기가 실패한다.
+ * 값 플래그의 붙은 값과 다음 인자로 받은 값, 긴 옵션, 위치 인자는 그대로 둔다.
+ */
+function rewritePsSelectAll(args: string[], flags: Record<string, FlagKind>): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith("--")) {
+      out.push(arg);
+      if (!arg.includes("=") && i + 1 < args.length && consumesNext(flags, arg, args[i + 1]!)) out.push(args[++i]!);
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      out.push(arg);
+      continue;
+    }
+    let word      = "-";
+    let valueFlag: string | undefined;
+    for (let j = 1; j < arg.length; j++) {
+      const kind = flagKind(flags, "-" + arg[j]);
+      if (kind !== undefined && kind !== "bool") {
+        word += arg.slice(j);
+        if (j === arg.length - 1) valueFlag = "-" + arg[j];
+        break;
+      }
+      word += arg[j] === "e" ? "A" : arg[j];
+    }
+    out.push(word);
+    if (valueFlag && i + 1 < args.length && consumesNext(flags, valueFlag, args[i + 1]!)) out.push(args[++i]!);
+  }
+  return out;
+}
+
+/**
  * 실제 실행에 쓸 인자 배열을 만든다. 입력 배열은 변경하지 않는다.
  * git이면 저장소 설정의 fsmonitor·pager·hooks·서명 검증 프로그램을 끄는 -c 옵션을 맨 앞에 두고,
  * log·show·diff·blame 서브커맨드 뒤에는 textconv(및 외부 diff) 비활성 옵션을, log·show에는 서명 표시 비활성 옵션을 붙인다.
  * 서브커맨드 위치는 유효 git 정책의 leadingFlags를 건너뛰어 찾는다. guard가 없으면 기본 정책을 쓴다.
  * npx이면 맨 앞에 --no를 둔다. 표준 입력이 TTY가 아니면 npx는 설치 확인을 생략하므로
  * 이 옵션이 없으면 설치되지 않은 패키지를 내려받아 실행한다.
+ * ps이면 유효 ps 정책의 플래그 표로 대시 옵션의 전체 선택 글자 e를 A로 바꾼다.
  */
 export function buildExecArgs(cmd: string, args: string[], guard?: PrismGuardConfig): string[] {
   if (cmd === "npx") return [...NPX_LOCAL_ONLY, ...args];
+  if (cmd === "ps") {
+    const ps = guard ? resolvePolicies(guard).ps : DEFAULT_POLICIES.ps;
+    return ps ? rewritePsSelectAll(args, ps.flags) : [...args];
+  }
   if (cmd !== "git") return [...args];
 
   const policy  = guard ? resolvePolicies(guard).git : DEFAULT_POLICIES.git;

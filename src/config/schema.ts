@@ -39,6 +39,7 @@ const COMMAND_POLICY_SCHEMA = z.object({
   positionalPrefix: z.string().min(1).optional(),
   maxPositionals:   LIMIT_SCHEMA.optional(),
   plusFlags:        z.boolean().optional(),
+  textPositionals:  z.boolean().optional(),
 }).strict();
 
 const ARG_RESTRICTION_SCHEMA = z.object({ blocked_flags: STRING_LIST }).strict();

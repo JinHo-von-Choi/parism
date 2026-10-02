@@ -297,7 +297,7 @@ function existsUnder(cwd: string, value: string): boolean {
  * - 그 밖의 위치 인자와 플래그 값은 `/`를 포함하거나 `.`, `~`로 시작하거나
  *   cwd 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키면 모은다.
  * - `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 모은다.
- *   위치 인자 규칙이 url인 명령은 URL 질의 문자열 때문에 제외한다.
+ *   위치 인자 규칙이 url인 명령은 URL 질의 문자열 때문에, textPositionals 명령은 위치 인자가 검색어나 출력 문자열이라 제외한다.
  * - stopAtPositional 이후 대상 프로그램 몫으로 넘긴 인자는 tokenizePolicyless로 분해해 같은 규칙을 적용한다.
  * policy는 서브커맨드의 플래그 종류와 위치 인자 규칙을 반영한 유효 정책이며, 정책 없는 명령은 undefined다.
  */
@@ -319,7 +319,8 @@ export function collectPathCandidates(tokens: ParsedArg[], policy: CommandPolicy
     }
     if (policy?.positionals === "path" || isPathArg(t.name)) out.push(t.name);
     const eq = t.name.indexOf("=");
-    if (eq >= 0 && policy?.positionals !== "url" && isPathLikeValue(t.name.slice(eq + 1))) out.push(t.name.slice(eq + 1));
+    if (eq < 0 || policy?.positionals === "url" || policy?.textPositionals === true) continue;
+    if (isPathLikeValue(t.name.slice(eq + 1))) out.push(t.name.slice(eq + 1));
   }
   if (passthrough.length > 0) out.push(...collectPathCandidates(tokenizePolicyless(passthrough), undefined, cwd));
   return out;

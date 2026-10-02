@@ -256,6 +256,35 @@ const GIT_PREFIX = [
 ];
 
 describe("buildExecArgs", () => {
+  it("ps 대시 옵션의 전체 선택 글자 e를 같은 뜻의 A로 바꿔 실행한다", () => {
+    const cases: [string[], string[]][] = [
+      [["-ef"], ["-Af"]], [["-e"], ["-A"]], [["-e", "-o", "pid,user,args"], ["-A", "-o", "pid,user,args"]],
+      [["-eo", "pid,user"], ["-Ao", "pid,user"]], [["-et"], ["-At"]], [["-eOj"], ["-AOj"]], [["-eHT"], ["-AHT"]],
+      [["-e", "-t"], ["-A", "-t"]], [["-fe"], ["-fA"]], [["-HeT"], ["-HAT"]], [["-wet"], ["-wAt"]],
+    ];
+    for (const [input, expected] of cases) {
+      expect([input, buildExecArgs("ps", input)]).toEqual([input, expected]);
+    }
+  });
+
+  it("ps 값 옵션의 값, 긴 옵션, 위치 인자의 e는 바꾸지 않는다", () => {
+    const same = [
+      ["-oe"], ["-o", "-e"], ["-O", "e"], ["-Ce"], ["-C", "-e"], ["-pe"], ["-q", "e"], ["-te"],
+      ["--sort", "-e", "-f"], ["--format=user", "-f"], ["--format", "-e"], ["aux"], ["--headers"],
+    ];
+    for (const input of same) {
+      expect([input, buildExecArgs("ps", input)]).toEqual([input, input]);
+    }
+  });
+
+  it("ps 인자 재작성은 입력 배열을 바꾸지 않고 다른 명령에는 적용하지 않는다", () => {
+    const input = ["-ef"];
+    buildExecArgs("ps", input);
+    expect(input).toEqual(["-ef"]);
+    expect(buildExecArgs("echo", ["-e", "x"])).toEqual(["-e", "x"]);
+    expect(buildExecArgs("grep", ["-e", "x", "f"])).toEqual(["-e", "x", "f"]);
+  });
+
   it("저장소 hooks 경로와 서명 검증 프로그램을 무력화하는 옵션을 맨 앞에 둔다", () => {
     const out = buildExecArgs("git", ["status"]);
     expect(out.slice(0, GIT_PREFIX.length)).toEqual(GIT_PREFIX);
@@ -580,7 +609,7 @@ describe("기본 허용 명령 정책", () => {
       ["hostname", ["name"]], ["hostname", ["-F", "x"]], ["hostname", ["-b"]], ["date", ["-s", "x"]], ["date", ["--set=x"]],
       ["tail", ["-f", "x"]], ["tail", ["--follow", "x"]], ["ping", ["-f", "example.com"]], ["free", ["-s", "1"]],
       ["netstat", ["-c"]], ["lsof", ["-r"]], ["grep", ["-R", "x", "."]], ["du", ["-L", "."]], ["ls", ["-L", "."]],
-      ["dig", ["-k", "x"]], ["uname", ["x"]], ["pwd", ["x"]], ["free", ["x"]], ["netstat", ["x"]],
+      ["dig", ["-f", "x"]], ["dig", ["-k", "x"]], ["uname", ["x"]], ["pwd", ["x"]], ["free", ["x"]], ["netstat", ["x"]],
     ];
     for (const [cmd, args] of denied) {
       expect([cmd, args, reason(() => checkGuard(cmd, args, root, cfg))]).toEqual([cmd, args, "arg_not_allowed"]);
@@ -603,6 +632,31 @@ describe("ps 위치 인자", () => {
   it("환경 표시 수식어, 허용 목록 밖 글자, 그 밖의 위치 인자는 거부한다", () => {
     for (const a of [["e"], ["auxe"], ["axeww"], ["L"], ["aux", "1"], ["123"], ["aux", "sub/x"], ["a-x"]]) {
       expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+});
+
+describe("ps 대시 옵션", () => {
+  it("목록 선택 글자 x는 대시 옵션으로 받지 않는다", () => {
+    for (const a of [["-x"], ["-e", "-x"], ["-x", "-e"], ["-xe"], ["-ex"], ["-efx"]]) {
+      expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+
+  it("사용자와 그룹 선택 옵션은 값 형태와 관계없이 받지 않는다", () => {
+    for (const a of [
+      ["-u", "root"], ["-uroot"], ["-u0"], ["-ue"], ["-U", "0"], ["-U0"], ["-g", "0"], ["-gxe"], ["-G", "0"], ["-G0"],
+      ["--user", "root"], ["--user=root"], ["-e", "-u", "root"],
+    ]) {
+      expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+
+  it("목록 선택, 출력 형식, pid와 명령 이름 선택 옵션은 통과한다", () => {
+    for (const a of [
+      ["-e"], ["-eF"], ["-ejH"], ["-e", "--forest"], ["-p", "1", "-o", "pid,comm"], ["-C", "node"], ["-A", "--sort", "-pcpu"],
+    ]) {
+      expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "pass"]);
     }
   });
 });
@@ -644,7 +698,7 @@ describe("조회 명령의 추가 허용 인자", () => {
       ["ps", ["-ef", "--width", "200"]], ["ps", ["-q", "1", "-o", "pid,comm"]],
       ["tree", ["--filesfirst", "sub"]], ["tree", ["-H", "base", "sub"]],
       ["which", ["-a", "node"]], ["which", ["--all", "node"]],
-      ["grep", ["--exclude-from", "f", "-r", "x", "."]], ["grep", ["--exclude-from=f", "x", "f"]], ["dig", ["-f", "f"]],
+      ["grep", ["--exclude-from", "f", "-r", "x", "."]], ["grep", ["--exclude-from=f", "x", "f"]],
     ];
     for (const [cmd, args] of ok) {
       expect([cmd, args, reason(() => checkGuard(cmd, args, root, cfg))]).toEqual([cmd, args, "pass"]);
@@ -657,10 +711,15 @@ describe("조회 명령의 추가 허용 인자", () => {
     }
   });
 
-  it("grep --exclude-from과 dig -f의 값은 경로 검사를 받는다", () => {
+  it("grep --exclude-from의 값은 경로 검사를 받는다", () => {
     expect(reason(() => checkGuard("grep", ["--exclude-from", "/etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
     expect(reason(() => checkGuard("grep", ["--exclude-from=/etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
-    expect(reason(() => checkGuard("dig", ["-f", "/etc/hostname"], root, cfg))).toBe("path_not_allowed");
+  });
+
+  it("dig는 일괄 입력 파일 옵션 -f를 받지 않는다", () => {
+    for (const a of [["-f", "f"], ["-ff"], ["-f", "/etc/hostname"]]) {
+      expect([a, reason(() => checkGuard("dig", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
   });
 });
 
@@ -700,6 +759,25 @@ describe("= 뒤 경로형 값", () => {
     for (const a of [[`+opt=${outside}`, "example.com"], ["example.com", "+opt=../f"]]) {
       expect([a, reason(() => checkGuard("dig", a, base, c))]).toEqual([a, "path_not_allowed"]);
     }
+  });
+
+  it("검색어나 출력 문자열을 위치 인자로 받는 grep, echo는 = 뒤 값을 따로 경로 검사하지 않는다", () => {
+    for (const [cmd, a] of [
+      ["grep", ["-rn", "key=/segment", "."]], ["grep", ["-F", `root=${outside}`, "sub"]], ["echo", ["key=/segment"]], ["echo", ["-n", `a=${outside}`]],
+    ] as [string, string[]][]) {
+      expect([cmd, a, reason(() => checkGuard(cmd, a, base, c))]).toEqual([cmd, a, "pass"]);
+    }
+  });
+
+  it("경로를 위치 인자로 받는 명령은 같은 형태의 = 뒤 값을 경로 검사한다", () => {
+    for (const [cmd, a] of [["ls", ["key=/segment"]], ["cat", [`key=${outside}`]], ["mytool", ["key=/segment"]]] as [string, string[]][]) {
+      expect([cmd, a, reason(() => checkGuard(cmd, a, base, c))]).toEqual([cmd, a, "path_not_allowed"]);
+    }
+  });
+
+  it("grep, echo도 인자 전체가 허용 경로 밖을 가리키면 거부한다", () => {
+    expect(reason(() => checkGuard("grep", ["x", outside], base, c))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("echo", ["../x"], base, c))).toBe("path_not_allowed");
   });
 
   it("값이 허용 경로 안이거나 경로형이 아니면 통과한다", () => {
