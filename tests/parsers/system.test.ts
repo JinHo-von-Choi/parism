@@ -274,6 +274,35 @@ describe("parseApt()", () => {
     const result = parseApt("apt", ["list"], raw, { maxItems: 1 }) as { packages: unknown[] };
     expect(result.packages).toHaveLength(1);
   });
+  type Pkgs = { packages: Array<{ name: string; suite: string; version: string; arch: string; status: string; description?: string }> };
+
+  it("대괄호가 없는 줄(설치되지 않은 패키지)도 행으로 읽는다", () => {
+    const out = parseApt("apt", ["list"], "Listing...\n0ad/noble-updates 0.0.26-6 amd64\n2ping/noble 4.5-1.2 all\n") as Pkgs;
+    expect(out.packages).toEqual([
+      { name: "0ad", suite: "noble-updates", version: "0.0.26-6", arch: "amd64", status: "" },
+      { name: "2ping", suite: "noble", version: "4.5-1.2", arch: "all", status: "" },
+    ]);
+  });
+
+  it("업그레이드 가능 표시와 now만 있는 구획을 읽는다", () => {
+    const out = parseApt("apt", ["list", "--upgradable"], [
+      "alsa-ucm-conf/noble-updates 1.2.10-1ubuntu5.15 all [upgradable from: 1.2.10-1ubuntu5.13]",
+      "alsa-utils/now 1.2.10-1 all [installed,upgradable to: 1.2.10-2]",
+    ].join("\n")) as Pkgs;
+    expect(out.packages[0]).toMatchObject({ name: "alsa-ucm-conf", version: "1.2.10-1ubuntu5.15", status: "upgradable from: 1.2.10-1ubuntu5.13" });
+    expect(out.packages[1]).toMatchObject({ name: "alsa-utils", suite: "", status: "installed,upgradable to: 1.2.10-2" });
+  });
+
+  it("apt search의 설명 줄을 직전 패키지에 붙이고 진행 문구와 빈 줄은 버린다", () => {
+    const out = parseApt("apt", ["search", "zsh"], [
+      "Sorting...", "Full Text Search...",
+      "zsh/noble 5.9-6ubuntu2 amd64", "  shell with lots of features", "",
+      "zsh-antidote/noble 1.9.4-1 all", "  ZSH plugin manager", "",
+    ].join("\n")) as Pkgs;
+    expect(out.packages).toHaveLength(2);
+    expect(out.packages[0]).toMatchObject({ name: "zsh", description: "shell with lots of features" });
+    expect(out.packages[1]).toMatchObject({ name: "zsh-antidote", description: "ZSH plugin manager" });
+  });
 });
 
 describe("parseBrew()", () => {

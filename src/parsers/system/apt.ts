@@ -1,6 +1,7 @@
 /**
- * apt list --installed 출력 파싱.
- * 형식: package/version arch [설치됨,자동]
+ * apt list, apt search 출력 파싱.
+ * 형식: package/suite[,suite] version arch [installed,automatic]
+ * 설치되지 않은 패키지는 대괄호가 없다. search는 패키지 줄 아래에 들여쓴 설명 줄이 온다.
  *
  * @author 최진호
  * @date 2026-03-07
@@ -14,13 +15,18 @@ export interface AptPackage {
   version: string;
   arch:    string;
   status:  string;
+  /** apt search의 설명 줄 */
+  description?: string;
 }
 
 export interface AptResult {
   packages: AptPackage[];
 }
 
-const PKG_LINE = /^([^\s]+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]$/;
+const PKG_LINE = /^([^\s/]+\/\S*)\s+(\S+)\s+(\S+)(?:\s+\[([^\]]*)\])?$/;
+
+/** 목록 머리 줄과 검색 진행 문구(영어, 한국어) */
+const PROGRESS_LINE = /^(Listing|Sorting|Full Text Search|나열 중|정렬 중|전체 텍스트 검색 중)/;
 
 /**
  * apt list --installed 출력을 파싱한다.
@@ -35,7 +41,13 @@ export function parseApt(
   const packages: AptPackage[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("나열 중") || line.startsWith("Listing")) continue;
+    if (PROGRESS_LINE.test(line)) continue;
+
+    if (/^\s/.test(line)) {
+      const last = packages[packages.length - 1];
+      if (last) last.description = last.description ? `${last.description} ${line.trim()}` : line.trim();
+      continue;
+    }
 
     const m = line.match(PKG_LINE);
     if (!m) continue;

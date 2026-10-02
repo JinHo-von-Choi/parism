@@ -242,10 +242,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   apt: {
     subcommands: {
-      list: { acceptedFlags: bools("--installed", "--upgradable"), requiredFlags: ["--installed", "--upgradable"] },
+      list:   { acceptedFlags: bools("--installed", "--upgradable", "-a", "--all-versions") },
+      search: { acceptedFlags: bools("--names-only") },
     },
-    noise: /^(Listing|나열 중)/, rowsKey: "packages", rowLine: /^[^\s/]+\/\S*\s/,
-    rowFields: ["name", "suite", "version", "arch", "status"],
+    noise: /^(Listing|Sorting|Full Text Search|나열 중|정렬 중|전체 텍스트 검색 중)|^\s/, rowsKey: "packages", rowLine: /^[^\s/]+\/\S*\s/,
+    rowFields: ["name", "suite", "version", "arch", "status", "description"],
   },
   npm: {
     subcommands: { ls: npmList(), list: npmList() },
