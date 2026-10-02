@@ -2,7 +2,7 @@ import { z }                  from "zod";
 import { zodToJsonSchema }      from "zod-to-json-schema";
 import { tryParseNativeJson }   from "./json-passthrough.js";
 import { countDataLines, isSilentEmpty } from "./invariants.js";
-import { resolveContract, checkFormat, buildHint,
+import { checkFormat, buildHint,
          type FlagArity, type PositionalRule, type FormatHint, type HintDraft } from "./format.js";
 
 /**
@@ -65,11 +65,21 @@ export interface ParserContract {
   rowLine?:     RegExp;
   /** 행 객체가 가질 수 있는 필드 이름 목록 */
   rowFields?:   readonly string[];
+  /** 데이터 줄이 줄바꿈 대신 NUL로 끝난다(find -print0). 보통 outputFlags로 켠다. */
+  nulRecords?:  boolean;
+  /**
+   * 출력 모양을 바꾸는 플래그. 키는 플래그 이름이나 "이름=값"이며, 인자에 그 플래그가 있으면
+   * 형식 검사가 값의 필드를 유효 계약에 덧씌운다(find -print0의 NUL 구분, wc --total=only의 합계만 있는 출력).
+   */
+  outputFlags?: Readonly<Record<string, OutputShape>>;
   /** 서브커맨드 앞에 올 수 있는 전역 옵션과 값 여부(git의 -C <경로>) */
   leadingFlags?: Readonly<Record<string, FlagArity>>;
   /** 서브커맨드별 계약 */
   subcommands?:  Readonly<Record<string, ParserContract>>;
 }
+
+/** 계약의 출력 모양 필드 */
+export type OutputShape = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords">;
 
 /**
  * Fixture: 파서 검증용 입출력 쌍.
@@ -172,12 +182,12 @@ export class ParserRegistry {
   }
 
   /**
-   * cmd와 args에 적용되는 계약을 반환한다. 서브커맨드 계약이 있으면 상위 계약에 덧씌운 결과다.
+   * cmd와 args에 적용되는 계약을 반환한다. 서브커맨드 계약과 인자의 출력 모양 플래그(outputFlags)를 덧씌운 결과다.
    * 등록된 계약이 없으면 undefined.
    */
   contractFor(cmd: string, args: string[]): ParserContract | undefined {
     const contract = this.contracts.get(cmd);
-    return contract ? resolveContract(contract, args).contract : undefined;
+    return contract ? checkFormat(contract, args).contract : undefined;
   }
 
   /**

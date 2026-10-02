@@ -129,6 +129,13 @@ describe("parseDu() 변형", () => {
     expect(r.entries.map(e => e.path)).toEqual(["./empty", "./dir with space"]);
   });
 
+  it("묶음 안의 -0(-s0, -sh0)도 NUL 구분이고 값 옵션 뒤의 0(-d0)은 값이다", () => {
+    expect((parseDu("du", ["-s0"], "8\t.\0") as Rows).entries).toEqual([{ size: "8", path: "." }]);
+    expect((parseDu("du", ["-sh0", "a b"], "8.0K\ta b\0") as Rows).entries).toEqual([{ size: "8.0K", path: "a b" }]);
+    expect((parseDu("du", ["-d0", "x"], "8\tx\n") as Rows).entries).toEqual([{ size: "8", path: "x" }]);
+    expect((parseDu("du", ["--max-depth", "0", "x"], "8\tx\n") as Rows).entries).toEqual([{ size: "8", path: "x" }]);
+  });
+
   it("--time이 없으면 두 번째 탭 뒤도 경로다", () => {
     expect((parseDu("du", [], "4\ta\tb\n") as Rows).entries[0]).toEqual({ size: "4", path: "a\tb" });
   });

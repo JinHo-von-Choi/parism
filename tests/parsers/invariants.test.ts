@@ -135,3 +135,66 @@ describe("내장 파서 계약에 대한 불변식", () => {
     expect(violations("apt", ["list", "--installed"], raw)).toEqual([]);
   });
 });
+
+describe("인자와 출력 모양에 따른 불변식", () => {
+  const reg = createRegistry();
+
+  /** 레지스트리로 파싱하고 인자를 반영한 계약으로 불변식을 검사한다. */
+  const violations = (cmd: string, args: string[], raw: string): string[] => {
+    const { parsed, parse_error } = reg.parse(cmd, args, raw, { maxItems: 0, format: "json" });
+    expect(parse_error).toBeUndefined();
+    return checkInvariants(parsed, raw, reg.contractFor(cmd, args)).map(v => `${v.rule}: ${v.message}`);
+  };
+
+  it("git log --decorate의 refs", () => {
+    expect(violations("git", ["log", "--oneline", "--decorate"], "abc1234 (HEAD -> main, tag: v1.0) first\ndef5678 second\n")).toEqual([]);
+  });
+
+  it("git branch의 detached, points_to, worktree", () => {
+    expect(violations("git", ["branch", "-v"], "* (HEAD detached at abc1234) abc1234 msg\n  main    def5678 other\n")).toEqual([]);
+    expect(violations("git", ["branch", "-av"], "* main                abc1234 msg\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main abc1234 msg\n")).toEqual([]);
+    expect(violations("git", ["branch", "-v"], "+ wt   abc1234 msg\n* main abc1234 msg\n")).toEqual([]);
+  });
+
+  it("git diff의 status, old_path, binary", () => {
+    const raw = [
+      "diff --git a/old.txt b/new.txt",
+      "similarity index 90%",
+      "rename from old.txt",
+      "rename to new.txt",
+      "index 1111111..2222222 100644",
+      "--- a/old.txt",
+      "+++ b/new.txt",
+      "@@ -1 +1 @@",
+      "-a",
+      "+b",
+      "diff --git a/img.png b/img.png",
+      "new file mode 100644",
+      "index 0000000..3333333",
+      "Binary files /dev/null and b/img.png differ",
+    ].join("\n") + "\n";
+    expect(violations("git", ["diff", "-M", "HEAD~1"], raw)).toEqual([]);
+  });
+
+  it("NUL로 끝나는 행(find -print0, du -0, grep -Z -l)은 NUL로 센다", () => {
+    expect(violations("find", [".", "-print0"], "./a\0./b c\0./d\ne\0")).toEqual([]);
+    expect(violations("du", ["-0"], "4\t./a\x004\t./b\0")).toEqual([]);
+    expect(violations("du", ["-s0"], "8\t.\0")).toEqual([]);
+    expect(violations("grep", ["-Z", "-l", "m", "a", "b"], "a\0b\0")).toEqual([]);
+    expect(violations("grep", ["-lZ", "m", "a", "b"], "a\0b\0")).toEqual([]);
+  });
+
+  it("ps의 머리 줄은 위치가 아니라 모양으로 가린다(--no-headers, --headers)", () => {
+    const row1 = "root 1 0.0 0.1 1000 200 ? Ss 10:00 0:01 /sbin/init";
+    const row2 = "u 42 1.5 0.2 2000 300 pts/0 R+ 10:01 0:00 ps aux";
+    const head = "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND";
+    expect(violations("ps", ["aux", "--no-headers"], `${row1}\n${row2}\n`)).toEqual([]);
+    expect(violations("ps", ["aux", "--headers"], `${head}\n${row1}\n${head}\n${row2}\n`)).toEqual([]);
+  });
+
+  it("JSON 배열 출력은 원소 수가 행 수다(gh pr list --json)", () => {
+    expect(violations("gh", ["pr", "list", "--json", "number,title"], "[]\n")).toEqual([]);
+    const raw = JSON.stringify([{ number: 1, title: "a" }, { number: 2, title: "b" }], null, 2) + "\n";
+    expect(violations("gh", ["pr", "list", "--json", "number,title"], raw)).toEqual([]);
+  });
+});

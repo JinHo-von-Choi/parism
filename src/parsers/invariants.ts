@@ -7,7 +7,8 @@
  * 작성일: 2026-10-03
  */
 
-import type { ParserContract } from "./registry.js";
+import type { ParserContract }  from "./registry.js";
+import { tryParseNativeJson }    from "./json-passthrough.js";
 
 /** 불변식 이름 */
 export type InvariantRule = "silent_empty" | "row_count" | "non_finite" | "field_names";
@@ -19,7 +20,7 @@ export interface InvariantViolation {
 }
 
 /** 불변식 판정에 쓰는 계약 필드 */
-export type OutputContract = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields">;
+export type OutputContract = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords">;
 
 /** 출력에서 온 값이 아닌 메타 키. 빈 결과 판정에서 제외한다. */
 const META_KEYS = new Set(["raw", "resource", "unit"]);
@@ -49,9 +50,9 @@ function isNumericRecord(value: unknown): boolean {
   return fields.length > 0 && fields.every(([, v]) => typeof v === "number" && Number.isFinite(v));
 }
 
-/** 머리 줄과 noise 패턴을 제외한 비공백 줄 */
+/** 머리 줄과 noise 패턴을 제외한 비공백 줄. nulRecords면 NUL로 끝나는 레코드를 줄로 본다. */
 function dataLines(raw: string, contract: OutputContract | undefined): string[] {
-  const lines = raw.split(/\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
+  const lines = raw.split(contract?.nulRecords ? "\0" : /\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
   return contract?.noise ? lines.filter(l => !contract.noise!.test(l)) : lines;
 }
 
@@ -60,8 +61,13 @@ export function countDataLines(raw: string, contract: OutputContract | undefined
   return dataLines(raw, contract).length;
 }
 
-/** 데이터 줄 가운데 행이 되는 줄 수. rowLine이 없으면 모든 데이터 줄이 행이다. */
+/**
+ * 데이터 줄 가운데 행이 되는 줄 수. rowLine이 없으면 모든 데이터 줄이 행이다.
+ * 출력 전체가 JSON 배열 문서이면(gh --json) 줄 수가 아니라 원소 수가 행 수다.
+ */
 export function countRowLines(raw: string, contract: OutputContract | undefined): number {
+  const json = tryParseNativeJson(raw);
+  if (Array.isArray(json)) return json.length;
   const lines = dataLines(raw, contract);
   return contract?.rowLine ? lines.filter(l => contract.rowLine!.test(l)).length : lines.length;
 }

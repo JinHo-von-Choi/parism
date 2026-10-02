@@ -7,7 +7,7 @@
  * 작성일: 2026-10-03
  */
 
-import type { ParserContract } from "./registry.js";
+import type { ParserContract, OutputShape } from "./registry.js";
 
 /**
  * 플래그 값 방식.
@@ -186,6 +186,7 @@ export function checkFormat(contract: ParserContract, args: string[]): FormatVer
   const resolved = resolveContract(contract, args);
   const eff      = resolved.contract;
   const reject   = (reason: string): FormatVerdict => ({ accepted: false, contract: eff, reason });
+  let   shaped   = eff;
 
   if (contract.subcommands && resolved.subcommand === null) {
     return reject(`subcommand '${resolved.rest[0] ?? "(none)"}' is not supported`);
@@ -211,9 +212,24 @@ export function checkFormat(contract: ParserContract, args: string[]): FormatVer
     if (rule?.min !== undefined && count < rule.min) return reject(`${count} positional argument(s), at least ${rule.min} required`);
     const odd = rule?.pattern ? tokens.positionals.find(p => !rule.pattern!.test(p)) : undefined;
     if (odd !== undefined) return reject(`positional argument '${odd}' is not in the accepted form`);
+    shaped = withOutputFlags(eff, tokens.flags);
   }
   if (eff.supports && !eff.supports(args)) return reject("arguments are outside the parser's custom format rule");
-  return { accepted: true, contract: eff };
+  return { accepted: true, contract: shaped };
+}
+
+/** 인자에 있는 출력 모양 플래그(outputFlags)의 필드를 계약에 덧씌운다. 뒤에 나온 플래그가 앞의 것을 덮는다. */
+function withOutputFlags(contract: ParserContract, flags: readonly FlagUse[]): ParserContract {
+  const table = contract.outputFlags;
+  if (!table) return contract;
+  let shaped = contract;
+  for (const f of flags) {
+    for (const key of [f.name, `${f.name}=${f.value ?? ""}`]) {
+      const shape: OutputShape | undefined = Object.hasOwn(table, key) ? table[key] : undefined;
+      if (shape) shaped = { ...shaped, ...shape };
+    }
+  }
+  return shaped;
 }
 
 /**

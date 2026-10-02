@@ -31,6 +31,9 @@ const DOCKER_PS      = ["container_id", "image", "command", "created", "status",
 const DOCKER_STATS   = ["container_id", "name", "cpu_perc", "mem_usage", "mem_limit", "mem_perc", "net_io", "block_io", "pids"] as const;
 const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "failed"] as const;
 
+/** 행이 NUL로 끝나는 출력(find -print0, du -0, grep -Z -l)의 모양 */
+const NUL_RECORDS = { nulRecords: true } as const;
+
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
 
@@ -71,7 +74,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...bools("-empty", "-print", "-print0", "-not", "-o", "-a", "-and", "-or", "-prune", "-P"),
     },
     singleDashLong: true,
-    rowsKey: "paths",
+    rowsKey: "paths", outputFlags: { "-print0": NUL_RECORDS },
   },
   stat: {
     acceptedFlags: bools("-L", "--dereference"),
@@ -84,7 +87,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...values("-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size", "--time-style"),
       "--time": "attached",
     },
-    rowsKey: "entries", rowFields: ["size", "path", "modified_at"],
+    rowsKey: "entries", rowFields: ["size", "path", "modified_at"], outputFlags: { "-0": NUL_RECORDS, "--null": NUL_RECORDS },
   },
   df: {
     acceptedFlags: {
@@ -99,7 +102,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   ps: {
     acceptedFlags:       { ...bools("-w", "--cumulative", "--forest", "--no-headers", "--headers"), ...values("--sort", "--width") },
     acceptedPositionals: { min: 1, max: 1, pattern: /^[axwf]*u[axwf]*$/ },
-    headerLines: 1, rowsKey: "processes", rowFields: PS_FIELDS,
+    noise: /^\s*USER\s+PID\s/, rowsKey: "processes", rowFields: PS_FIELDS,
   },
   ping: {
     acceptedFlags:       { ...bools("-q", "-n", "-4", "-6", "-D", "-O", "-v"), ...values("-c", "-i", "-W", "-w", "-s", "-t", "-I") },
@@ -162,6 +165,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     supports:       supportsGrep,
     hint:           grepHint,
     noise: /^--$/, rowsKey: "matches", rowFields: ["file", "line", "text", "byte_offset", "context"],
+    outputFlags: { "-Z": NUL_RECORDS, "--null": NUL_RECORDS },
   },
   wc: {
     acceptedFlags:  { ...bools(...WC_COUNTERS), "--total": "attached" },
@@ -289,13 +293,13 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         acceptedValues: { "--format": /^(oneline|%h %s|%H %s)$/, "--pretty": /^(oneline|format:%h %s|format:%H %s)$/, "--decorate": /^(short|full|)$/ },
         requiredFlags:  ["--oneline", "--format", "--pretty"],
         hint:           gitLogHint,
-        rowsKey: "commits", rowFields: ["hash", "message"],
+        rowsKey: "commits", rowFields: ["hash", "message", "refs"],
       },
       branch: {
         acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l", "-a", "--all", "-r", "--remotes"),
         requiredFlags: ["-v", "--verbose"],
         hint:          gitBranchHint,
-        rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message"],
+        rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message", "worktree", "points_to", "detached"],
       },
       diff: {
         acceptedFlags: {
@@ -303,7 +307,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
           ...flags("attached", "-U", "--unified", "--diff-filter", "--find-renames"),
         },
         acceptedValues: { "--diff-filter": /^[ACDMRTUXB*acdmrtuxb]+$/, "--find-renames": /^\d*%?$/ },
-        rowsKey: "files", rowLine: /^diff --git /, rowFields: ["path", "hunks"],
+        rowsKey: "files", rowLine: /^diff --git /, rowFields: ["path", "hunks", "status", "old_path", "binary"],
       },
     },
   },
