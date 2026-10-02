@@ -98,4 +98,38 @@ describe("parseDig()", () => {
     expect(result.answers).toHaveLength(1);
     expect(result.answers[0].name).toBe("example.com");
   });
+
+  it("QUESTION 섹션이 없으면 query_type을 비워 둔다", () => {
+    const raw = [";; ANSWER SECTION:", "example.com.\t51\tIN\tA\t104.20.23.154", ";; Query time: 0 msec"].join("\n");
+    const result = parseDig("dig", ["+noquestion", "example.com"], raw);
+    expect(result).toMatchObject({ query: "", query_type: "" });
+    expect(result.answers).toHaveLength(1);
+  });
+
+  it("+noall +answer 출력은 머리말이 없으므로 모든 레코드를 답변으로 읽는다", () => {
+    const raw = ["example.com.\t51\tIN\tA\t172.66.147.243", "example.com.\t51\tIN\tA\t104.20.23.154"].join("\n");
+    expect(parseDig("dig", ["+noall", "+answer", "example.com"], raw).answers).toHaveLength(2);
+  });
+
+  it("+multiline의 괄호 레코드를 한 값으로 잇고 주석을 버린다", () => {
+    const raw = [
+      ";; ANSWER SECTION:",
+      "example.com.\t\t1551 IN\tSOA elliott.ns.cloudflare.com. dns.cloudflare.com. (",
+      "\t\t\t\t2416374680 ; serial",
+      "\t\t\t\t10000      ; refresh (2 hours 46 minutes 40 seconds)",
+      "\t\t\t\t1800       ; minimum (30 minutes)",
+      "\t\t\t\t)",
+      "",
+      ";; Query time: 0 msec",
+    ].join("\n");
+    const result = parseDig("dig", ["+multiline", "example.com", "SOA"], raw);
+    expect(result.answers).toHaveLength(1);
+    expect(result.answers[0]!.value).toBe("elliott.ns.cloudflare.com. dns.cloudflare.com. ( 2416374680 10000 1800 )");
+    expect(result.query_time_ms).toBe(0);
+  });
+
+  it("TXT 값의 연속 공백을 보존한다", () => {
+    const raw = [";; ANSWER SECTION:", "example.com.\t60\tIN\tTXT\t\"v=spf1  -all\""].join("\n");
+    expect(parseDig("dig", ["example.com", "TXT"], raw).answers[0]!.value).toBe("\"v=spf1  -all\"");
+  });
 });

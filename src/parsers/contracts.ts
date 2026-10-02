@@ -36,6 +36,12 @@ const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--byte
 /** journalctl 출력 형식 가운데 한 줄에 시각, 호스트, 유닛, 메시지가 있는 short 계열 */
 const JOURNAL_FORMATS = /^(short|short-precise|short-iso|short-iso-precise|short-full|short-unix|short-monotonic|with-unit)$/;
 
+/** dig +noall은 섹션 머리말이 없어지므로 뒤에 +answer가 있을 때만 받는다(그러면 레코드가 모두 답변이다). */
+function supportsDig(args: string[]): boolean {
+  const noall = args.indexOf("+noall");
+  return noall < 0 || args.indexOf("+answer", noall) > noall;
+}
+
 /** 명령별 내장 계약 */
 export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   ls: {
@@ -77,13 +83,13 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   df: {
     acceptedFlags: {
-      ...bools("-h", "-H", "-k", "-a", "-l", "-P", "--si", "--human-readable", "--all", "--local", "--portability", "--total", "--no-sync"),
+      ...bools("-h", "-H", "-k", "-m", "-T", "-a", "-l", "-P", "--si", "--human-readable", "--all", "--local", "--portability", "--total", "--no-sync", "--print-type"),
       ...values("-t", "--type", "-x", "--exclude-type", "-B", "--block-size"),
     },
-    acceptedValues: { "-B": /^(1K|1024)$/, "--block-size": /^(1K|1024)$/ },
+    acceptedValues: { "-B": /^(1K|1024|1M)$/, "--block-size": /^(1K|1024|1M)$/ },
     hint:           dfHint,
     headerLines: 1, rowsKey: "filesystems",
-    rowFields: ["filesystem", "blocks_1k", "used", "available", "use_percent", "mounted_on"],
+    rowFields: ["filesystem", "type", "blocks_1k", "size", "used", "available", "use_percent", "mounted_on"],
   },
   ps: {
     acceptedFlags:       { ...bools("-w", "--cumulative"), ...values("--sort", "--width") },
@@ -127,8 +133,12 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     noise: /^(Netid|State|Recv-Q)\s|^\s/, rowsKey: "connections", rowFields: SS_FIELDS,
   },
   dig: {
-    acceptedFlags: { ...bools("+tcp", "+stats", "+nostats", "-4", "-6", "-m", "-r"), ...values("-x", "-t", "-c", "-p", "-q", "-b") },
+    acceptedFlags: {
+      ...bools("+tcp", "+stats", "+nostats", "+nocmd", "+noquestion", "+multi", "+multiline", "+noall", "+answer", "-4", "-6", "-m", "-r"),
+      ...values("-x", "-t", "-c", "-p", "-q", "-b"),
+    },
     plusFlags:     true,
+    supports:      supportsDig,
     hint:          digHint,
   },
   grep: {

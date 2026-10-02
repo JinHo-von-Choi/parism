@@ -21,7 +21,7 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["ls", ["-lF", "dir"], ["-l", "dir"], "total 4\n-rwxr-xr-x 1 u g 12 Oct  3 06:45 run.sh\n"],
   ["find", [".", "-print0"], ["."], ".\n./a.txt\n"],
   ["du", ["-0", "-s", "dir"], ["-s", "dir"], "8\tdir\n"],
-  ["df", ["-m"], [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n"],
+  ["df", ["-BG"], [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n"],
   ["ps", ["auxf"], ["aux"], "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1000 200 ? Ss 10:00 0:01 /sbin/init\n"],
   ["ps", ["aux", "--no-headers"], ["aux"], "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1000 200 ? Ss 10:00 0:01 /sbin/init\n"],
   ["dig", ["+short", "example.com"], ["example.com"],

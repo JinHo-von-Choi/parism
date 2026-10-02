@@ -120,7 +120,7 @@ export function envHint(rest: string[]): HintDraft | null {
 /* ---------------- df, free, uname, id ---------------- */
 
 export function dfHint(rest: string[]): HintDraft | null {
-  const args = dropFlags(rest, { ...table("bool", "-m"), ...table("value", "-B", "--block-size") }, table("value", "-t", "--type", "-x", "--exclude-type"));
+  const args = dropFlags(rest, table("value", "-B", "--block-size"), table("value", "-t", "--type", "-x", "--exclude-type"));
   return { args, reason: "df columns in 1K blocks or human-readable sizes are parsed" };
 }
 
