@@ -5,6 +5,11 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
+## [2.0.1] - 2026-10-03
+
+### Documentation
+- README 명령 표의 열 구성과 표기를 정리하고, `terraform plan`에 build 프로필 표시를 추가했다.
+
 ## [2.0.0] - 2026-10-03
 
 ### Breaking
