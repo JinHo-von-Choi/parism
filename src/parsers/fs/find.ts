@@ -9,7 +9,8 @@ export interface FindSummary {
 export function parseFind(
   cmd: string, args: string[], raw: string, ctx?: ParseContext,
 ): { paths: string[]; _summary?: FindSummary } {
-  const paths = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  const terminator = args.includes("-print0") ? "\0" : "\n";
+  const paths = raw.split(terminator).map(l => (terminator === "\0" ? l : l.trim())).filter(Boolean);
 
   const maxItems = ctx?.maxItems ?? 0;
   if (maxItems > 0 && paths.length > maxItems) {

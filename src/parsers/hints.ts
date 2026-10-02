@@ -91,17 +91,7 @@ export function lsHint(rest: string[]): HintDraft | null {
   return { args, reason: "ls long listing (-l) is parsed; display-only flags are dropped" };
 }
 
-/* ---------------- find, du, grep, env: NUL separators ---------------- */
-
-export function findHint(rest: string[]): HintDraft | null {
-  if (!rest.includes("-print0")) return null;
-  return { args: rest.filter(a => a !== "-print0"), reason: "newline-separated find output is parsed" };
-}
-
-export function duHint(rest: string[]): HintDraft | null {
-  const known = table("value", "-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size");
-  return { args: dropFlags(rest, table("bool", "-0", "--null"), known), reason: "newline-separated du output is parsed" };
-}
+/* ---------------- grep ---------------- */
 
 export function grepHint(rest: string[]): HintDraft | null {
   const known = table("value", "-e", "--regexp", "-f", "--file", "-m", "--max-count", "--include", "--exclude", "--exclude-dir",
@@ -111,10 +101,6 @@ export function grepHint(rest: string[]): HintDraft | null {
   const context = hasFlag(args, "-A", "-B", "-C", "--after-context", "--before-context", "--context") || args.some(a => /^-\d+$/.test(a));
   if (context && !hasFlag(args, "-n", "--line-number")) args.unshift("-n");
   return { args, reason: "grep output with line numbers (-n) and without NUL separators is parsed" };
-}
-
-export function envHint(rest: string[]): HintDraft | null {
-  return { args: dropFlags(rest, table("bool", "-0", "--null")), reason: "newline-separated env output is parsed" };
 }
 
 /* ---------------- df, free, uname, id ---------------- */
@@ -140,13 +126,7 @@ export function idHint(rest: string[]): HintDraft | null {
   return { args: rest.filter(a => !a.startsWith("-")), reason: "the full id output carries the same ids together with names" };
 }
 
-/* ---------------- ps, dig ---------------- */
-
-export function psHint(rest: string[]): HintDraft | null {
-  const args = dropFlags(rest, table("bool", "--forest", "--no-headers", "--headers"), table("value", "--sort", "--width"))
-    .map(a => (/^[A-Za-z]+$/.test(a) ? a.replace(/f/g, "") : a));
-  return { args, reason: "BSD user format (ps aux) without the process tree is parsed" };
-}
+/* ---------------- dig ---------------- */
 
 const DIG_DISPLAY = table("bool", "+short", "+noall", "+answer", "+nocomments", "+noquestion", "+nocmd", "+multi", "+multiline", "+yaml");
 

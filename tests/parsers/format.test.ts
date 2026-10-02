@@ -138,7 +138,7 @@ describe("내장 파서 허용 형식", () => {
   it.each<[string, string[]]>([
     ["ls", ["-l"]], ["ls", ["-la", "/etc"]], ["ls", ["-ltr"]], ["ls", ["--format=long"]], ["ls", ["-l", "--color=never"]],
     ["ls", ["-lR"]], ["ls", ["-lF"]], ["ls", ["-lp"]], ["ls", ["-l", "a", "b"]], ["ls", ["-l", "--time-style=long-iso"]], ["ls", ["-l", "--full-time"]], ["find", [".", "-name", "*.ts", "-type", "f"]], ["stat", ["a.txt"]], ["stat", ["a", "b"]], ["du", ["-sh", "dir"]], ["du", ["-d", "1"]],
-    ["df", ["-h"]], ["df", []], ["df", ["-m"]], ["df", ["-B1M"]], ["df", ["-T"]], ["df", ["-hT"]], ["df", ["-B", "1K"]], ["ps", ["aux"]], ["ps", ["aux", "--sort=-%cpu"]], ["ping", ["-c", "2", "host"]],
+    ["df", ["-h"]], ["df", []], ["df", ["-m"]], ["df", ["-B1M"]], ["df", ["-T"]], ["df", ["-hT"]], ["df", ["-B", "1K"]], ["ps", ["aux"]], ["ps", ["aux", "--sort=-%cpu"]], ["ps", ["auxf"]], ["ps", ["aux", "--no-headers"]], ["ps", ["aux", "--forest"]], ["find", [".", "-print0"]], ["du", ["--time"]], ["du", ["-0"]], ["curl", ["-sIL", "http://example.com"]], ["env", ["-0"]], ["ping", ["-c", "2", "host"]],
     ["curl", ["-sI", "https://example.com"]], ["netstat", ["-tlnp"]], ["ss", ["-tuln"]], ["ss", ["-4"]], ["ss", ["-a"]], ["ss", ["-H"]], ["ss", ["-tlnp"]], ["ss", ["-tum"]], ["ss", ["-x"]], ["lsof", ["-p", "1"]], ["lsof", ["-c", "bash"]],
     ["lsof", ["-i", "-n", "-P"]], ["lsof", ["-iTCP", "-sTCP:LISTEN"]], ["dig", ["example.com", "MX"]], ["dig", ["+noquestion", "example.com"]], ["dig", ["+multi", "example.com"]], ["dig", ["+noall", "+answer", "example.com"]], ["dig", ["+nocmd", "example.com"]], ["dig", ["+tcp", "@1.1.1.1", "example.com"]],
     ["grep", ["-rn", "x", "."]], ["grep", ["-c", "x", "a", "b"]], ["grep", ["-nA1", "x", "f"]], ["grep", ["-b", "x", "f"]], ["grep", ["-Zl", "x", "f"]], ["grep", ["-L", "x", "f"]], ["wc", ["-l", "a", "b"]], ["env", []], ["pwd", []], ["which", ["-a", "ls"]],
@@ -156,14 +156,14 @@ describe("내장 파서 허용 형식", () => {
 
   it.each<[string, string[]]>([
     ["ls", ["-lh"]], ["ls", ["-li"]], ["ls", ["-l", "--time-style=+%s"]], ["ls", []], ["ls", ["-l", "--color=always"]], ["ls", ["-R"]],
-    ["find", [".", "-ls"]], ["find", [".", "-print0"]], ["find", [".", "-exec", "ls", "{}", ";"]],
-    ["stat", ["-c", "%s", "a"]], ["du", ["--time"]], ["du", ["-0"]], ["df", ["-i"]], ["df", ["-BG"]], ["df", ["--output"]],
-    ["ps", ["auxf"]], ["ps", ["aux", "--no-headers"]], ["ps", ["aux", "--forest"]], ["ps", ["-ef"]],
-    ["curl", ["-s", "https://example.com"]], ["curl", ["-sIL", "http://example.com"]], ["netstat", ["-s"]],
+    ["find", [".", "-ls"]], ["find", [".", "-exec", "ls", "{}", ";"]],
+    ["stat", ["-c", "%s", "a"]], ["df", ["-i"]], ["df", ["-BG"]], ["df", ["--output"]],
+     ["ps", ["-ef"]],
+    ["curl", ["-s", "https://example.com"]], ["netstat", ["-s"]],
     ["ss", ["-s"]], ["ss", ["-t", "state", "established"]], ["lsof", ["-t", "-c", "node"]], ["lsof", ["-F", "p"]],
     ["dig", ["+trace", "example.com"]], ["dig", ["+nocomments", "example.com"]], ["dig", ["+answer", "+noall", "example.com"]], ["dig", ["+noall", "+authority", "example.com"]],
     ["dig", ["+short", "example.com"]],
-    ["grep", ["-A1", "x", "f"]], ["grep", ["-C", "2", "x", "f"]], ["grep", ["-2", "x", "f"]], ["grep", ["-Z", "x", "f"]], ["wc", ["a"]], ["wc", ["-lw", "a"]], ["env", ["-0"]], ["free", ["-w"]], ["free", ["--tera"]], ["docker", ["stats"]],
+    ["grep", ["-A1", "x", "f"]], ["grep", ["-C", "2", "x", "f"]], ["grep", ["-2", "x", "f"]], ["grep", ["-Z", "x", "f"]], ["wc", ["a"]], ["wc", ["-lw", "a"]], ["env", ["-i"]], ["free", ["-w"]], ["free", ["--tera"]], ["docker", ["stats"]],
     ["uname", ["-r"]], ["id", ["-un"]], ["systemctl", ["list-unit-files"]],
     ["systemctl", ["status", "cron"]],
     ["journalctl", ["-o", "json"]], ["journalctl", ["-o", "cat", "-n", "5"]],

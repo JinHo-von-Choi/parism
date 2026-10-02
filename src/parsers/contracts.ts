@@ -12,7 +12,7 @@ import type { ParserContract } from "./registry.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
 import { supportsGrep }     from "./text/grep.js";
-import { lsHint, findHint, duHint, dfHint, psHint, digHint, grepHint, envHint, freeHint, unameHint, idHint,
+import { lsHint, dfHint, digHint, grepHint, freeHint, unameHint, idHint,
          journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
          ghPrListHint, npmListHint, npmHint } from "./hints.js";
 
@@ -24,7 +24,7 @@ const bools  = (...names: string[]): Record<string, FlagArity> => flags("bool", 
 const values = (...names: string[]): Record<string, FlagArity> => flags("value", ...names);
 
 const LS_FIELDS      = ["permissions", "links", "owner", "group", "size_bytes", "modified_at", "name", "type", "target", "directory"] as const;
-const PS_FIELDS      = ["user", "pid", "cpu", "mem", "vsz", "rss", "tty", "stat", "start", "time", "command"] as const;
+const PS_FIELDS      = ["user", "pid", "cpu", "mem", "vsz", "rss", "tty", "stat", "start", "time", "command", "depth"] as const;
 const SS_FIELDS      = ["netid", "state", "recv_q", "send_q", "local_address", "local_port", "peer_address", "peer_port"] as const;
 const LSOF_FIELDS    = ["command", "pid", "user", "fd", "type", "device", "name", "state"] as const;
 const DOCKER_PS      = ["container_id", "image", "command", "created", "status", "ports", "names"] as const;
@@ -64,10 +64,9 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedFlags: {
       ...values("-name", "-iname", "-type", "-maxdepth", "-mindepth", "-path", "-ipath", "-size", "-mtime", "-mmin",
         "-newer", "-user", "-perm", "-regex", "-iregex"),
-      ...bools("-empty", "-print", "-not", "-o", "-a", "-and", "-or", "-prune", "-P"),
+      ...bools("-empty", "-print", "-print0", "-not", "-o", "-a", "-and", "-or", "-prune", "-P"),
     },
     singleDashLong: true,
-    hint:           findHint,
     rowsKey: "paths",
   },
   stat: {
@@ -77,11 +76,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedFlags: {
       ...bools("-s", "-h", "-a", "-c", "-k", "-m", "-b", "-x", "-S", "-H", "-D", "-P", "-l",
         "--summarize", "--human-readable", "--all", "--total", "--apparent-size", "--si", "--bytes", "--one-file-system",
-        "--separate-dirs", "--count-links", "--dereference-args", "--no-dereference", "--inodes"),
-      ...values("-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size"),
+        "--separate-dirs", "--count-links", "--dereference-args", "--no-dereference", "--inodes", "-0", "--null"),
+      ...values("-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size", "--time-style"),
+      "--time": "attached",
     },
-    hint:    duHint,
-    rowsKey: "entries", rowFields: ["size", "path"],
+    rowsKey: "entries", rowFields: ["size", "path", "modified_at"],
   },
   df: {
     acceptedFlags: {
@@ -94,9 +93,8 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     rowFields: ["filesystem", "type", "blocks_1k", "size", "used", "available", "use_percent", "mounted_on"],
   },
   ps: {
-    acceptedFlags:       { ...bools("-w", "--cumulative"), ...values("--sort", "--width") },
-    acceptedPositionals: { min: 1, max: 1, pattern: /^[axw]*u[axw]*$/ },
-    hint:                psHint,
+    acceptedFlags:       { ...bools("-w", "--cumulative", "--forest", "--no-headers", "--headers"), ...values("--sort", "--width") },
+    acceptedPositionals: { min: 1, max: 1, pattern: /^[axwf]*u[axwf]*$/ },
     headerLines: 1, rowsKey: "processes", rowFields: PS_FIELDS,
   },
   ping: {
@@ -105,7 +103,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   curl: {
     acceptedFlags: {
-      ...bools("-s", "-S", "--silent", "--show-error", "-I", "--head", "-k", "-f", "--fail", "--compressed", "-v"),
+      ...bools("-s", "-S", "--silent", "--show-error", "-I", "--head", "-L", "--location", "-k", "-f", "--fail", "--compressed", "-v"),
       ...values("-H", "--header", "-m", "--max-time", "--connect-timeout", "-A", "--user-agent"),
     },
     requiredFlags:       ["-I", "--head"],
@@ -164,7 +162,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     exclusiveFlags: WC_COUNTERS,
     rowsKey: "entries", rowFields: ["count", "file"],
   },
-  env:   { acceptedFlags: {}, acceptedPositionals: { max: 0 }, hint: envHint },
+  env:   { acceptedFlags: bools("-0", "--null"), acceptedPositionals: { max: 0 } },
   pwd:   { acceptedFlags: bools("-L", "-P"), acceptedPositionals: { max: 0 } },
   which: { acceptedFlags: bools("-a", "-s"), rowsKey: "paths" },
   free: {
@@ -285,7 +283,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       },
       diff: {
         acceptedFlags: {
-          ...bools("--cached", "--staged", "-w", "--no-color", "-p", "--patch", "-M", "--no-renames", "--text", "-a", "--binary", "--no-prefix"),
+          ...bools("--cached", "--staged", "-w", "--no-color", "-p", "--patch", "--patch-with-stat", "-M", "--no-renames", "--text", "-a", "--binary", "--no-prefix"),
           ...flags("attached", "-U", "--unified", "--diff-filter", "--find-renames"),
         },
         acceptedValues: { "--diff-filter": /^[ACDMRTUXB*acdmrtuxb]+$/, "--find-renames": /^\d*%?$/ },

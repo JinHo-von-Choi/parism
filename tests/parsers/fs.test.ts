@@ -113,6 +113,34 @@ describe("parseLs() 구획과 표시 기호", () => {
   });
 });
 
+describe("parseDu() 변형", () => {
+  type Rows = { entries: Array<{ size: string; path: string; modified_at?: string }> };
+
+  it("--time의 시각 열을 modified_at으로 담는다", () => {
+    const r = parseDu("du", ["--time"], "4\t2026-10-03 06:45\t./empty\n60\t2026-10-03 06:45\t.\n") as Rows;
+    expect(r.entries).toEqual([
+      { size: "4", modified_at: "2026-10-03 06:45", path: "./empty" },
+      { size: "60", modified_at: "2026-10-03 06:45", path: "." },
+    ]);
+  });
+
+  it("-0은 NUL로 끝나는 레코드를 읽는다", () => {
+    const r = parseDu("du", ["-0"], "4\t./empty\0 8\t./dir with space\0") as Rows;
+    expect(r.entries.map(e => e.path)).toEqual(["./empty", "./dir with space"]);
+  });
+
+  it("--time이 없으면 두 번째 탭 뒤도 경로다", () => {
+    expect((parseDu("du", [], "4\ta\tb\n") as Rows).entries[0]).toEqual({ size: "4", path: "a\tb" });
+  });
+});
+
+describe("parseFind() -print0", () => {
+  it("NUL로 나뉜 경로를 읽고 줄바꿈이 든 경로를 지킨다", () => {
+    const r = parseFind("find", [".", "-print0"], "./a\0./odd\nname\0") as { paths: string[] };
+    expect(r.paths).toEqual(["./a", "./odd\nname"]);
+  });
+});
+
 describe("parseStat()", () => {
   const statLinuxRaw = [
     "  File: /home/user/project/src/index.ts",

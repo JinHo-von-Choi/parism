@@ -14,6 +14,13 @@ describe("parseEnv()", () => {
   });
 });
 
+describe("parseEnv() -0", () => {
+  it("NUL로 끝나는 레코드는 줄바꿈이 든 값도 그대로 읽는다", () => {
+    const r = parseEnv("env", ["-0"], "A=first line\nsecond=line\0B=2\0") as { vars: Record<string, string> };
+    expect(r.vars).toEqual({ A: "first line\nsecond=line", B: "2" });
+  });
+});
+
 describe("parseEnv() 여러 줄 값", () => {
   it("NAME=value가 아닌 줄이 있으면 예외로 알린다", () => {
     expect(() => parseEnv("env", [], "BASH_FUNC_f%%=() {  echo hi\n}\nHOME=/home/u\n")).toThrow(UnrecognizedOutputError);
