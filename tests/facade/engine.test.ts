@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { unlink, writeFile }    from "node:fs/promises";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir }                     from "node:os";
+import path                           from "node:path";
 import { ParismEngine, createEngine } from "../../src/facade/engine.js";
 import { DEFAULT_CONFIG }             from "../../src/config/loader.js";
 import { createRegistry }             from "../../src/parsers/index.js";
@@ -235,5 +238,32 @@ describe("ParismEngine.run() — telemetry", () => {
 
     const t = result.telemetry!;
     expect(t.total_ms).toBeGreaterThanOrEqual(t.guard_ms);
+  });
+});
+
+describe("adaptive_format_threshold", () => {
+  const makeDir = (n: number): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-ad-"));
+    for (let i = 0; i < n; i++) writeFileSync(path.join(dir, `f${i}`), "x");
+    return dir;
+  };
+  const cfgFor = (dir: string, compact: number, jsonNoRaw: number) => ({
+    ...DEFAULT_CONFIG,
+    guard:   { ...DEFAULT_CONFIG.guard, allowed_paths: [dir] },
+    parsers: { ...DEFAULT_CONFIG.parsers, adaptive_format_threshold: { compact, json_no_raw: jsonNoRaw } },
+  });
+
+  it("항목 수가 json_no_raw 임계값 이상이면 compact이면서 raw를 비운다", async () => {
+    const dir = makeDir(3);
+    const r   = await new ParismEngine(cfgFor(dir, 2, 3), createRegistry()).run("ls", { args: ["-l"], cwd: dir });
+    expect(r.stdout.raw).toBe("");
+    expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
+  });
+
+  it("compact 임계값만 넘으면 compact이고 raw는 유지한다", async () => {
+    const dir = makeDir(3);
+    const r   = await new ParismEngine(cfgFor(dir, 2, 100), createRegistry()).run("ls", { args: ["-l"], cwd: dir });
+    expect(r.stdout.raw).not.toBe("");
+    expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
   });
 });

@@ -123,25 +123,27 @@ export class ParismEngine {
     if (parsed == null) parsed = nativeParsed;
 
     // adaptive format: 항목 수 기준 자동 포맷 선택
-    let finalFormat = parseFormat;
+    let useCompact  = parseFormat === "compact";
+    let dropRaw     = format === "json-no-raw";
     const threshold = this.config.parsers?.adaptive_format_threshold;
     if (threshold && parsed && typeof parsed === "object") {
       const arr = Array.isArray(parsed) ? parsed : Object.values(parsed).find(v => Array.isArray(v)) as unknown[] | undefined;
       if (arr && arr.length > 0) {
-        if (threshold.json_no_raw !== undefined && arr.length >= threshold.json_no_raw) {
-          finalFormat = "json-no-raw" as typeof parseFormat;
-        } else if (threshold.compact !== undefined && arr.length >= threshold.compact) {
-          finalFormat = "compact";
+        if (threshold.json_no_raw !== undefined && threshold.json_no_raw > 0 && arr.length >= threshold.json_no_raw) {
+          useCompact = true;
+          dropRaw    = true;
+        } else if (threshold.compact !== undefined && threshold.compact > 0 && arr.length >= threshold.compact) {
+          useCompact = true;
         }
       }
     }
 
-    const final = finalFormat === "compact" ? toCompact(parsed) : parsed;
+    const final = useCompact ? toCompact(parsed) : parsed;
     /** native JSON 폴백이 성공하면 unsupported_format은 실패로 노출하지 않는다. */
     const parseError   = parseResult.parse_error?.reason === "unsupported_format" && nativeParsed !== null
       ? undefined
       : parseResult.parse_error;
-    const stdout       = format === "json-no-raw" && final !== null
+    const stdout       = dropRaw && final !== null
       ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
       : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
 
