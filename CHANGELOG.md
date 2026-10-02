@@ -15,6 +15,13 @@
 - 기본 `allowed_commands` 40종 모두에 기본 정책을 둔다. 새로 정책을 받은 명령: `ls`, `stat`, `du`, `df`, `tree`, `ps`, `ping`, `netstat`, `lsof`, `ss`, `dig`, `grep`, `wc`, `head`, `tail`, `cat`, `pwd`, `which`, `echo`, `date`, `uname`, `hostname`, `free`, `id`.
 - `git` 실행 인자에 `-c core.hooksPath=/dev/null`, `-c log.showSignature=false`, `-c gpg.program=false`, `-c gpg.ssh.program=false`, `-c gpg.x509.program=false`를 더하고, `log`, `show`에 `--no-show-signature`를 붙인다.
 - 시간 초과 시 POSIX에서는 프로세스 그룹 전체를 종료한다. 자식이 띄운 프로세스가 남지 않는다.
+- 시간 초과나 버퍼 상한 초과로 종료시킨 실행은 자식이 끝나고 200ms 뒤 stdout, stderr 스트림을 닫고 결과를 확정한다. 프로세스 그룹 밖으로 분리된 자손이 출력 파이프를 갖고 있어도 결과 반환과 동시 실행 자리가 그 자손의 종료를 기다리지 않는다.
+- 실행 중인 프로세스 그룹을 추적하고, 서버가 SIGINT, SIGTERM을 받거나 프로세스가 끝날 때 종료한다. 다른 처리기가 없으면 신호의 기본 종료 동작을 유지한다.
+- `ps`의 위치 인자는 BSD식 옵션 낱말로 보고 `auxfwrljsvhcmnSHTgZ` 글자로만 이루어진 경우에만 받는다. 환경 변수를 함께 출력하는 수식어 `e`, 값을 받는 글자, 숫자 pid 목록 등 그 밖의 위치 인자는 `arg_not_allowed`다.
+- `lsof`의 `+`로 시작하는 인자는 `-` 옵션과 같이 플래그로 보고, 정책에 없으면 `arg_not_allowed`다.
+- `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 경로 검사를 받는다. 정책이 있는 명령과 없는 명령 모두에 적용하며, 위치 인자 규칙이 `url`인 명령(`curl`)은 제외한다.
+- 설정을 읽을 때 `default_page_size`가 `max_page_size`보다 크면 `max_page_size`로 줄인다. `page_info.requested_page_size`는 호출자가 상한보다 큰 `page_size`를 준 경우에만 표시된다.
+- 검증하지 않은 설정 객체로 `ParismEngine`을 만들 때 `max_concurrency`가 1 미만이면 1로, 유한한 수가 아니면 기본값 4로 본다. 이전에는 생성자에서 `RangeError`가 났다.
 - `run_paged`의 페이지 출력(stdout, stderr)에 `max_output_bytes`를 적용하고, 넘으면 `truncated: true`를 표시한다.
 - `id -u`, `id -g`가 `0`을 출력할 때 `unrecognized_output`으로 처리하던 문제를 고쳤다. 최상위 값이 모두 숫자인 결과의 `0`은 인식된 값으로 본다.
 
@@ -24,8 +31,22 @@
 - 새 설정 `guard.max_concurrency`(기본 4): 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다.
 - `guard.secrets`와 `parsers.adaptive_format_threshold`는 레이어 사이에서 하위 키 단위로 병합한다.
 - `SPECIFICATION.md`의 기본 명령 수와 `describe`·`dry_run`·`failure` 표, `SECURITY.md`의 경로 검사 범위를 실제 동작에 맞췄다.
+- 기본 정책이나 `build` 프로필 정책을 쓰는 기본 명령은 인자가 정확히 `--version` 하나이면 정책 검사 없이 통과한다. `guard.command_policies`로 정책을 덮어쓴 명령은 그 정책을 따른다. `--help`는 허용하지 않는다(일부 명령은 페이저나 매뉴얼 뷰어를 띄운다).
+- 기본 정책에 읽기 용도의 인자를 더했다: `date`의 `+`로 시작하는 출력 형식 위치 인자 하나, `ls`의 `-f`, `-q`, `-T`, `-D`, `--zero`, `--hyperlink`, `ps`의 `--width`, `-q`, `tree`의 `--filesfirst`, `-H`, `which`의 `--all`, `grep`의 `--exclude-from`(값은 경로 검사), `dig`의 `-f`(값은 경로 검사). `echo`는 `-n`, `-e`, `-E`를 받는다.
+- 명령 정책 필드 `positionalChars`(위치 인자 허용 문자), `positionalPrefix`(위치 인자 접두사), `maxPositionals`(위치 인자 최대 개수), `plusFlags`(`+` 인자를 플래그로 분해)를 추가했다. `guard.command_policies`에서도 쓸 수 있다.
 - Breaking notes:
-  - 새로 정책을 받은 24종은 정책에 없는 플래그와 위치 인자를 `arg_not_allowed`로 거부한다. `date`, `hostname`은 위치 인자를 받지 않으며(`date +FORMAT` 포함), `tail -f`, `grep -R`, `du -L`, `tree -l`, `ls -L`, `tree -o`, `ss -D` 등은 허용하지 않는다. 필요하면 `guard.command_policies`로 허용한다.
+  - 새로 정책을 받은 24종은 정책에 없는 플래그와 위치 인자를 `arg_not_allowed`로 거부한다. 필요하면 `guard.command_policies`로 허용한다. 의도적으로 거부하는 정상 사용은 다음과 같다.
+    - 24종 모두: `--help`
+    - 끝나지 않는 추적과 반복 실행: `tail -f`, `tail -F`, `tail --follow`, `free -s`, `netstat -c`, `lsof -r`, `lsof +r`, `ping -f`
+    - 재귀 중 심볼릭 링크를 따라가는 옵션: `grep -R`, `du -L`, `tree -l`, `ls -L`
+    - 출력 파일과 덤프 파일: `tree -o`, `ss -D`
+    - 시스템 상태 변경: `ss -K`, `ss -E`, `date -s`, `date --set`, `hostname`의 위치 인자, `hostname -F`, `hostname -b`
+    - 파일 목록이나 묶음 입력을 읽는 옵션: `wc --files0-from`, `date -f`
+    - `ps`의 환경 표시 수식어 `e`와 허용 글자 밖의 위치 인자(숫자 pid 목록은 `-p`로 지정한다)
+    - `lsof`의 `+`로 시작하는 옵션 전부(`+D`, `+d`, `+c`, `+L` 등)
+    - `echo`의 `-n`, `-e`, `-E` 밖의 대시로 시작하는 인자
+    - `date`의 위치 인자 중 `+`로 시작하지 않는 것과 두 번째 위치 인자
+  - 위치 인자 `key=값`, `+opt=값`의 값이 허용 경로 밖으로 해석되면 `path_not_allowed`가 된다.
   - 정책이 있는 명령의 위치 인자와 플래그 값도 위 경로 규칙으로 검사하므로, 허용 경로 밖으로 해석되는 값(중간 `..`, 밖을 가리키는 링크 이름)은 `path_not_allowed`가 된다.
   - 무효한 설정 필드는 이전처럼 적용되지 않고 무시된다. 정수가 아닌 수치 환경 변수(`1.5` 등)도 무시된다.
   - `guard.secrets`의 일부 하위 키만 지정하면 나머지 하위 키는 기본값을 유지한다. 이전에는 지정하지 않은 하위 키가 비었다. `adaptive_format_threshold`도 같다.

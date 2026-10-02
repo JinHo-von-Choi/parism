@@ -133,7 +133,7 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 응답에 `page_info` 필드가 추가된다:
 - `page_info.page`: 현재 페이지 (0-indexed)
 - `page_info.page_size`: 적용한 페이지 크기
-- `page_info.requested_page_size`: 요청한 `page_size`가 `guard.max_page_size`를 넘어 줄였을 때만 있는 원래 요청값
+- `page_info.requested_page_size`: 요청한 `page_size`가 `guard.max_page_size`를 넘어 줄였을 때만 있는 원래 요청값. `guard.default_page_size`는 설정을 읽을 때 `max_page_size` 이하로 줄이므로 `page_size`를 주지 않은 요청에는 나타나지 않는다
 - `page_info.total_lines`: stdout 전체 줄 수
 - `page_info.has_next`: 다음 페이지 존재 여부
 - `page_info.cache`: `{ hit, age_ms }`. `page=0`은 항상 새로 실행해 저장하고, `page>0`은 같은 (명령, 인자, 실경로 cwd) 결과가 30초 안에 있으면 재실행 없이 재사용한다. 최대 16항목, LRU
@@ -246,7 +246,7 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `kind=exec, reason=non_zero_exit`는 프로세스 종료 코드가 0이 아닌 모든 경우를 포함한다. `timeout_ms`가 지나 종료시킨 실행은 `timeout`, 버퍼 상한 초과는 `output_overflow`로 분류한다. 분류 로직은 `src/engine/executor.ts`에 위치한다.
 
-실행기는 셸 없이 `spawn`으로 프로세스를 띄운다. POSIX에서는 자식을 새 프로세스 그룹으로 띄우고, 시간 초과나 버퍼 상한 초과 시 그룹 전체에 SIGKILL을 보내 자식이 띄운 프로세스도 남기지 않는다. 동시에 실행하는 자식 프로세스 수는 `guard.max_concurrency`(기본 4)로 제한하며, 넘는 요청은 자리가 날 때까지 대기한다.
+실행기는 셸 없이 `spawn`으로 프로세스를 띄운다. POSIX에서는 자식을 새 프로세스 그룹으로 띄우고, 시간 초과나 버퍼 상한 초과 시 그룹 전체에 SIGKILL을 보내 자식이 띄운 프로세스도 남기지 않는다. 종료시킨 뒤에는 자식이 끝나고 200ms가 지나면 stdout, stderr 스트림을 닫고 결과를 확정하므로, 그룹 밖으로 분리된 자손이 출력 파이프를 갖고 있어도 결과 반환이 늦어지지 않는다. 실행 중인 프로세스 그룹은 추적해 SIGINT, SIGTERM 수신과 프로세스 종료 시 종료한다. 동시에 실행하는 자식 프로세스 수는 `guard.max_concurrency`(기본 4)로 제한하며, 넘는 요청은 자리가 날 때까지 대기한다. 검증하지 않은 설정 객체로 엔진을 만들 때 이 값이 1 미만이면 1로, 유한한 수가 아니면 4로 본다.
 
 ---
 
@@ -268,6 +268,7 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 2. 경로 인자: 정책이 있는 명령과 없는 명령이 같은 규칙(`collectPathCandidates`, `src/engine/guard.ts`)을 쓴다.
    - 정책의 위치 인자 규칙이 `path`인 위치 인자와 `path` 종류 플래그 값은 형식과 관계없이 검사한다.
    - 그 밖의 위치 인자와 플래그 값은 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키면 검사한다. 중간에 `..`가 있는 상대경로(`a/../../x`)와 허용 경로 밖을 가리키는 링크 이름도 여기에 걸린다.
+   - `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 검사한다. 위치 인자 규칙이 `url`인 명령은 제외한다.
    - 정책이 없는 명령은 어느 플래그가 값을 받는지 모르므로 `--x=값`의 값과, 짧은 플래그 묶음(`-abVALUE`)에서 각 글자 뒤 나머지를 값 후보로 본다. `build` 프로필의 `node`, `npx`가 대상 프로그램 몫으로 넘기는 인자도 같은 방식으로 본다.
    - 서브커맨드, 앞에 오는 전역 플래그, 하위 동사(`gh pr list`의 `list`)는 경로 후보가 아니다.
 
@@ -370,7 +371,7 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `timeout_ms` | `10000` | 프로세스 타임아웃 (밀리초) |
 | `max_output_bytes` | `102400` (100 KB) | stdout 최대 크기. `0`이면 무제한 |
 | `max_items` | `500` | 리스트 파서 최대 항목 수. `0`이면 무제한 |
-| `default_page_size` | `100` | `run_paged` 기본 줄 수 |
+| `default_page_size` | `100` | `run_paged` 기본 줄 수. `max_page_size`보다 크면 설정을 읽을 때 그 값으로 줄인다 |
 | `max_page_size` | `1000` | `run_paged` `page_size` 상한. 1 이상 정수 |
 | `max_concurrency` | `4` | 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다. 1 이상 정수 |
 | `block_patterns` | 9개 인젝션 패턴 | 인자 차단 패턴 |
@@ -379,7 +380,9 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `profile` | `"readonly"` | `"build"`이면 빌드·시험 실행 서브커맨드를 추가로 허용. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 사용 |
 | `command_policies` | 없음 | 명령 단위 정책 덮어쓰기. 우선순위는 `command_policies`, `build` 프로필, 기본 정책 순 |
 
-기본 정책은 읽기 용도에 필요한 플래그만 허용한다. 출력 파일을 지정하는 옵션(`tree -o`, `ss -D` 등), 시스템 상태를 바꾸는 옵션과 위치 인자(`date -s`, `hostname <이름>` 등), 끝나지 않는 반복 실행 옵션(`tail -f`, `free -s`, `netstat -c` 등), 재귀 중 심볼릭 링크를 따라가는 옵션(`grep -R`, `du -L`, `tree -l`, `ls -L`, `find -L`)은 없다. `date`, `hostname`은 위치 인자를 받지 않는다. 정책이 없는 명령은 사용자가 `allowed_commands`에 직접 추가한 명령뿐이다.
+기본 정책은 읽기 용도에 필요한 플래그만 허용한다. 출력 파일을 지정하는 옵션(`tree -o`, `ss -D` 등), 시스템 상태를 바꾸는 옵션과 위치 인자(`date -s`, `hostname <이름>` 등), 끝나지 않는 반복 실행 옵션(`tail -f`, `free -s`, `netstat -c` 등), 재귀 중 심볼릭 링크를 따라가는 옵션(`grep -R`, `du -L`, `tree -l`, `ls -L`, `find -L`)은 없다. `hostname`은 위치 인자를 받지 않고, `date`는 `+`로 시작하는 출력 형식 하나만 위치 인자로 받는다. `ps`의 위치 인자는 BSD식 옵션 낱말로 보고 `auxfwrljsvhcmnSHTgZ` 글자로만 이루어진 경우에만 받는다. `lsof`는 `+`로 시작하는 인자도 플래그로 검사한다. 기본 정책이나 `build` 프로필 정책을 쓰는 기본 명령은 인자가 정확히 `--version` 하나이면 정책 검사를 생략하며, `--help`는 허용하지 않는다. 정책이 없는 명령은 사용자가 `allowed_commands`에 직접 추가한 명령뿐이다.
+
+명령 정책은 `subcommands`, `flags`, `positionals` 외에 위치 인자 조건 `positionalChars`(허용 문자), `positionalPrefix`(접두사), `maxPositionals`(최대 개수)와 `plusFlags`(`+`로 시작하는 인자를 플래그로 분해)를 가질 수 있다.
 
 설정 값은 레이어(전역, 프로젝트, 환경 변수, `loadConfig`의 단일 파일)마다 필드 단위로 검증한다(`src/config/schema.ts`).
 
