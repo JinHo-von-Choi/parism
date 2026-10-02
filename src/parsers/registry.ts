@@ -1,6 +1,8 @@
-import { z }             from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { tryParseNativeJson } from "./json-passthrough.js";
+import { z }                  from "zod";
+import { zodToJsonSchema }      from "zod-to-json-schema";
+import { tryParseNativeJson }   from "./json-passthrough.js";
+import { countDataLines, isSilentEmpty } from "./invariants.js";
+import { resolveContract }      from "./format.js";
 
 /**
  * 출력 형식.
@@ -25,8 +27,9 @@ export interface ParseContext {
 export type ParserFn = (cmd: string, args: string[], raw: string, ctx?: ParseContext) => unknown;
 
 /**
- * 파서가 처리할 수 있는 입력 범위 선언.
- * supports -- args 기준으로 출력 형식을 처리할 수 있는지 판정. false면 파서를 실행하지 않는다.
+ * 파서가 처리할 수 있는 입력 범위와 출력 모양의 선언.
+ * supports    -- args 기준으로 출력 형식을 처리할 수 있는지 판정. false면 파서를 실행하지 않는다.
+ * subcommands -- 서브커맨드별 계약. 키는 서브커맨드 낱말("log", "pr list")이고 값은 상위 계약에 덧씌운다.
  */
 export interface ParserContract {
   supports?:    (args: string[]) => boolean;
@@ -34,40 +37,16 @@ export interface ParserContract {
   headerLines?: number;
   /** 데이터가 아닌 줄(합계, 범례, 안내 문구) 패턴. */
   noise?:       RegExp;
-}
-
-/** 출력에서 온 값이 아닌 메타 키. 빈 결과 판정에서 제외한다. */
-const META_KEYS = new Set(["raw", "resource", "unit"]);
-
-/**
- * 파싱 결과가 출력에서 아무 값도 인식하지 못했는지 판정한다.
- * 배열은 길이 0, 문자열은 "", 숫자는 0, 불리언은 false, null/undefined, 하위 객체는 재귀적으로 빈 경우를 기본값으로 본다.
- */
-function isDefaultValue(value: unknown, top = false): boolean {
-  if (value == null || value === "" || value === 0 || value === false) return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>)
-      .every(([k, v]) => (top && (META_KEYS.has(k) || k.startsWith("_"))) || isDefaultValue(v));
-  }
-  return false;
-}
-
-/**
- * 메타 키를 뺀 최상위 값이 모두 유한한 숫자인 결과인지 판정한다(id -u의 { uid: 0 } 등).
- * 이런 결과는 파서가 숫자만 있는 출력을 그대로 읽은 것이므로 0도 인식된 값으로 본다.
- * 문자열·배열·하위 객체가 섞인 결과의 0은 기본값으로 남겨 인식 실패를 가리지 않는다.
- */
-function isNumericRecord(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const fields = Object.entries(value as Record<string, unknown>).filter(([k]) => !META_KEYS.has(k) && !k.startsWith("_"));
-  return fields.length > 0 && fields.every(([, v]) => typeof v === "number" && Number.isFinite(v));
-}
-
-/** 머리 줄과 noise 패턴을 제외하고 남는 비공백 줄 수. */
-function countDataLines(raw: string, contract: ParserContract | undefined): number {
-  const lines = raw.split(/\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
-  return contract?.noise ? lines.filter(l => !contract.noise!.test(l)).length : lines.length;
+  /** 데이터 줄 하나당 행 하나를 담는 결과 배열의 키(ls의 "entries"). 불변식 검사가 행 수를 대조한다. */
+  rowsKey?:     string;
+  /** 데이터 줄 가운데 행이 되는 줄의 패턴. 없으면 모든 데이터 줄이 행이다. */
+  rowLine?:     RegExp;
+  /** 행 객체가 가질 수 있는 필드 이름 목록 */
+  rowFields?:   readonly string[];
+  /** 서브커맨드 앞에 올 수 있는 전역 옵션과 값 여부(git의 -C <경로>) */
+  leadingFlags?: Readonly<Record<string, "bool" | "value">>;
+  /** 서브커맨드별 계약 */
+  subcommands?:  Readonly<Record<string, ParserContract>>;
 }
 
 /**
@@ -86,16 +65,14 @@ export interface Fixture {
  * schema   -- Zod 스키마 (출력 형태 정의, 검증/문서 용도)
  * fixtures -- 입출력 쌍 (테스트/검증 용도)
  * meta     -- 선택적 메타 정보
+ * 그 밖의 필드는 ParserContract 선언이다.
  */
-export interface ParserPack {
+export interface ParserPack extends ParserContract {
   name:      string;
   parse:     (raw: string, args: string[], ctx?: ParseContext) => unknown;
   schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
-  supports?:    (args: string[]) => boolean;
-  headerLines?: number;
-  noise?:       RegExp;
 }
 
 /**
@@ -125,6 +102,9 @@ export interface ParseResult {
  */
 export type ParseErrorReason = "parser_exception" | "schema_violation" | "unsupported_format" | "unrecognized_output";
 
+/** ParserPack에서 계약 선언이 아닌 정의 필드 */
+const PACK_DEFINITION_KEYS = ["name", "parse", "schema", "fixtures", "meta"] as const;
+
 /**
  * 명령어 → 파서 함수의 매핑 테이블.
  * 파서가 없으면 parsed=null. 파서가 예외를 던지면 parsed=null, parse_error 설정.
@@ -146,7 +126,18 @@ export class ParserRegistry {
   registerPack(pack: ParserPack): void {
     this.packs.set(pack.name, pack);
     this.parsers.set(pack.name, (_cmd, args, raw, ctx) => pack.parse(raw, args, ctx));
-    this.contracts.set(pack.name, { supports: pack.supports, headerLines: pack.headerLines, noise: pack.noise });
+    const contract: Record<string, unknown> = { ...pack };
+    for (const key of PACK_DEFINITION_KEYS) delete contract[key];
+    this.contracts.set(pack.name, contract as ParserContract);
+  }
+
+  /**
+   * cmd와 args에 적용되는 계약을 반환한다. 서브커맨드 계약이 있으면 상위 계약에 덧씌운 결과다.
+   * 등록된 계약이 없으면 undefined.
+   */
+  contractFor(cmd: string, args: string[]): ParserContract | undefined {
+    const contract = this.contracts.get(cmd);
+    return contract ? resolveContract(contract, args).contract : undefined;
   }
 
   /**
@@ -181,7 +172,7 @@ export class ParserRegistry {
     const fn = this.parsers.get(cmd);
     if (!fn) return { parsed: null };
 
-    const contract = this.contracts.get(cmd);
+    const contract = this.contractFor(cmd, args);
     if (contract?.supports && !contract.supports(args)) {
       return {
         parsed:      null,
@@ -199,8 +190,8 @@ export class ParserRegistry {
 
     if (parsed == null) return { parsed: null };
 
-    const dataLines = countDataLines(raw, contract);
-    if (dataLines > 0 && isDefaultValue(parsed, true) && !isNumericRecord(parsed) && tryParseNativeJson(raw) === null) {
+    if (isSilentEmpty(parsed, raw, contract) && tryParseNativeJson(raw) === null) {
+      const dataLines = countDataLines(raw, contract);
       return {
         parsed:      null,
         parse_error: { reason: "unrecognized_output", message: `The '${cmd}' parser recognized nothing in ${dataLines} output line(s)` },

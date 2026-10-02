@@ -134,6 +134,31 @@ describe("ParserRegistry.registerPack()", () => {
     expect(registry.parse("new", [], "x").parsed).toEqual({ new: true, len: 1 });
   });
 
+  it("registerPack은 정의 필드를 뺀 계약 선언을 등록한다", () => {
+    const registry = new ParserRegistry();
+    registry.registerPack({
+      name: "rows", parse: () => ({ items: [] }), schema: z.unknown(), fixtures: [],
+      headerLines: 1, rowsKey: "items", rowFields: ["id"],
+    });
+    expect(registry.contractFor("rows", [])).toEqual({ headerLines: 1, rowsKey: "items", rowFields: ["id"] });
+  });
+
+  it("contractFor()는 앞쪽 전역 옵션을 건너뛰고 서브커맨드 계약을 상위 계약에 덧씌운다", () => {
+    const registry = new ParserRegistry();
+    registry.register("tool", () => null, {
+      headerLines:  1,
+      leadingFlags: { "--quiet": "bool", "-C": "value" },
+      subcommands:  { "pr list": { rowsKey: "prs" }, pr: { rowsKey: "pr" }, "": { rowsKey: "default" } },
+    });
+    expect(registry.contractFor("tool", ["-C", "dir", "--quiet", "pr", "list", "-L", "3"])).toEqual({
+      headerLines: 1, leadingFlags: { "--quiet": "bool", "-C": "value" }, rowsKey: "prs",
+    });
+    expect(registry.contractFor("tool", ["pr", "view"])?.rowsKey).toBe("pr");
+    expect(registry.contractFor("tool", ["--json"])?.rowsKey).toBe("default");
+    expect(registry.contractFor("tool", ["other"])?.rowsKey).toBeUndefined();
+    expect(registry.contractFor("missing", [])).toBeUndefined();
+  });
+
   it("getPack()으로 등록된 ParserPack을 조회할 수 있다", () => {
     const registry = new ParserRegistry();
     const pack: ParserPack = {

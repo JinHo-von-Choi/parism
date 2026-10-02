@@ -1,4 +1,4 @@
-import { ParserRegistry }                                              from "./registry.js";
+import { ParserRegistry, type ParserFn }                                from "./registry.js";
 import { parseLs, parseFind, parseStat, parseDu, parseDf, parseTree } from "./fs/index.js";
 import { parsePs, parseKill }                                          from "./process/index.js";
 import { parsePing, parseCurl, parseNetstat, parseLsof, parseSs,
@@ -10,8 +10,8 @@ import { parseFree, parseUname, parseId, parseSystemctl, parseJournalctl, parseA
 import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./windows/index.js";
 import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
 import { parseNpm, parseCargo } from "./packages/index.js";
-import { supportsLs, supportsPs, supportsSs, supportsFree, supportsKubectl, supportsDocker, supportsHelm,
-         supportsDig, supportsCurl, supportsWc, supportsId, supportsUname, supportsDf, supportsGit, gitSubcommandIndex } from "./supports.js";
+import { gitSubcommandIndex }                                        from "./supports.js";
+import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 
 /**
  * 44개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
@@ -19,52 +19,54 @@ import { supportsLs, supportsPs, supportsSs, supportsFree, supportsKubectl, supp
  */
 export function createRegistry(): ParserRegistry {
   const registry = new ParserRegistry();
+  /** 내장 계약(BUILTIN_CONTRACTS)과 함께 파서를 등록한다. */
+  const register = (cmd: string, fn: ParserFn): void => registry.register(cmd, fn, BUILTIN_CONTRACTS[cmd]);
 
-  registry.register("ls",      parseLs,      { supports: supportsLs, noise: /^total \d+|^\S.*:$/ });
-  registry.register("find",    parseFind);
-  registry.register("stat",    parseStat);
-  registry.register("du",      parseDu);
-  registry.register("df",      parseDf,      { supports: supportsDf, headerLines: 1 });
-  registry.register("tree",    parseTree);
-  registry.register("ps",      parsePs,      { supports: supportsPs, headerLines: 1 });
-  registry.register("kill",    parseKill);
-  registry.register("ping",    parsePing);
-  registry.register("curl",    parseCurl,    { supports: supportsCurl });
-  registry.register("netstat", parseNetstat, { headerLines: 2 });
-  registry.register("lsof",    parseLsof,    { headerLines: 1 });
-  registry.register("ss",      parseSs,      { supports: supportsSs, headerLines: 1 });
-  registry.register("dig",     parseDig,     { supports: supportsDig });
-  registry.register("grep",    parseGrep);
-  registry.register("wc",      parseWc,      { supports: supportsWc });
-  registry.register("head",    parseHead);
-  registry.register("tail",    parseTail);
-  registry.register("cat",     parseCat);
-  registry.register("env",     parseEnv);
-  registry.register("pwd",     parsePwd);
-  registry.register("which",   parseWhich);
-  registry.register("free",       parseFree,       { supports: supportsFree });
-  registry.register("uname",      parseUname,      { supports: supportsUname });
-  registry.register("id",         parseId,         { supports: supportsId });
-  registry.register("systemctl",  parseSystemctl,  { noise: /^\s*UNIT\s+LOAD\s|^Legend:|^\s*(LOAD|ACTIVE|SUB)\s+(=|->)|loaded units listed|^To show all/ });
-  registry.register("journalctl", parseJournalctl, { noise: /^-- No entries --$/ });
-  registry.register("dir",        parseDir);
-  registry.register("tasklist",   parseTasklist,   { headerLines: 2 });
-  registry.register("ipconfig",   parseIpconfig);
-  registry.register("systeminfo", parseSysteminfo);
-  registry.register("kubectl",    parseKubectl,    { supports: supportsKubectl, headerLines: 1 });
-  registry.register("docker",     parseDocker,     { supports: supportsDocker, headerLines: 1 });
-  registry.register("gh",         parseGh);
-  registry.register("helm",       parseHelm,       { supports: supportsHelm, headerLines: 1 });
-  registry.register("terraform",  parseTerraform);
-  registry.register("apt",        parseApt,        { noise: /^(Listing|나열 중)/ });
-  registry.register("brew",       parseBrew);
-  registry.register("npm",       parseNpm);
-  registry.register("pnpm",      parseNpm);
-  registry.register("yarn",      parseNpm);
-  registry.register("cargo",     parseCargo);
+  register("ls",      parseLs);
+  register("find",    parseFind);
+  register("stat",    parseStat);
+  register("du",      parseDu);
+  register("df",      parseDf);
+  register("tree",    parseTree);
+  register("ps",      parsePs);
+  register("kill",    parseKill);
+  register("ping",    parsePing);
+  register("curl",    parseCurl);
+  register("netstat", parseNetstat);
+  register("lsof",    parseLsof);
+  register("ss",      parseSs);
+  register("dig",     parseDig);
+  register("grep",    parseGrep);
+  register("wc",      parseWc);
+  register("head",    parseHead);
+  register("tail",    parseTail);
+  register("cat",     parseCat);
+  register("env",     parseEnv);
+  register("pwd",     parsePwd);
+  register("which",   parseWhich);
+  register("free",       parseFree);
+  register("uname",      parseUname);
+  register("id",         parseId);
+  register("systemctl",  parseSystemctl);
+  register("journalctl", parseJournalctl);
+  register("dir",        parseDir);
+  register("tasklist",   parseTasklist);
+  register("ipconfig",   parseIpconfig);
+  register("systeminfo", parseSysteminfo);
+  register("kubectl",    parseKubectl);
+  register("docker",     parseDocker);
+  register("gh",         parseGh);
+  register("helm",       parseHelm);
+  register("terraform",  parseTerraform);
+  register("apt",        parseApt);
+  register("brew",       parseBrew);
+  register("npm",       parseNpm);
+  register("pnpm",      parseNpm);
+  register("yarn",      parseNpm);
+  register("cargo",     parseCargo);
 
   /** git은 앞의 전역 옵션을 건너뛴 서브커맨드로 파서를 선택하고, 서브커맨드부터의 인자를 넘긴다. */
-  registry.register("git", (cmd, args, raw) => {
+  register("git", (cmd, args, raw) => {
     const subArgs = args.slice(gitSubcommandIndex(args));
     const sub     = subArgs[0];
     if (sub === "status") return parseGitStatus(cmd, subArgs, raw);
@@ -72,7 +74,7 @@ export function createRegistry(): ParserRegistry {
     if (sub === "diff")   return parseGitDiff(cmd, subArgs, raw);
     if (sub === "branch") return parseGitBranch(cmd, subArgs, raw);
     return null;
-  }, { supports: supportsGit });
+  });
 
   return registry;
 }
