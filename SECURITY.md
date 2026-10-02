@@ -43,13 +43,15 @@ Guard는 argv 허용목록이다. 샌드박스가 아니다. 명령 이름, 서�
 - `node -e`, `npx --yes`, `curl -o` 등 명령별 위험 플래그를 차단한다.
 - 프로젝트 `prism.config.json`은 가드를 넓히지 못한다. 프로젝트 설정은 전역 설정의 범위 안에서 좁히는 방향으로만 병합되며, 넓히려면 전역 설정에서 `trust_project_config: true`를 명시해야 한다.
 - 자식 프로세스 환경에서 `guard.secrets.env_patterns`에 일치하는 변수를 제거한다.
+- 설정 파일과 환경 변수의 무효 값(음수나 정수가 아닌 상한, 잘못된 타입, 빈 목록)은 stderr 경고 후 무시되어 가드를 풀지 못한다.
+- 실행 자원을 제한한다. 시간 초과 시 POSIX에서는 프로세스 그룹 전체를 종료해 자식이 띄운 프로세스를 남기지 않고, 동시 실행 수는 `guard.max_concurrency`(기본 4), `run_paged`의 `page_size`는 `guard.max_page_size`(기본 1000)로 제한한다.
 
-Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 않으므로 `;`, `$()`, 백틱, 파이프가 인자로 전달돼도 셸이 해석하지 않는다.
+Parism은 셸 없이 `spawn`으로 프로세스를 직접 실행한다. 셸을 거치지 않으므로 `;`, `$()`, 백틱, 파이프가 인자로 전달돼도 셸이 해석하지 않는다.
 
 ### Parism이 방어하지 않는 것
 
 - 경로 검사는 검사 시점과 실행 시점 사이의 경합을 막지 못한다. 심볼릭 링크를 해석해 비교하지만, 검사 직후 실행 직전에 경로의 대상이 바뀌면 검사 결과와 실제 접근 대상이 달라질 수 있다.
-- 허용된 바이너리 자체의 동작. 허용된 `git`은 저장소의 `.gitattributes`가 지정한 clean/smudge 필터를 실행할 수 있다. 저장소 설정에서 외부 프로그램이 실행되는 일부 경로는 주입 옵션(`core.fsmonitor=false`, `core.pager=cat`, `--no-textconv`, `--no-ext-diff`)으로 줄였으나 모든 경로를 막지는 못한다. 신뢰할 수 없는 저장소를 다룰 때는 컨테이너 격리를 사용한다.
+- 허용된 바이너리 자체의 동작. 허용된 `git`은 저장소의 `.gitattributes`가 지정한 clean/smudge 필터를 실행할 수 있다. 이 경로는 argv로 막을 수 없다. 저장소 설정에서 외부 프로그램이 실행되는 일부 경로는 주입 옵션(`core.fsmonitor=false`, `core.pager=cat`, `core.hooksPath=/dev/null`, `log.showSignature=false`, `gpg.program=false`, `gpg.ssh.program=false`, `gpg.x509.program=false`, `--no-textconv`, `--no-ext-diff`, log·show의 `--no-show-signature`)으로 줄였으나 모든 경로를 막지는 못한다. 신뢰할 수 없는 저장소를 다룰 때는 컨테이너 격리를 사용한다.
 - `build` 프로필은 프로젝트 코드를 실행한다. `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose`, `node <script>`, `npx <bin>`은 저장소가 정의한 스크립트와 설정을 실행하므로 신뢰하는 저장소에서만 켠다. `yarn`은 저장소가 지정한 `yarnPath`를 따르고, `cargo tree`, `cargo metadata` 등 cargo 조회 서브커맨드는 저장소 `.cargo/config.toml`이 지정한 rustc 래퍼를 실행할 수 있으므로 `build` 프로필에서만 허용된다. `npx`에는 `--no`를 붙여 이미 설치된 실행 파일만 실행하게 한다.
 - 실행되는 바이너리의 커널 수준 익스플로잇, 컨테이너 탈출, 공급망 침해
 - 타이밍 사이드 채널, 파일 잠금 경합 등 부채널 공격
@@ -67,9 +69,9 @@ Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 �
 
 ### (b) allowed_paths 경로 제한
 
-`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자, 플래그에 붙은 경로형 값(`--file=./x`, `-C../x`), 경로를 받는 명령의 위치 인자가 허용 경로 밖이면 차단된다. 정책이 없는 명령은 슬래시를 포함한 위치 인자와, `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 위치 인자와 플래그 부착 값도 검사한다. 비교는 심볼릭 링크 해석 후의 실경로로 한다. 프로젝트 설정의 `allowed_paths`도 실경로로 바꿔 전역 기준 경로 안에 있는지 비교한 뒤 실경로로 저장한다.
+`allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. 정책이 있는 명령과 없는 명령이 같은 규칙을 쓴다. 위치 인자와 플래그 값(`--file=./x`처럼 붙은 값과 다음 인자로 받은 값 모두) 중 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 것은 경로로 검사한다. 정책의 위치 인자 규칙이 `path`인 명령(`cat`, `ls`, `find` 등)의 위치 인자와 `path` 종류 플래그 값은 형식과 관계없이 검사한다. 정책이 없는 명령은 짧은 플래그 묶음(`-abVALUE`)의 각 글자 뒤 나머지도 값 후보로 본다. 허용 경로 밖이면 차단된다. 비교는 심볼릭 링크 해석 후의 실경로로 한다. 프로젝트 설정의 `allowed_paths`도 실경로로 바꿔 전역 기준 경로 안에 있는지 비교한 뒤 실경로로 저장한다.
 
-한계: 커널이 강제하지 않으며 검사 시점과 실행 시점 사이에 경로가 바뀔 수 있다. 실경로 비교는 인자로 이름이 주어진 경로에만 적용된다. 재귀 탐색 중 만나는 심볼릭 링크를 따라가는 옵션(정책이 없는 `grep -R`, `du -L`, `tree -l` 등)을 쓰면 허용 경로 아래의 링크를 통해 밖의 파일을 읽을 수 있다. `find` 정책은 이 때문에 `-L`을 허용하지 않는다. 경로를 받지 않는 명령(예: `env`, `id`, `uname`)에는 적용되지 않는다. `allowed_paths`가 비어 있으면 이 계층은 생략된다.
+한계: 커널이 강제하지 않으며 검사 시점과 실행 시점 사이에 경로가 바뀔 수 있다. 실경로 비교는 인자로 이름이 주어진 경로에만 적용된다. 재귀 탐색 중 만나는 심볼릭 링크를 따라가는 옵션을 쓰면 허용 경로 아래의 링크를 통해 밖의 파일을 읽을 수 있다. 기본 정책은 이 때문에 `find -L`, `grep -R`, `du -L`, `tree -l`, `ls -L`을 허용하지 않는다. `command_policies`로 이런 옵션을 허용하거나 정책이 없는 명령을 추가하면 이 한계가 그대로 남는다. 경로를 받지 않는 명령(예: `env`, `id`, `uname`)에는 적용되지 않는다. `allowed_paths`가 비어 있으면 이 계층은 생략된다.
 
 ### (c) 인젝션 패턴 차단
 
@@ -79,7 +81,7 @@ Parism은 `execFile`로 프로세스를 직접 실행한다. 셸을 거치지 �
 
 ### (d) 명령별 정책 (command_policies)
 
-명령마다 서브커맨드, 플래그(종류: bool, value, path, attached, count), 위치 인자 규칙을 허용목록으로 정의한다. `attached` 플래그는 `--pretty=oneline`, `-U3`처럼 붙은 값만 받고 다음 인자를 값으로 소비하지 않으므로 다음 인자도 허용목록 검사를 받는다. `count` 플래그(journalctl `-n`, `--lines`)는 다음 인자가 줄 수 형식(N, +N, all)일 때만 값으로 받는다. 실제 명령이 서브커맨드마다 다르게 해석하는 플래그(git `blame`·`shortlog`의 `-n`, docker `logs`의 `-f` 등)는 `subFlags`로 서브커맨드별 종류를 정한다. 기본 정책은 읽기 전용 조회만 허용한다. 정책이 없는 명령은 기존 방식(`command_arg_restrictions`와 경로 검사)만 적용된다.
+명령마다 서브커맨드, 플래그(종류: bool, value, path, attached, count), 위치 인자 규칙을 허용목록으로 정의한다. `attached` 플래그는 `--pretty=oneline`, `-U3`처럼 붙은 값만 받고 다음 인자를 값으로 소비하지 않으므로 다음 인자도 허용목록 검사를 받는다. `count` 플래그(journalctl `-n`, `--lines`)는 다음 인자가 줄 수 형식(N, +N, all)일 때만 값으로 받는다. 실제 명령이 서브커맨드마다 다르게 해석하는 플래그(git `blame`·`shortlog`의 `-n`, docker `logs`의 `-f` 등)는 `subFlags`로 서브커맨드별 종류를 정한다. 기본 정책은 읽기 전용 조회만 허용한다. 기본 `allowed_commands` 40종은 모두 기본 정책을 가진다. 출력 파일을 지정하는 옵션, 시스템 상태를 바꾸는 옵션, 끝나지 않는 반복 실행 옵션은 기본 정책에 없고, `date`와 `hostname`은 위치 인자를 받지 않는다. 정책이 없는 명령(사용자가 `allowed_commands`에 직접 추가한 명령)은 `command_arg_restrictions`와 경로 검사만 적용된다.
 
 - `guard.profile: "readonly"`(기본): 기본 정책만 적용한다.
 - `guard.profile: "build"`: 빌드와 시험 실행에 필요한 서브커맨드(`npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 등)를 더한다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 사용한다.

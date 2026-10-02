@@ -127,7 +127,7 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo`, e.g. `cat subdir/file`, `find src`) are checked. For commands without a policy, args containing `/` and args or attached flag values that name an existing entry under `cwd` (including symbolic links) are checked as well. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
+**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. For every command, positional args and flag values that contain `/`, start with `.` or `~`, or name an existing entry under `cwd` (including symbolic links) are checked; positional args of path-taking commands (e.g. `cat subdir/file`, `find src`) and path flag values are always checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
 
 **Injection Pattern Blocking**: Each argument is checked individually for `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`. Per-argument checking prevents cross-boundary false positives (e.g., `["foo>", ">bar"]` is not falsely detected as `>>`).
 
@@ -285,6 +285,7 @@ Parameters:
 - `cmd`, `args`, `cwd` — same as `run`
 - `page` — 0-indexed page number (default: `0`)
 - `page_size` — lines per page (default: `default_page_size`, 100 by default)
+- `page_size` limit: `max_page_size` (1000 by default). Larger requests are reduced to it and the request is kept in `page_info.requested_page_size`
 - `includeDiff` — include filesystem diff (default: `false`)
 
 Extra fields:

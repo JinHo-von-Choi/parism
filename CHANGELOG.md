@@ -5,6 +5,33 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
+## [2.0.2] - 2026-10-03
+
+### Fixed
+- 설정 값 검증: 전역·프로젝트 설정 파일, 환경 변수, `loadConfig(configPath)`의 각 필드를 스키마(`src/config/schema.ts`)로 검사한다. 형식이 틀린 필드는 stderr에 한 번 경고하고 무시하며 앞 레이어의 값을 유지한다. 수치 상한은 유한한 0 이상 정수만 받는다. 잘못된 타입의 필드가 있어도 기동은 계속한다.
+- 빈 `PARISM_ALLOWED_PATHS`, `PARISM_ALLOWED_COMMANDS`는 경고 후 무시한다.
+- `loadConfig(configPath)`도 실행 디렉터리가 `/`이면 기본 `allowed_paths`를 홈 디렉터리로 제한한다.
+- 경로 검사 대상 수집을 정책이 있는 명령과 없는 명령에 같은 규칙으로 적용한다. 위치 인자와 플래그 값 중 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(링크 포함)을 가리키는 것을 검사하고, 정책의 `path` 위치 인자와 `path` 플래그 값은 항상 검사한다.
+- 기본 `allowed_commands` 40종 모두에 기본 정책을 둔다. 새로 정책을 받은 명령: `ls`, `stat`, `du`, `df`, `tree`, `ps`, `ping`, `netstat`, `lsof`, `ss`, `dig`, `grep`, `wc`, `head`, `tail`, `cat`, `pwd`, `which`, `echo`, `date`, `uname`, `hostname`, `free`, `id`.
+- `git` 실행 인자에 `-c core.hooksPath=/dev/null`, `-c log.showSignature=false`, `-c gpg.program=false`, `-c gpg.ssh.program=false`, `-c gpg.x509.program=false`를 더하고, `log`, `show`에 `--no-show-signature`를 붙인다.
+- 시간 초과 시 POSIX에서는 프로세스 그룹 전체를 종료한다. 자식이 띄운 프로세스가 남지 않는다.
+- `run_paged`의 페이지 출력(stdout, stderr)에 `max_output_bytes`를 적용하고, 넘으면 `truncated: true`를 표시한다.
+- `id -u`, `id -g`가 `0`을 출력할 때 `unrecognized_output`으로 처리하던 문제를 고쳤다. 최상위 값이 모두 숫자인 결과의 `0`은 인식된 값으로 본다.
+
+### Changed
+- 실행기가 `execFile` 대신 `spawn`으로 프로세스를 띄운다. stdout, stderr 각각의 버퍼 상한(10MB)과 `failure.reason` 분류는 그대로다.
+- 새 설정 `guard.max_page_size`(기본 1000): `run_paged`의 `page_size`가 이 값을 넘으면 이 값으로 줄이고 `page_info.requested_page_size`에 요청값을 남긴다.
+- 새 설정 `guard.max_concurrency`(기본 4): 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다.
+- `guard.secrets`와 `parsers.adaptive_format_threshold`는 레이어 사이에서 하위 키 단위로 병합한다.
+- `SPECIFICATION.md`의 기본 명령 수와 `describe`·`dry_run`·`failure` 표, `SECURITY.md`의 경로 검사 범위를 실제 동작에 맞췄다.
+- Breaking notes:
+  - 새로 정책을 받은 24종은 정책에 없는 플래그와 위치 인자를 `arg_not_allowed`로 거부한다. `date`, `hostname`은 위치 인자를 받지 않으며(`date +FORMAT` 포함), `tail -f`, `grep -R`, `du -L`, `tree -l`, `ls -L`, `tree -o`, `ss -D` 등은 허용하지 않는다. 필요하면 `guard.command_policies`로 허용한다.
+  - 정책이 있는 명령의 위치 인자와 플래그 값도 위 경로 규칙으로 검사하므로, 허용 경로 밖으로 해석되는 값(중간 `..`, 밖을 가리키는 링크 이름)은 `path_not_allowed`가 된다.
+  - 무효한 설정 필드는 이전처럼 적용되지 않고 무시된다. 정수가 아닌 수치 환경 변수(`1.5` 등)도 무시된다.
+  - `guard.secrets`의 일부 하위 키만 지정하면 나머지 하위 키는 기본값을 유지한다. 이전에는 지정하지 않은 하위 키가 비었다. `adaptive_format_threshold`도 같다.
+  - `run_paged`의 `page_size`는 최대 1000이며, 페이지 출력은 `max_output_bytes`로 잘린다.
+  - `git log --format=%G?` 같은 서명 상태 표시는 검증 프로그램을 실행하지 않으므로 검증 결과를 보여 주지 않는다.
+
 ## [2.0.1] - 2026-10-03
 
 ### Documentation
