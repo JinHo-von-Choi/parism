@@ -1,4 +1,9 @@
 import path from "path";
+import { lstatSync, realpathSync } from "node:fs";
+import {
+  BUILD_PROFILE_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
+  type CommandPolicy, type PolicySource,
+} from "./policy.js";
 import type { PrismConfig } from "../config/loader.js";
 
 /**
@@ -21,9 +26,46 @@ export class GuardError extends Error {
 /**
  * 경로 비교 시 접미 슬래시를 강제해 `/home/user` vs `/home/user2` 오탐을 방지한다.
  */
-function normalizePathForPrefix(inputPath: string): string {
-  const resolved = path.resolve(inputPath);
+function normalizePathForPrefix(inputPath: string, cacheable = false): string {
+  const abs      = path.resolve(inputPath);
+  const resolved = cacheable ? resolveReal(abs) : resolveRealUncached(abs);
   return resolved.endsWith("/") ? resolved : resolved + "/";
+}
+
+/**
+ * 존재하는 가장 가까운 상위 경로까지 심볼릭 링크를 해석하고 나머지 경로를 덧붙인다.
+ */
+const realCache = new Map<string, string>();
+
+function resolveReal(absPath: string): string {
+  const hit = realCache.get(absPath);
+  if (hit !== undefined) return hit;
+  const r = resolveRealUncached(absPath);
+  if (realCache.size > 1024) realCache.clear();
+  realCache.set(absPath, r);
+  return r;
+}
+
+function resolveRealUncached(absPath: string): string {
+  let head = absPath;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return path.join(realpathSync.native(head), ...tail.reverse());
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return absPath;
+      tail.push(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+/**
+ * 경로를 절대경로로 만든 뒤 존재하는 가장 가까운 상위 경로까지 심볼릭 링크를 해석한 실경로를 돌려준다.
+ */
+export function realPathOf(inputPath: string): string {
+  return resolveRealUncached(path.resolve(inputPath));
 }
 
 /**
@@ -32,7 +74,7 @@ function normalizePathForPrefix(inputPath: string): string {
 function isAllowedPath(targetPath: string, allowedPaths: string[]): boolean {
   const normalizedTarget = normalizePathForPrefix(targetPath);
   return allowedPaths.some((allowedPath) => {
-    const normalizedAllowed = normalizePathForPrefix(allowedPath);
+    const normalizedAllowed = normalizePathForPrefix(allowedPath, true);
     return normalizedTarget.startsWith(normalizedAllowed);
   });
 }
@@ -70,10 +112,11 @@ function getPathArgsFromCommand(cmd: string, args: string[]): string[] {
  * 명령 실행 허용 여부를 검사한다. 차단 조건 충족 시 GuardError를 던진다.
  *
  * 검사 순서:
- * 1. 화이트리스트 — cmd가 allowed_commands에 없으면 차단
- * 2. 인젝션 패턴 — args 중 block_patterns에 포함된 패턴이 있으면 차단
- * 3. 명령별 인자 제한 — command_arg_restrictions에 등록된 blocked_flags와 일치하면 차단
- * 4. 경로 제한 — allowed_paths가 설정된 경우 cwd가 허용 경로 하위인지 확인
+ * 1. 화이트리스트: cmd가 allowed_commands에 없으면 차단
+ * 2. 인젝션 패턴: args 중 block_patterns에 포함된 패턴이 있으면 차단
+ * 3. 명령별 인자 제한: command_arg_restrictions에 등록된 blocked_flags와 일치하면 차단
+ * 4. 명령 정책: 유효 정책이 있는 명령은 서브커맨드·플래그·위치 인자를 허용목록으로 검사
+ * 5. 경로 제한: allowed_paths가 설정된 경우 cwd와 경로 인자가 허용 경로 하위인지 확인(심볼릭 링크 해석)
  */
 export function checkGuard(
   cmd:    string,
@@ -101,7 +144,8 @@ export function checkGuard(
     }
   }
 
-  const restriction = guard.command_arg_restrictions?.[cmd];
+  const restrictions = guard.command_arg_restrictions;
+  const restriction  = restrictions && Object.hasOwn(restrictions, cmd) ? restrictions[cmd] : undefined;
   if (restriction) {
     for (const arg of args) {
       // --flag=value 형태에서 플래그 이름만 추출
@@ -114,6 +158,17 @@ export function checkGuard(
       }
     }
   }
+
+  const policy      = resolvePolicies(guard)[cmd];
+  if (!policy && hasPolicy(BUILD_PROFILE_POLICIES, cmd)) {
+    throw new GuardError(
+      `Command '${cmd}' requires the build profile`,
+      "command_not_allowed",
+    );
+  }
+  const policyPaths = policy
+    ? checkPolicy(cmd, args, policy, policySource(guard, cmd) ?? "default")
+    : policylessPathArgs(args, cwd);
 
   if (guard.allowed_paths.length > 0) {
     const resolvedCwd = path.resolve(cwd);
@@ -128,7 +183,7 @@ export function checkGuard(
 
     const pathLikeArgs   = getPathLikeArgs(args);
     const pathArgsByCmd  = getPathArgsFromCommand(cmd, args);
-    const allPathArgs    = [...new Set([...pathLikeArgs, ...pathArgsByCmd])];
+    const allPathArgs    = [...new Set([...pathLikeArgs, ...pathArgsByCmd, ...policyPaths])];
 
     for (const arg of allPathArgs) {
       const resolvedArgPath = path.resolve(cwd, arg);
@@ -141,4 +196,116 @@ export function checkGuard(
       }
     }
   }
+}
+
+function deny(cmd: string, arg: string, source: PolicySource): never {
+  throw new GuardError(
+    `Argument '${arg}' is not allowed for command '${cmd}' (policy: ${source})`,
+    "arg_not_allowed",
+  );
+}
+
+/**
+ * 정책 허용목록 검사. 통과 시 경로 검사 대상 인자 목록을 반환한다.
+ * subVerbs가 지정된 서브커맨드는 첫 위치 인자를 하위 동사 허용목록으로 검사한다.
+ */
+function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source: PolicySource): string[] {
+  let lead = 0;
+  while (policy.leadingFlags?.includes(args[lead] ?? "")) lead++;
+  let rest = args.slice(lead);
+  let sub: string | undefined;
+  if (policy.subcommands) {
+    sub = rest[0];
+    if (sub === undefined || !policy.subcommands.includes(sub)) deny(cmd, sub ?? "(none)", source);
+    rest = rest.slice(1);
+  }
+  const paths: string[] = [];
+  const positionalMode  = (sub && policy.subPositionals?.[sub]) ?? policy.positionals;
+  const flags           = effectiveFlags(policy, sub);
+  const tokens          = tokenizeArgs(rest, flags, policy.singleDashLong, {
+    numericFlag:      policy.numericFlag,
+    stopAtPositional: policy.stopAtPositional,
+  });
+  const verbs           = sub !== undefined ? policy.subVerbs?.[sub] : undefined;
+  let   verbChecked     = verbs === undefined;
+
+  for (const t of tokens) {
+    if (t.passthrough) continue;
+    if (t.kind === "flag") {
+      const kind = flagKind(flags, t.name);
+      if (!kind && !(policy.numericFlag && /^-[0-9]+$/.test(t.name))) deny(cmd, t.name, source);
+      if (t.value?.startsWith("@") && policy.fileRefFlags?.includes(t.name)) deny(cmd, `${t.name} ${t.value}`, source);
+      if (t.value !== undefined && policy.deniedValues?.[t.name]?.some(d => t.value!.includes(d))) deny(cmd, `${t.name} ${t.value}`, source);
+      if (t.value !== undefined && !isAllowedValue(policy, t.name, t.value)) deny(cmd, `${t.name} ${t.value}`, source);
+      if (kind === "path" && t.value) paths.push(t.value);
+      continue;
+    }
+    if (!verbChecked) {
+      if (!verbs!.includes(t.name)) deny(cmd, t.name, source);
+      verbChecked = true;
+      continue;
+    }
+    if (positionalMode === "none") deny(cmd, t.name, source);
+    if (positionalMode === "url" && !/^https?:\/\//i.test(t.name)) deny(cmd, t.name, source);
+    if (positionalMode === "path") paths.push(t.name);
+  }
+  if (!verbChecked) deny(cmd, "(missing verb)", source);
+  return paths;
+}
+
+/**
+ * 정책의 allowedValues에 플래그 항목이 있으면 값이 목록에 맞는지 검사한다. 항목이 없으면 허용한다.
+ * "="로 끝나는 목록 항목은 접두사로, 나머지는 같은 값으로 비교한다.
+ */
+function isAllowedValue(policy: CommandPolicy, name: string, value: string): boolean {
+  if (!policy.allowedValues || !Object.hasOwn(policy.allowedValues, name)) return true;
+  return policy.allowedValues[name]!.some(v => (v.endsWith("=") ? value.startsWith(v) : value === v));
+}
+
+/**
+ * 경로로 해석될 수 있는 플래그 부착 값인지 판단한다.
+ */
+function isPathLikeValue(value: string): boolean {
+  return value.includes("/") || value.startsWith("~") || value.startsWith(".");
+}
+
+/**
+ * cwd 기준으로 해석한 경로에 파일 시스템 항목(심볼릭 링크 포함)이 있는지 확인한다.
+ * 경로로 쓸 수 없는 값(널 문자, 지나치게 긴 이름, 파일 아래 경로)은 항목이 없는 것으로 본다.
+ */
+function existsUnder(cwd: string, value: string): boolean {
+  if (value.length === 0 || value.includes("\0")) return false;
+  try {
+    return lstatSync(path.resolve(cwd, value), { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 정책이 없는 명령에서 경로 검사를 받을 인자를 추출한다.
+ * 플래그가 아닌 인자는 슬래시를 포함하거나 cwd 기준으로 존재하는 항목을 가리키면 검사한다.
+ * 플래그에 붙은 값은 --x=value의 value와, 짧은 플래그 묶음(-abVALUE)에서 플래그 글자로 볼 수 있는
+ * 각 문자 뒤의 나머지 문자열 중 경로형이거나 cwd 기준으로 존재하는 항목을 가리키는 것을 검사한다.
+ */
+function policylessPathArgs(args: string[], cwd: string): string[] {
+  const isPathArg = (v: string): boolean => isPathLikeValue(v) || existsUnder(cwd, v);
+  const out: string[] = [];
+  for (const a of args) {
+    if (a === "-" || a === "--") continue;
+    if (!a.startsWith("-")) {
+      if (isPathArg(a)) out.push(a);
+      continue;
+    }
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq >= 0 && isPathArg(a.slice(eq + 1))) out.push(a.slice(eq + 1));
+      continue;
+    }
+    for (let j = 2; j < a.length && /[A-Za-z0-9]/.test(a[j - 1]!); j++) {
+      const suffix = a.slice(j);
+      if (isPathArg(suffix)) out.push(suffix);
+    }
+  }
+  return out;
 }

@@ -5,6 +5,66 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
+## [2.0.0] - 2026-10-03
+
+### Breaking
+
+| 변경 | 영향 대상 | 호환 수단 |
+|-|-|-|
+| 정책 명령의 미등록 플래그·서브커맨드 차단 | git, npm, pnpm, docker, kubectl, helm, terraform, cargo, apt, brew, systemctl, journalctl, gh, curl, find, env, node, npx 사용자 | `guard.profile: "build"`, `guard.command_policies` 덮어쓰기, 차단 메시지에 차단 인자 명시 |
+| `cargo` 기본 정책은 `--version`, `-V`만 허용 | `cargo tree`, `metadata`, `search`, `pkgid` 사용자 | `guard.profile: "build"` |
+| `npm audit`은 위치 인자를 받지 않음 | `npm audit <동사>` 사용자 | 없음(의도) |
+| `build` 프로필의 `npx`는 설치된 실행 파일만 실행(`--no`를 앞에 붙임) | 설치하지 않은 패키지를 `npx`로 실행하던 사용자 | 패키지를 먼저 설치 |
+| `kubectl -o`/`--output`은 `json`, `yaml`, `wide`, `name`, `jsonpath=`, `jsonpath-as-json=`, `custom-columns=`, `go-template=`, `template=`만 허용 | `*-file` 형식 사용자 | 인라인 형식 사용 |
+| 값을 붙여서만 받는 플래그: git `--pretty`, `--format`(branch, tag 제외), `-U`, `--unified`, tag `-n`, brew `--json` | 값을 다음 인자로 주던 사용자 | `--pretty=oneline`, `-U3`처럼 붙여 쓴다 |
+| git `blame`, `shortlog`의 `-n`과 docker `logs`의 `-f`는 값을 받지 않는 플래그로, journalctl `-n`, `--lines`는 줄 수 형식(N, +N, all)의 다음 인자만 값으로 받는 플래그로 처리 | 해당 플래그 뒤 인자를 값으로 기대하던 사용자 | 없음(각 명령의 실제 문법) |
+| `find` 정책에서 `-L` 제거 | `find -L` 사용자 | `guard.command_policies` |
+| 정책 없는 명령의 경로 검사 확대: 슬래시를 포함한 위치 인자, cwd 기준으로 존재하는 항목을 가리키는 위치 인자와 플래그 부착 값 | 이 인자가 `allowed_paths` 밖으로 해석되던 사용자 | `allowed_paths`에 경로 추가 |
+| `apt` 파서 `name`에서 suite를 분리 | `name`의 `/suite` 부분을 읽던 소비자 | `suite` 필드 |
+| `free` 파서 옵션 없는 기본 `unit`이 `"bytes"`에서 `"KB"`로 바뀜 | `unit`을 읽던 소비자 | `*_bytes` 필드 |
+| 프로젝트 `allowed_paths`의 상대경로는 설정 파일 디렉터리 기준으로 해석하고, 심볼릭 링크를 해석한 실경로로 비교·저장 | 프로젝트 설정에 상대경로나 링크를 쓰던 사용자 | 기준 경로 안의 실제 디렉터리를 지정 |
+| 기본 `allowed_commands`에서 `env` 인자 사용 불가 | `env` 단독은 유지 | 없음(의도) |
+| `failure.reason` 값 2종 추가 | reason을 전수 switch 하는 소비자 | CHANGELOG 명시, SPECIFICATION 표 갱신 |
+| 지원하지 않는 형식에서 `parsed=null` | `git log` 기본, `ps -ef`, `ss -tln`, `ls`(-l 없음) 등을 쓰던 소비자 | native JSON 폴백 유지, `stdout.raw` 유지 |
+| 프로젝트 `prism.config.json`이 가드를 넓히지 못함 | 저장소별로 명령을 추가하던 사용자 | 전역 `~/.parism/prism.config.json`의 `trust_project_config: true` |
+| 200개 이상 응답에서 raw 제거 | raw를 직접 읽던 소비자 | `adaptive_format_threshold.json_no_raw: 0`으로 비활성 |
+
+추가 변경:
+- `guard.env_secret_patterns` 키를 제거했다. 설정에 남아 있으면 stderr에 경고하고 무시한다. `guard.secrets.env_patterns`를 사용한다.
+- `yarn`은 기본 `allowed_commands`와 기본 정책에서 빠졌고 `build` 프로필에서만 허용된다.
+- 실행 디렉터리가 `/`이면 기본 `allowed_paths`는 홈 디렉터리이며 stderr에 경고한다.
+- 숫자가 아닌 `PARISM_TIMEOUT_MS`, `PARISM_MAX_OUTPUT_BYTES`, `PARISM_MAX_ITEMS`, `PARISM_DEFAULT_PAGE_SIZE`, `PARISM_ADAPTIVE_FORMAT_*` 값은 무시하고 stderr에 경고한다.
+- 객체 프로토타입 키 이름(`constructor` 등)의 명령은 정책이 없는 명령으로 검사한다.
+- `failure.reason`에 `output_overflow`(출력이 실행기 버퍼 상한을 넘음)가 추가됐다.
+- `package.json`의 `files`에서 `prism.config.json`을 뺐다. 저장소의 `prism.config.json`은 예시이며 패키지에 포함되지 않는다.
+
+### Added
+- `guard.profile`(`readonly` 기본, `build`)과 `guard.command_policies`: 명령별 서브커맨드·플래그·위치 인자 허용목록.
+- `trust_project_config`: 전역 설정에서만 켤 수 있는 프로젝트 설정 신뢰 옵션.
+- 파서 계약 `ParserContract`(`supports`, `headerLines`, `noise`)와 실패 사유 `unsupported_format`, `unrecognized_output`.
+- `run_paged` 실행 결과 재사용: 같은 명령의 후속 페이지는 30초 안에서 재실행하지 않으며 `page_info.cache = { hit, age_ms }`로 알린다. 성공한 실행만 저장하고 `includeDiff`가 다르면 따로 저장한다. 최대 16항목, 합계 32 MiB, LRU.
+- `ls` 파서의 `char_device`, `block_device` 유형과 `target`, `free` 파서의 `*_bytes` 필드, `apt` 파서의 `suite` 필드.
+
+### Changed
+- 적응형 포맷: `json_no_raw` 임계값 이상이면 compact이면서 raw를 비우고, `compact` 임계값 이상이면 compact로 응답한다.
+- 실행기: stderr에도 `max_output_bytes`를 적용하고 버퍼 상한 초과를 `output_overflow`로 분류한다.
+- 파서: `ls`(setuid, sticky, 장치, ACL, 심볼릭 링크), `free`(단위 환산), `id -u/-g/-G`, `grep`(출력 형식 판정, 옵션 값을 파일 인자로 세지 않음), `git`(앞에 오는 전역 옵션을 건너뛰고 서브커맨드 판정), `npm ls`(ASCII 트리), `netstat`(UDP), `uname -a`, `apt`(`name`과 `suite` 분리), `tree`(들여쓰기 기반 디렉터리 판정).
+- `curl`: `-w`/`--write-out` 값의 `%output{` 지시어를 차단한다.
+- `git`: 서브커맨드 조회가 객체 프로토타입 키에 영향을 받지 않는다.
+- 운영 의존성 취약점 0건.
+
+### Removed
+- `guard.env_secret_patterns`(위 Breaking 참조).
+
+### Known limitations
+- `ls`는 `-h`/`--si`, `--time-style` 변형을 처리하지 않는다(`unsupported_format` 또는 `unrecognized_output`).
+- `tree`는 비어 있는 디렉터리를 파일로 분류한다.
+- `uname`은 `-a` 외 단일 옵션 출력을 해석하지 않는다.
+
+### Documentation
+- `SECURITY.md` 위협 모델을 argv 허용목록 기준으로 다시 썼다.
+- `docs/adr/2026-07-21-external-parser-sandbox.md`의 격리 방식을 `worker_threads` 또는 `child_process.fork`로 바꿨다.
+
 ## [1.1.0] - 2026-07-21
 
 ### Added

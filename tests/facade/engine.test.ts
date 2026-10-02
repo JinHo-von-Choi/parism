@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { unlink, writeFile }    from "node:fs/promises";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir }                     from "node:os";
+import path                           from "node:path";
 import { ParismEngine, createEngine } from "../../src/facade/engine.js";
 import { DEFAULT_CONFIG }             from "../../src/config/loader.js";
 import { createRegistry }             from "../../src/parsers/index.js";
@@ -51,12 +54,23 @@ describe("ParismEngine.run()", () => {
     expect(result.guard_error?.reason).toBe("command_not_allowed");
   });
 
+  it("git 실행 봉투의 args는 사용자가 보낸 원본이다", async () => {
+    const result = await engine.run("git", { args: ["status", "-s"] });
+
+    expect(result.args).toEqual(["status", "-s"]);
+  });
+
   it("파서 미등록 명령은 ok=true이고 failure.reason=parser_not_found를 반환한다", async () => {
     const result = await engine.run("echo", { args: ["plain text"] });
 
     expect(result.ok).toBe(true);
     expect(result.failure?.kind).toBe("parse");
     expect(result.failure?.reason).toBe("parser_not_found");
+  });
+
+  it("json-no-raw에서 파싱 실패 시 raw를 유지한다", async () => {
+    const r = await engine.run("echo", { args: ["not parseable by any parser"], format: "json-no-raw" });
+    if (r.stdout.parsed === null) expect(r.stdout.raw.length).toBeGreaterThan(0);
   });
 });
 
@@ -131,6 +145,19 @@ describe("ParismEngine.describe()", () => {
   it("telemetry_enabled가 기본 비활성이다", () => {
     const desc = engine.describe();
     expect(desc.telemetry_enabled).toBe(false);
+  });
+
+  it("guard_summary.policies에 적용 중인 명령 정책이 노출된다", () => {
+    const desc = engine.describe();
+    expect(desc.guard_summary.policies.git.subcommands).toContain("status");
+  });
+
+  it("guard_summary.policies는 프로필과 설정을 반영한다", () => {
+    const cfg  = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, profile: "build" as const, command_policies: { env: { flags: { "-0": "bool" as const }, positionals: "none" as const } } } };
+    const desc = new ParismEngine(cfg, registry).describe();
+    expect(desc.guard_summary.profile).toBe("build");
+    expect(desc.guard_summary.policies.npm.subcommands).toContain("run");
+    expect(desc.guard_summary.policies.env.flags).toEqual(["-0"]);
   });
 });
 
@@ -211,5 +238,84 @@ describe("ParismEngine.run() — telemetry", () => {
 
     const t = result.telemetry!;
     expect(t.total_ms).toBeGreaterThanOrEqual(t.guard_ms);
+  });
+});
+
+describe("adaptive_format_threshold", () => {
+  const makeDir = (n: number): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-ad-"));
+    for (let i = 0; i < n; i++) writeFileSync(path.join(dir, `f${i}`), "x");
+    return dir;
+  };
+  const cfgFor = (dir: string, compact: number, jsonNoRaw: number) => ({
+    ...DEFAULT_CONFIG,
+    guard:   { ...DEFAULT_CONFIG.guard, allowed_paths: [dir] },
+    parsers: { ...DEFAULT_CONFIG.parsers, adaptive_format_threshold: { compact, json_no_raw: jsonNoRaw } },
+  });
+
+  it("항목 수가 json_no_raw 임계값 이상이면 compact이면서 raw를 비운다", async () => {
+    const dir = makeDir(3);
+    const r   = await new ParismEngine(cfgFor(dir, 2, 3), createRegistry()).run("ls", { args: ["-l"], cwd: dir });
+    expect(r.stdout.raw).toBe("");
+    expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
+  });
+
+  it("compact 임계값만 넘으면 compact이고 raw는 유지한다", async () => {
+    const dir = makeDir(3);
+    const r   = await new ParismEngine(cfgFor(dir, 2, 100), createRegistry()).run("ls", { args: ["-l"], cwd: dir });
+    expect(r.stdout.raw).not.toBe("");
+    expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
+  });
+});
+
+describe("ParismEngine.runPaged() 실행 결과 재사용", () => {
+  const makeDir = (n: number): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-pg-"));
+    for (let i = 0; i < n; i++) writeFileSync(path.join(dir, `f${i}`), "x");
+    return dir;
+  };
+  const engineFor = (dir: string) => new ParismEngine(
+    { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [dir] } },
+    createRegistry(),
+  );
+
+  it("page 0 은 항상 실행하고 page 1 은 저장된 결과를 재사용한다", async () => {
+    const dir    = makeDir(4);
+    const engine = engineFor(dir);
+    const first  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 2 });
+    writeFileSync(path.join(dir, "late"), "x");
+    const second = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 2 });
+    expect(first.page_info?.cache?.hit).toBe(false);
+    expect(second.page_info?.cache?.hit).toBe(true);
+    expect(second.page_info?.total_lines).toBe(first.page_info?.total_lines);
+  });
+
+  it("page 0 을 다시 요청하면 새로 실행한다", async () => {
+    const dir    = makeDir(2);
+    const engine = engineFor(dir);
+    await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 10 });
+    writeFileSync(path.join(dir, "late"), "x");
+    const again  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 10 });
+    expect(again.page_info?.cache?.hit).toBe(false);
+    expect(again.page_info?.total_lines).toBe(3);
+  });
+
+  it("실패한 실행 결과는 저장하지 않는다", async () => {
+    const dir    = makeDir(1);
+    const engine = engineFor(dir);
+    const first  = await engine.runPaged("ls", { args: ["-1", "missing"], cwd: dir, page: 0, page_size: 1 });
+    const second = await engine.runPaged("ls", { args: ["-1", "missing"], cwd: dir, page: 1, page_size: 1 });
+    expect(first.ok).toBe(false);
+    expect(second.page_info?.cache?.hit).toBe(false);
+  });
+
+  it("includeDiff 값이 다르면 저장된 결과를 재사용하지 않는다", async () => {
+    const dir    = makeDir(3);
+    const engine = engineFor(dir);
+    await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 1 });
+    const other  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 1, includeDiff: true });
+    const same   = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 1 });
+    expect(other.page_info?.cache?.hit).toBe(false);
+    expect(same.page_info?.cache?.hit).toBe(true);
   });
 });

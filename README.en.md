@@ -127,7 +127,7 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` — e.g. `cat subdir/file`, `find src`) are checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
+**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo`, e.g. `cat subdir/file`, `find src`) are checked. For commands without a policy, args containing `/` and args or attached flag values that name an existing entry under `cwd` (including symbolic links) are checked as well. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
 
 **Injection Pattern Blocking**: Each argument is checked individually for `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`. Per-argument checking prevents cross-boundary false positives (e.g., `["foo>", ">bar"]` is not falsely detected as `>>`).
 
@@ -189,18 +189,19 @@ The agent receives the block reason in the same envelope structure as any other 
 | System | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
 | System | `apt list --installed` | `packages[]` — name, version, arch, status | O |
 | System | `brew list --versions` | `packages[]` — name, version | O |
-| Package | `npm list`, `pnpm list`, `yarn list` | `dependencies[]` — name, version, depth | O |
-| Package | `cargo tree` | `crates[]` — name, version, path | O |
+| Package | `npm list`, `pnpm list` | `dependencies[]` - name, version, depth | O |
+| Package | `yarn list` (build profile) | `dependencies[]` - name, version, depth | X |
+| Package | `cargo tree` (build profile) | `crates[]`: name, version, path | O |
 | Windows | `dir` | `directory`, `entries[]` — name, type, size, modified time, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]` — name, PID, session, memory. CSV format supported | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, subnet, gateway, DNS, MAC | X |
 | Windows | `systeminfo` | `hostname`, `os_name`, memory, `hotfixes[]`, `network_cards[]` | X |
 
-Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json.
+Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "(build profile)" requires `guard.profile: "build"`.
 
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
-> `stdout.parse_error.reason` only takes two values: `"parser_exception"` and `"schema_violation"`. "No parser found" is not a `parse_error` — it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+> `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error`; it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
 
 ### Native JSON Passthrough
 
@@ -289,6 +290,7 @@ Parameters:
 Extra fields:
 - `page_info.total_lines` — total line count
 - `page_info.has_next` — whether next page exists
+- `page_info.cache` - `{ hit, age_ms }`. Later pages reuse the first run's result for 30 seconds
 - `stdout.parsed` — always `null` (partial output cannot be safely parsed)
 
 ### describe
@@ -342,7 +344,9 @@ Place `prism.config.json` in the project root to control Guard behavior.
       "node": { "blocked_flags": ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },
       "npx":  { "blocked_flags": ["--yes", "-y"] }
     },
-    "env_secret_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
+    "secrets": {
+      "env_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
+    }
   },
   "telemetry": {
     "enabled": false
@@ -352,7 +356,11 @@ Place `prism.config.json` in the project root to control Guard behavior.
 
 `allowed_paths` being empty means no path restriction. That decision is yours.
 
-`env_secret_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them.
+`guard.secrets.env_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them. The legacy `env_secret_patterns` key was removed in 2.0.0; if present it is ignored with a warning on stderr.
+
+`guard.profile` defaults to `"readonly"`, which allows read-only subcommands only. `"build"` additionally allows build and test subcommands such as `npm run`, `npm test`, `cargo build`, `terraform plan` and `docker compose ps`. These run project code, so enable it only for repositories you trust. `cargo` query subcommands (`tree`, `metadata`, `search`, `pkgid`) also require the `build` profile, since they can run a rustc wrapper configured by the repository. `node`, `npx` and `yarn` must be added to `allowed_commands` explicitly and work only under the `build` profile; `npx` runs with `--no`, so only locally installed binaries run. Override per-command rules with `guard.command_policies`. A project `prism.config.json` cannot widen the guard; to allow that, set `"trust_project_config": true` in the global `~/.parism/prism.config.json`.
+
+The `prism.config.json` in the repository is an example and is not included in the npm package.
 
 `command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
 
@@ -430,6 +438,9 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* return structured result */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+  supports: (args) => !args.includes("--json"), // optional: false yields unsupported_format
+  headerLines: 1,                                // optional: number of non-data header lines
+  noise: /^Total /,                              // optional: pattern for non-data lines
 };
 
 export default pack;

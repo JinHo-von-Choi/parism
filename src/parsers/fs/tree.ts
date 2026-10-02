@@ -28,33 +28,25 @@ export function parseTree(cmd: string, args: string[], raw: string): TreeResult 
   const rootName = contentLines[0]?.trim() || ".";
   const root: TreeNode = { name: rootName, type: "directory", children: [] };
 
-  // 스택 기반 트리 빌드
-  // 각 라인의 들여쓰기 깊이를 계산 (├──, └──, │ 패턴)
+  /** 들여쓰기 깊이는 접두부 4자 단위다. 유니코드(├── └──)와 ASCII(|-- `--) 연결자를 모두 받는다. */
+  const ENTRY = /^((?:(?:│|\|) {3}| {4})*)(?:├── |└── |\|-- |`-- )(.+)$/;
+  const items: Array<{ name: string; depth: number }> = [];
+  for (const line of contentLines.slice(1)) {
+    const m = line.match(ENTRY);
+    if (m) items.push({ name: m[2]!.trim(), depth: m[1]!.length / 4 });
+  }
+
   const stack: Array<{ node: TreeNode; depth: number }> = [{ node: root, depth: -1 }];
 
-  for (const line of contentLines.slice(1)) {
-    if (!line.trim()) continue;
+  items.forEach((item, idx) => {
+    const isDir = (items[idx + 1]?.depth ?? -1) > item.depth;
+    const node: TreeNode = { name: item.name, type: isDir ? "directory" : "file", children: [] };
 
-    // 깊이 계산: ├──, └── 앞의 │와 공백 패턴 기준 4자 단위
-    const cleanedPrefix = line.match(/^([│ ]*)[├└]/);
-    if (!cleanedPrefix) continue;
+    while (stack.length > 1 && stack[stack.length - 1]!.depth >= item.depth) stack.pop();
 
-    const depth       = Math.floor(cleanedPrefix[1].replace(/[^ │]/g, "").length / 4);
-    const nameMatch   = line.match(/[├└]── (.+)$/);
-    if (!nameMatch) continue;
-
-    const name     = nameMatch[1].trim();
-    const isDir    = !name.includes(".");
-    const newNode: TreeNode = { name, type: isDir ? "directory" : "file", children: [] };
-
-    // 현재 깊이보다 깊은 스택 항목 제거
-    while (stack.length > 1 && stack[stack.length - 1].depth >= depth) {
-      stack.pop();
-    }
-
-    stack[stack.length - 1].node.children.push(newNode);
-    if (isDir) stack.push({ node: newNode, depth });
-  }
+    stack[stack.length - 1]!.node.children.push(node);
+    if (isDir) stack.push({ node, depth: item.depth });
+  });
 
   return { root, directories, files };
 }

@@ -135,7 +135,7 @@ Parism의 CFR은 0%다. 파서는 deterministic code이기 때문이다. 정규�
 
 **화이트리스트**: `allowed_commands`에 없는 명령어는 실행되지 않는다. 프로세스를 만들지도 않는다. 설명 없이 거절한다.
 
-**경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자와, `cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` 등 경로를 받는 명령의 positional 인자(`cat subdir/file`, `find src`)도 허용 경로 밖이면 차단된다. 커널 수준 샌드박스는 아니며, 가드 수준의 방어선이다.
+**경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자와, `cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` 등 경로를 받는 명령의 positional 인자(`cat subdir/file`, `find src`)도 허용 경로 밖이면 차단된다. 정책이 없는 명령은 슬래시를 포함한 인자와, `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 인자와 플래그 부착 값도 검사한다. 커널 수준 샌드박스는 아니며, 가드 수준의 방어선이다.
 
 **인젝션 패턴 차단**: 각 인자를 개별적으로 순회하며 `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, `<`가 포함되면 실행하지 않는다. 인자 단위 검사이므로 서로 다른 인자 경계를 넘어서는 오탐이 발생하지 않는다.
 
@@ -206,18 +206,19 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 시스템 | `journalctl -o short-iso` | `entries[]` — timestamp, hostname, unit, pid, message (Linux) | O |
 | 시스템 | `apt list --installed` | `packages[]` — name, version, arch, status | O |
 | 시스템 | `brew list --versions` | `packages[]` — name, version | O |
-| 패키지 | `npm list`, `pnpm list`, `yarn list` | `dependencies[]` — name, version, depth | O |
-| 패키지 | `cargo tree` | `crates[]` — name, version, path | O |
+| 패키지 | `npm list`, `pnpm list` | `dependencies[]` - name, version, depth | O |
+| 패키지 | `yarn list`(build 프로필) | `dependencies[]` - name, version, depth | X |
+| 패키지 | `cargo tree`(build 프로필) | `crates[]`: name, version, path | O |
 | Windows | `dir` | `directory`, `entries[]` — 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]` — 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]` — IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
 | Windows | `systeminfo` | `hostname`, `os_name`, 메모리, `hotfixes[]`, `network_cards[]` | X |
 
-기본 허용(O)=DEFAULT_CONFIG에 포함. X=prism.config.json에서 명시적 허용 필요.
+기본 허용(O)=DEFAULT_CONFIG에 포함. X=prism.config.json에서 명시적 허용 필요. (build 프로필) 표시는 `guard.profile: "build"`가 필요하다.
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
-> `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"` 두 값만 가진다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
+> `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"`, `"unsupported_format"`, `"unrecognized_output"` 네 값을 가진다. `unsupported_format` 은 파서가 해당 인자의 출력 형식을 지원하지 않을 때, `unrecognized_output` 은 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못했을 때 반환된다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
 
 ### 네이티브 JSON 패스스루
 
@@ -337,6 +338,7 @@ compact 예시:
 응답 추가 필드:
 - `page_info.total_lines` — 전체 줄 수
 - `page_info.has_next` — 다음 페이지 존재 여부
+- `page_info.cache` - `{ hit, age_ms }`. 후속 페이지는 30초 안에서 첫 실행 결과를 재사용한다
 - `stdout.parsed` — 항상 `null` (부분 출력은 구조화 불가)
 
 에이전트 패턴:
@@ -426,7 +428,11 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다.
 
-> legacy `env_secret_patterns` 는 v2.0.0 에서 제거된다. 사용 시 stderr 에 deprecation 경고가 출력된다.
+> legacy `env_secret_patterns` 는 v2.0.0 에서 제거됐다. 설정에 남아 있으면 stderr 에 경고하고 무시한다.
+
+`guard.profile` 은 기본 `"readonly"` 이며 조회 서브커맨드만 허용한다. `"build"` 로 바꾸면 `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 등 빌드·시험 서브커맨드가 추가로 허용된다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 켠다. `cargo` 조회 서브커맨드(`tree`, `metadata`, `search`, `pkgid`)는 저장소가 지정한 rustc 래퍼를 실행할 수 있으므로 `build` 프로필에서만 허용된다. `node`, `npx`, `yarn` 은 `allowed_commands` 에 직접 추가해야 하며 `build` 프로필에서만 동작한다. `npx` 에는 `--no` 를 붙여 설치된 실행 파일만 실행한다. 명령별 세부 규칙은 `guard.command_policies` 로 덮어쓴다. 프로젝트 `prism.config.json` 은 가드를 넓히지 못하며, 넓히려면 전역 `~/.parism/prism.config.json` 에 `"trust_project_config": true` 를 둔다.
+
+저장소의 `prism.config.json` 은 설정 예시이며 npm 패키지에는 포함되지 않는다.
 
 ### 설정 레이어와 환경 변수
 
@@ -500,6 +506,9 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* 구조화된 결과 반환 */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+  supports: (args) => !args.includes("--json"), // 선택: false면 unsupported_format
+  headerLines: 1,                                // 선택: 데이터가 아닌 머리 줄 수
+  noise: /^Total /,                              // 선택: 데이터가 아닌 줄 패턴
 };
 
 export default pack;

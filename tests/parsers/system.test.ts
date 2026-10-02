@@ -1,11 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { parseFree }       from "../../src/parsers/system/free.js";
+import { supportsFree }    from "../../src/parsers/supports.js";
 import { parseUname }      from "../../src/parsers/system/uname.js";
 import { parseId }         from "../../src/parsers/system/id.js";
 import { parseSystemctl }  from "../../src/parsers/system/systemctl.js";
 import { parseJournalctl } from "../../src/parsers/system/journalctl.js";
 import { parseApt }         from "../../src/parsers/system/apt.js";
 import { parseBrew }       from "../../src/parsers/system/brew.js";
+
+describe("free 단위 처리 범위", () => {
+  it("10진 단위 옵션은 supportsFree가 거부하고 2진 단위 옵션은 환산한다", () => {
+    for (const flag of ["--kilo", "--mega", "--giga"]) expect(supportsFree([flag])).toBe(false);
+    const raw = "              total        used        free      shared  buff/cache   available\nMem:             10           4           6           0           0           6\n";
+    expect(parseFree("free", ["--mebi"], raw)).toMatchObject({ unit: "MB", mem: { total_bytes: 10 * 1024 ** 2 } });
+    expect(parseFree("free", [], raw)).toMatchObject({ unit: "KB", mem: { total_bytes: 10 * 1024 } });
+  });
+});
 
 describe("parseFree()", () => {
   const raw = [
@@ -33,9 +43,21 @@ describe("parseFree()", () => {
     expect(result.unit).toBe("KB");
   });
 
-  it("-m/-g/-k 없으면 unit이 bytes다", () => {
+  it("-m/-g/-k 없으면 unit이 KB다", () => {
     const result = parseFree("free", [], raw);
-    expect(result.unit).toBe("bytes");
+    expect(result.unit).toBe("KB");
+  });
+
+  it("단위 플래그 없는 free는 KiB를 bytes로 환산한다", () => {
+    const one = "              total        used        free      shared  buff/cache   available\nMem:        1000          10         990           0           0         990\n";
+    const r   = parseFree("free", [], one);
+    expect(r.mem.total_bytes).toBe(1024000);
+    expect(r.mem.available_bytes).toBe(990 * 1024);
+  });
+
+  it("-m 은 MiB, -b 는 그대로 bytes로 환산한다", () => {
+    expect(parseFree("free", ["-m"], raw).mem.total_bytes).toBe(15845 * 1024 ** 2);
+    expect(parseFree("free", ["-b"], raw).mem.total_bytes).toBe(15845);
   });
 
   it("Mem/Swap 행 없으면 0과 null", () => {
@@ -78,6 +100,30 @@ describe("parseUname()", () => {
     expect(result.kernel_release).toBe("");
     expect(result.machine).toBe("");
     expect(result.os).toBe("Linux");
+  });
+});
+
+describe("parseUname() -a 끝에서부터 할당", () => {
+  it("kernel_version 은 공백을 포함하고 machine 과 os 는 끝에서 정해진다", () => {
+    const r = parseUname("uname", ["-a"], "Linux h 6.8.0-1 #1 SMP PREEMPT_DYNAMIC Tue Nov 14 13:30:08 UTC 2023 x86_64 x86_64 x86_64 GNU/Linux");
+    expect(r).toMatchObject({ kernel_name: "Linux", hostname: "h", kernel_release: "6.8.0-1", machine: "x86_64", os: "GNU/Linux" });
+    expect(r.kernel_version).toBe("#1 SMP PREEMPT_DYNAMIC Tue Nov 14 13:30:08 UTC 2023");
+  });
+
+  it("Linux 가 아닌 커널은 끝이 machine 이다", () => {
+    const r = parseUname("uname", ["-a"], "Darwin m 23.1.0 Darwin Kernel Version 23.1.0: Mon Oct 9 RELEASE_ARM64_T6000 arm64");
+    expect(r).toMatchObject({ kernel_name: "Darwin", machine: "arm64", os: "" });
+    expect(r.kernel_version.endsWith("RELEASE_ARM64_T6000")).toBe(true);
+  });
+});
+
+describe("parseId() 단일 값", () => {
+  it("id -u 는 uid 한 값만 반환한다", () => {
+    expect(parseId("id", ["-u"], "1000\n")).toEqual({ uid: 1000 });
+  });
+  it("id -g 와 id -G", () => {
+    expect(parseId("id", ["-g"], "1000\n")).toEqual({ gid: 1000 });
+    expect(parseId("id", ["-G"], "1000 4 27\n")).toEqual({ groups: [1000, 4, 27] });
   });
 });
 
@@ -201,7 +247,8 @@ describe("parseApt()", () => {
   it("apt list --installed 출력을 파싱한다", () => {
     const result = parseApt("apt", ["list", "--installed"], raw) as { packages: Array<{ name: string; version: string; arch: string }> };
     expect(result.packages).toHaveLength(2);
-    expect(result.packages[0]?.name).toBe("7zip/noble-apps-security");
+    expect(result.packages[0]?.name).toBe("7zip");
+    expect(result.packages[0]).toMatchObject({ suite: "noble-apps-security" });
     expect(result.packages[0]?.version).toContain("23.01");
     expect(result.packages[0]?.arch).toBe("amd64");
   });

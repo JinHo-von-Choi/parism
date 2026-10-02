@@ -61,6 +61,18 @@ describe("parseNetstat()", () => {
     expect(result.connections[0]).toHaveProperty("local_address", "0.0.0.0:22");
   });
 
+  it("UDP 행은 state 를 null 로 둔다", () => {
+    const raw = [
+      "Active Internet connections (servers and established)",
+      "Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name",
+      "udp        0      0 0.0.0.0:68              0.0.0.0:*                           812/dhclient",
+      "udp        0      0 0.0.0.0:5353            0.0.0.0:*                           -",
+    ].join("\n");
+    const r = parseNetstat("netstat", ["-aup"], raw);
+    expect(r.connections[0]).toMatchObject({ proto: "udp", local_address: "0.0.0.0:68", state: null });
+    expect(r.connections[1]).toMatchObject({ state: null });
+  });
+
   it("macOS 형식 netstat 출력을 파싱한다", () => {
     const result = parseNetstat("netstat", ["-an"], netstatMacosRaw);
     expect(result.connections).toHaveLength(2);

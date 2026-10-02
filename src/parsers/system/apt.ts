@@ -10,6 +10,7 @@ import type { ParseContext } from "../registry.js";
 
 export interface AptPackage {
   name:    string;
+  suite:   string;
   version: string;
   arch:    string;
   status:  string;
@@ -39,11 +40,15 @@ export function parseApt(
     const m = line.match(PKG_LINE);
     if (!m) continue;
 
-    const namePart = (m[1] ?? "").split(",")[0] ?? "";
+    const nameField = m[1] ?? "";
+    const slash     = nameField.indexOf("/");
+    const namePart  = slash >= 0 ? nameField.slice(0, slash) : nameField;
+    const suite     = slash >= 0 ? nameField.slice(slash + 1).split(",").filter(x => x !== "now").join(",") : "";
     const version  = (m[2] ?? "").replace(/^now\s+/, "");
 
     packages.push({
       name:    namePart.trim(),
+      suite:   suite.trim(),
       version: version.trim(),
       arch:    m[3] ?? "",
       status:  m[4] ?? "",

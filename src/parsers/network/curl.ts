@@ -5,7 +5,7 @@ export interface CurlHeaders {
 }
 
 export function parseCurl(cmd: string, args: string[], raw: string): CurlHeaders | { raw: string } {
-  if (!args.includes("-I") && !args.includes("--head")) {
+  if (!args.some(a => /^-[A-Za-z]*I[A-Za-z]*$/.test(a)) && !args.includes("--head")) {
     return { raw };
   }
 

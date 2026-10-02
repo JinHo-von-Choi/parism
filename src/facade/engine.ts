@@ -6,6 +6,7 @@
  * 작성일: 2026-04-15
  */
 
+import { realpathSync }                                                             from "node:fs";
 import path                                                                         from "node:path";
 import { loadConfig, loadConfigMultiLayer } from "../config/loader.js";
 import type { PrismConfig }                                                         from "../config/loader.js";
@@ -15,6 +16,8 @@ import type { OutputFormat }                                                    
 import type { ResponseEnvelope }                                                    from "../types/envelope.js";
 import { execute }                                                                  from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
+import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
+import { PageCache }                                                                from "../engine/page-cache.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
@@ -71,7 +74,13 @@ function buildGuardErrorEnvelope(
   return envelope;
 }
 
+const PAGE_CACHE_TTL_MS      = 30_000;
+const PAGE_CACHE_MAX_ENTRIES = 16;
+const PAGE_CACHE_MAX_BYTES   = 32 * 1024 * 1024;
+
 export class ParismEngine {
+  private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
+
   constructor(
     private readonly config:   PrismConfig,
     private readonly registry: ParserRegistry,
@@ -101,13 +110,14 @@ export class ParismEngine {
     timer?.markEnd("guard");
 
     timer?.markStart("exec");
-    const envelope = await execute(
-      cmd, args, cwd,
-      this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
+    const executed = await execute(
+      cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
+      this.config.guard.secrets?.env_patterns ?? [],
       this.config.guard.timeout_ms,
       this.config.guard.max_output_bytes,
       includeDiff,
     );
+    const envelope = { ...executed, args };
     timer?.markEnd("exec");
     timer?.setRawBytes(Buffer.byteLength(envelope.stdout.raw, "utf8"));
 
@@ -121,28 +131,34 @@ export class ParismEngine {
     if (parsed == null) parsed = nativeParsed;
 
     // adaptive format: 항목 수 기준 자동 포맷 선택
-    let finalFormat = parseFormat;
+    let useCompact  = parseFormat === "compact";
+    let dropRaw     = format === "json-no-raw";
     const threshold = this.config.parsers?.adaptive_format_threshold;
     if (threshold && parsed && typeof parsed === "object") {
       const arr = Array.isArray(parsed) ? parsed : Object.values(parsed).find(v => Array.isArray(v)) as unknown[] | undefined;
       if (arr && arr.length > 0) {
-        if (threshold.json_no_raw !== undefined && arr.length >= threshold.json_no_raw) {
-          finalFormat = "json-no-raw" as typeof parseFormat;
-        } else if (threshold.compact !== undefined && arr.length >= threshold.compact) {
-          finalFormat = "compact";
+        if (threshold.json_no_raw !== undefined && threshold.json_no_raw > 0 && arr.length >= threshold.json_no_raw) {
+          useCompact = true;
+          dropRaw    = true;
+        } else if (threshold.compact !== undefined && threshold.compact > 0 && arr.length >= threshold.compact) {
+          useCompact = true;
         }
       }
     }
 
-    const final = finalFormat === "compact" ? toCompact(parsed) : parsed;
-    const stdout       = format === "json-no-raw"
-      ? { raw: "", parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) }
-      : { ...envelope.stdout, parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) };
+    const final = useCompact ? toCompact(parsed) : parsed;
+    /** native JSON 폴백이 성공하면 unsupported_format은 실패로 노출하지 않는다. */
+    const parseError   = parseResult.parse_error?.reason === "unsupported_format" && nativeParsed !== null
+      ? undefined
+      : parseResult.parse_error;
+    const stdout       = dropRaw && final !== null
+      ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
+      : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
 
     // parse failure 정규화: parser_exception은 failure로 승격, parser_not_found는 ok=true인 정보성 실패
     let parseFailure = envelope.failure;
-    if (parseResult.parse_error) {
-      parseFailure = { kind: "parse", reason: parseResult.parse_error.reason, message: parseResult.parse_error.message };
+    if (parseError) {
+      parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message };
     } else if (parseResult.parsed === null && !parseResult.parse_error && nativeParsed === null && envelope.ok) {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };
@@ -187,6 +203,14 @@ export class ParismEngine {
         max_output_bytes:        guard.max_output_bytes,
         command_arg_restrictions: Object.fromEntries(
           Object.entries(guard.command_arg_restrictions).map(([k, v]) => [k, { ...v }]),
+        ),
+        profile:                 guard.profile ?? "readonly",
+        policies:                Object.fromEntries(
+          Object.entries(resolvePolicies(guard)).map(([k, p]) => [k, {
+            ...(p.subcommands && { subcommands: [...p.subcommands] }),
+            flags:       Object.keys(p.flags),
+            positionals: p.positionals,
+          }]),
         ),
       },
       telemetry_enabled: this.config.telemetry?.enabled === true,
@@ -239,14 +263,27 @@ export class ParismEngine {
     // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
     // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
     // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
-    const envelope               = await execute(
-      cmd, args, cwd,
-      this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
-      this.config.guard.timeout_ms,
-      0,
-      includeDiff,
-    );
+    const cacheKey = JSON.stringify([cmd, args, resolveRealCwd(cwd), includeDiff]);
+    const cached   = page > 0 ? this.pageCache.get(cacheKey) : undefined;
+    let envelope: ResponseEnvelope;
+    let cacheInfo: { hit: boolean; age_ms: number };
+    if (cached) {
+      envelope  = cached.envelope;
+      cacheInfo = { hit: true, age_ms: Date.now() - cached.createdAt };
+    } else {
+      const executed = await execute(
+        cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
+        this.config.guard.secrets?.env_patterns ?? [],
+        this.config.guard.timeout_ms,
+        0,
+        includeDiff,
+      );
+      envelope  = { ...executed, args };
+      if (envelope.ok) this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
+      cacheInfo = { hit: false, age_ms: 0 };
+    }
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
+    page_info.cache              = cacheInfo;
     const pagedRaw               = lines.join("\n") + (lines.length > 0 ? "\n" : "");
     let   enriched               = {
       ...envelope,
@@ -264,6 +301,15 @@ export class ParismEngine {
     }
 
     return enriched as ResponseEnvelope;
+  }
+}
+
+/** 캐시 키용 실경로. 해석에 실패하면 절대 경로로 대체한다. */
+function resolveRealCwd(cwd: string): string {
+  try {
+    return realpathSync(cwd);
+  } catch {
+    return path.resolve(cwd);
   }
 }
 
@@ -292,6 +338,8 @@ export interface DescribeResult {
     timeout_ms:              number;
     max_output_bytes:        number;
     command_arg_restrictions: Record<string, { blocked_flags?: string[]; allowed_flags?: string[] }>;
+    profile:                 "readonly" | "build";
+    policies:                Record<string, { subcommands?: string[]; flags: string[]; positionals: string }>;
   };
   telemetry_enabled:  boolean;
 }

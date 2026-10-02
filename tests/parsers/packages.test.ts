@@ -2,6 +2,13 @@ import { describe, it, expect } from "vitest";
 import { parseNpm }   from "../../src/parsers/packages/npm.js";
 import { parseCargo } from "../../src/parsers/packages/cargo.js";
 
+describe("parseNpm() ASCII 트리", () => {
+  it("ASCII 트리(+--, `--)를 인식한다", () => {
+    const raw = "a@1.0.0 /p\n+-- zod@3.25.76\n`-- commander@14.0.3\n";
+    expect((parseNpm("npm", ["ls"], raw) as { dependencies: { name: string }[] }).dependencies.map(d => d.name)).toEqual(["zod", "commander"]);
+  });
+});
+
 describe("parseNpm()", () => {
   const raw = [
     "@nerdvana/parism@0.2.0 /home/nirna/job/nerdvana-prism",

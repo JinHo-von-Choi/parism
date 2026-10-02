@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { execute } from "../../src/engine/executor.js";
+import { execute, truncateUtf8Lines } from "../../src/engine/executor.js";
 
 describe("execute()", () => {
   it("echo 명령을 실행하고 stdout을 반환한다", async () => {
@@ -74,4 +74,25 @@ describe("execute()", () => {
     expect(result.failure?.kind).toBe("exec");
     expect(result.failure?.reason).toBe("timeout");
   }, 10000);
+});
+
+describe("출력 상한", () => {
+  it("stderr도 max_output_bytes로 자른다", async () => {
+    const r = await execute("node", ["-e", "process.stderr.write('x'.repeat(5000))"], process.cwd(), [], 10000, 100, false);
+    expect(Buffer.byteLength(r.stderr.raw)).toBeLessThan(200);
+    expect(r.truncated).toBe(true);
+  });
+
+  it("maxBuffer 초과는 output_overflow로 분류한다", async () => {
+    const r = await execute("node", ["-e", "process.stdout.write('x'.repeat(11*1024*1024))"], process.cwd(), [], 10000, 0, false);
+    expect(r.failure?.reason).toBe("output_overflow");
+  });
+
+  it("truncateUtf8Lines 는 마지막 완전한 줄까지 남긴다", () => {
+    const r = truncateUtf8Lines("aaa\nbbb\nccc\n", 9);
+    expect(r.truncated).toBe(true);
+    expect(r.text.startsWith("aaa\nbbb\n")).toBe(true);
+    expect(r.text).not.toContain("ccc");
+    expect(truncateUtf8Lines("abc", 0)).toEqual({ text: "abc", truncated: false });
+  });
 });
