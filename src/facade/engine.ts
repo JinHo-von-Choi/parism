@@ -76,9 +76,10 @@ function buildGuardErrorEnvelope(
 
 const PAGE_CACHE_TTL_MS      = 30_000;
 const PAGE_CACHE_MAX_ENTRIES = 16;
+const PAGE_CACHE_MAX_BYTES   = 32 * 1024 * 1024;
 
 export class ParismEngine {
-  private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES);
+  private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
 
   constructor(
     private readonly config:   PrismConfig,
@@ -262,7 +263,7 @@ export class ParismEngine {
     // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
     // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
     // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
-    const cacheKey = JSON.stringify([cmd, args, resolveRealCwd(cwd)]);
+    const cacheKey = JSON.stringify([cmd, args, resolveRealCwd(cwd), includeDiff]);
     const cached   = page > 0 ? this.pageCache.get(cacheKey) : undefined;
     let envelope: ResponseEnvelope;
     let cacheInfo: { hit: boolean; age_ms: number };
@@ -278,7 +279,7 @@ export class ParismEngine {
         includeDiff,
       );
       envelope  = { ...executed, args };
-      this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
+      if (envelope.ok) this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
       cacheInfo = { hit: false, age_ms: 0 };
     }
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);

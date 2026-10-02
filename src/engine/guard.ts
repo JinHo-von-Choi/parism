@@ -1,6 +1,9 @@
 import path from "path";
-import { realpathSync } from "node:fs";
-import { BUILD_PROFILE_POLICIES, policySource, resolvePolicies, tokenizeArgs, type CommandPolicy, type PolicySource } from "./policy.js";
+import { lstatSync, realpathSync } from "node:fs";
+import {
+  BUILD_PROFILE_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
+  type CommandPolicy, type PolicySource,
+} from "./policy.js";
 import type { PrismConfig } from "../config/loader.js";
 
 /**
@@ -56,6 +59,13 @@ function resolveRealUncached(absPath: string): string {
       head = parent;
     }
   }
+}
+
+/**
+ * 경로를 절대경로로 만든 뒤 존재하는 가장 가까운 상위 경로까지 심볼릭 링크를 해석한 실경로를 돌려준다.
+ */
+export function realPathOf(inputPath: string): string {
+  return resolveRealUncached(path.resolve(inputPath));
 }
 
 /**
@@ -134,7 +144,8 @@ export function checkGuard(
     }
   }
 
-  const restriction = guard.command_arg_restrictions?.[cmd];
+  const restrictions = guard.command_arg_restrictions;
+  const restriction  = restrictions && Object.hasOwn(restrictions, cmd) ? restrictions[cmd] : undefined;
   if (restriction) {
     for (const arg of args) {
       // --flag=value 형태에서 플래그 이름만 추출
@@ -149,7 +160,7 @@ export function checkGuard(
   }
 
   const policy      = resolvePolicies(guard)[cmd];
-  if (!policy && BUILD_PROFILE_POLICIES[cmd]) {
+  if (!policy && hasPolicy(BUILD_PROFILE_POLICIES, cmd)) {
     throw new GuardError(
       `Command '${cmd}' requires the build profile`,
       "command_not_allowed",
@@ -157,7 +168,7 @@ export function checkGuard(
   }
   const policyPaths = policy
     ? checkPolicy(cmd, args, policy, policySource(guard, cmd) ?? "default")
-    : attachedFlagPaths(args);
+    : policylessPathArgs(args, cwd);
 
   if (guard.allowed_paths.length > 0) {
     const resolvedCwd = path.resolve(cwd);
@@ -210,7 +221,8 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
   }
   const paths: string[] = [];
   const positionalMode  = (sub && policy.subPositionals?.[sub]) ?? policy.positionals;
-  const tokens          = tokenizeArgs(rest, policy.flags, policy.singleDashLong, {
+  const flags           = effectiveFlags(policy, sub);
+  const tokens          = tokenizeArgs(rest, flags, policy.singleDashLong, {
     numericFlag:      policy.numericFlag,
     stopAtPositional: policy.stopAtPositional,
   });
@@ -220,10 +232,11 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
   for (const t of tokens) {
     if (t.passthrough) continue;
     if (t.kind === "flag") {
-      const kind = policy.flags[t.name];
+      const kind = flagKind(flags, t.name);
       if (!kind && !(policy.numericFlag && /^-[0-9]+$/.test(t.name))) deny(cmd, t.name, source);
       if (t.value?.startsWith("@") && policy.fileRefFlags?.includes(t.name)) deny(cmd, `${t.name} ${t.value}`, source);
       if (t.value !== undefined && policy.deniedValues?.[t.name]?.some(d => t.value!.includes(d))) deny(cmd, `${t.name} ${t.value}`, source);
+      if (t.value !== undefined && !isAllowedValue(policy, t.name, t.value)) deny(cmd, `${t.name} ${t.value}`, source);
       if (kind === "path" && t.value) paths.push(t.value);
       continue;
     }
@@ -241,6 +254,15 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
 }
 
 /**
+ * 정책의 allowedValues에 플래그 항목이 있으면 값이 목록에 맞는지 검사한다. 항목이 없으면 허용한다.
+ * "="로 끝나는 목록 항목은 접두사로, 나머지는 같은 값으로 비교한다.
+ */
+function isAllowedValue(policy: CommandPolicy, name: string, value: string): boolean {
+  if (!policy.allowedValues || !Object.hasOwn(policy.allowedValues, name)) return true;
+  return policy.allowedValues[name]!.some(v => (v.endsWith("=") ? value.startsWith(v) : value === v));
+}
+
+/**
  * 경로로 해석될 수 있는 플래그 부착 값인지 판단한다.
  */
 function isPathLikeValue(value: string): boolean {
@@ -248,22 +270,41 @@ function isPathLikeValue(value: string): boolean {
 }
 
 /**
- * 정책이 없는 명령에서 플래그에 붙은 경로형 값을 추출한다.
- * --x=value는 value를, 짧은 플래그 묶음(-abVALUE)은 어느 글자가 값을 받는지 알 수 없으므로
- * 플래그 글자로 볼 수 있는 각 문자 뒤의 나머지 문자열 중 경로형인 것을 모두 검사 대상으로 삼는다.
+ * cwd 기준으로 해석한 경로에 파일 시스템 항목(심볼릭 링크 포함)이 있는지 확인한다.
+ * 경로로 쓸 수 없는 값(널 문자, 지나치게 긴 이름, 파일 아래 경로)은 항목이 없는 것으로 본다.
  */
-function attachedFlagPaths(args: string[]): string[] {
+function existsUnder(cwd: string, value: string): boolean {
+  if (value.length === 0 || value.includes("\0")) return false;
+  try {
+    return lstatSync(path.resolve(cwd, value), { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 정책이 없는 명령에서 경로 검사를 받을 인자를 추출한다.
+ * 플래그가 아닌 인자는 슬래시를 포함하거나 cwd 기준으로 존재하는 항목을 가리키면 검사한다.
+ * 플래그에 붙은 값은 --x=value의 value와, 짧은 플래그 묶음(-abVALUE)에서 플래그 글자로 볼 수 있는
+ * 각 문자 뒤의 나머지 문자열 중 경로형이거나 cwd 기준으로 존재하는 항목을 가리키는 것을 검사한다.
+ */
+function policylessPathArgs(args: string[], cwd: string): string[] {
+  const isPathArg = (v: string): boolean => isPathLikeValue(v) || existsUnder(cwd, v);
   const out: string[] = [];
   for (const a of args) {
-    if (!a.startsWith("-") || a === "-" || a === "--") continue;
+    if (a === "-" || a === "--") continue;
+    if (!a.startsWith("-")) {
+      if (isPathArg(a)) out.push(a);
+      continue;
+    }
     if (a.startsWith("--")) {
       const eq = a.indexOf("=");
-      if (eq >= 0 && isPathLikeValue(a.slice(eq + 1))) out.push(a.slice(eq + 1));
+      if (eq >= 0 && isPathArg(a.slice(eq + 1))) out.push(a.slice(eq + 1));
       continue;
     }
     for (let j = 2; j < a.length && /[A-Za-z0-9]/.test(a[j - 1]!); j++) {
       const suffix = a.slice(j);
-      if (isPathLikeValue(suffix)) out.push(suffix);
+      if (isPathArg(suffix)) out.push(suffix);
     }
   }
   return out;

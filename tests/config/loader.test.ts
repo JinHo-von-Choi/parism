@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { unlink, writeFile } from "node:fs/promises";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { loadConfig, loadConfigMultiLayer, DEFAULT_CONFIG } from "../../src/config/loader.js";
@@ -388,6 +388,46 @@ describe("설정 신뢰 경계", () => {
     const projectPath = tmpConfig({ guard: { allowed_paths: ["/etc"] } });
     const cfg = await loadConfigMultiLayer({ globalPath, projectPath });
     expect(cfg.guard.allowed_paths).toEqual([realpathSync(tmpdir())]);
+  });
+
+  it("프로젝트 allowed_paths는 링크를 해석한 실경로로 비교하고 저장한다", async () => {
+    const base    = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-base-")));
+    const outside = mkdtempSync(path.join(tmpdir(), "parism-outside-"));
+    symlinkSync(outside, path.join(base, "link"));
+    symlinkSync("/", path.join(base, "root"));
+    mkdirSync(path.join(base, "sub"));
+    const projectPath = path.join(base, "prism.config.json");
+    writeFileSync(projectPath, JSON.stringify({ guard: { allowed_paths: ["link", "root", "sub"] } }));
+    const globalPath  = tmpConfig({ guard: { allowed_paths: [base] } });
+    const spy         = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg         = await loadConfigMultiLayer({ globalPath, projectPath });
+    spy.mockRestore();
+    expect(cfg.guard.allowed_paths).toEqual([path.join(base, "sub")]);
+  });
+
+  it("링크 항목만 남으면 기준 경로를 유지한다", async () => {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-base-")));
+    symlinkSync("/", path.join(base, "root"));
+    const projectPath = path.join(base, "prism.config.json");
+    writeFileSync(projectPath, JSON.stringify({ guard: { allowed_paths: ["root"] } }));
+    const globalPath  = tmpConfig({ guard: { allowed_paths: [base] } });
+    const spy         = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg         = await loadConfigMultiLayer({ globalPath, projectPath });
+    spy.mockRestore();
+    expect(cfg.guard.allowed_paths).toEqual([base]);
+  });
+
+  it("기준 경로가 링크여도 실경로 기준으로 안쪽 항목을 남긴다", async () => {
+    const base     = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-base-")));
+    const linkHome = mkdtempSync(path.join(tmpdir(), "parism-linkhome-"));
+    const baseLink = path.join(linkHome, "base");
+    symlinkSync(base, baseLink);
+    mkdirSync(path.join(base, "sub"));
+    const projectPath = path.join(base, "prism.config.json");
+    writeFileSync(projectPath, JSON.stringify({ guard: { allowed_paths: ["sub"] } }));
+    const globalPath  = tmpConfig({ guard: { allowed_paths: [baseLink] } });
+    const cfg         = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.guard.allowed_paths).toEqual([path.join(base, "sub")]);
   });
 
   it("프로젝트가 allowed_paths를 빈 배열로 지정해도 제한이 풀리지 않는다", async () => {

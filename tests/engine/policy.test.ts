@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, symlinkSync, mkdirSync } from "node:fs";
+import { mkdtempSync, symlinkSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { tokenizeArgs, buildExecArgs, resolvePolicies, DEFAULT_POLICIES, BUILD_PROFILE_POLICIES } from "../../src/engine/policy.js";
+import { tokenizeArgs, buildExecArgs, resolvePolicies, policySource, DEFAULT_POLICIES, BUILD_PROFILE_POLICIES } from "../../src/engine/policy.js";
 import { checkGuard, GuardError } from "../../src/engine/guard.js";
 import { DEFAULT_CONFIG } from "../../src/config/loader.js";
 
@@ -293,5 +293,162 @@ describe("buildExecArgs", () => {
     const args = ["show", "HEAD"];
     buildExecArgs("git", args);
     expect(args).toEqual(["show", "HEAD"]);
+  });
+});
+
+describe("값을 붙여서만 받는 플래그", () => {
+  it("attached 플래그는 다음 인자를 값으로 소비하지 않는다", () => {
+    const flags = { "--pretty": "attached", "-U": "attached" } as const;
+    expect(tokenizeArgs(["--pretty", "--x"], flags)).toEqual([{ kind: "flag", name: "--pretty" }, { kind: "flag", name: "--x" }]);
+    expect(tokenizeArgs(["-U", "y"], flags)).toEqual([{ kind: "flag", name: "-U" }, { kind: "positional", name: "y" }]);
+    expect(tokenizeArgs(["-U3", "--pretty=oneline"], flags)).toEqual([
+      { kind: "flag", name: "-U", value: "3" }, { kind: "flag", name: "--pretty", value: "oneline" },
+    ]);
+  });
+
+  it("git --pretty, --format, -U, --unified 뒤의 인자는 따로 허용목록 검사를 받는다", () => {
+    for (const sub of ["log", "show", "diff"]) {
+      for (const flag of ["--pretty", "--format", "-U", "--unified"]) {
+        expect(reason(() => checkGuard("git", [sub, flag, "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+      }
+    }
+    for (const a of [["log", "--pretty=oneline"], ["log", "--format=%h %s"], ["log", "--pretty"], ["diff", "-U3"], ["diff", "--unified=5"], ["show", "-U0", "HEAD"]]) {
+      expect(reason(() => checkGuard("git", a, root, cfg))).toBe("pass");
+    }
+  });
+
+  it("git blame, shortlog의 -n은 값을 받지 않는다", () => {
+    expect(reason(() => checkGuard("git", ["blame", "-n", "--no-such-option", "f.ts"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("git", ["shortlog", "-n", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("git", ["blame", "-n", "f.ts"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("git", ["shortlog", "-sn"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("git", ["log", "-n", "5"], root, cfg))).toBe("pass");
+  });
+
+  it("git branch, tag의 --format은 다음 인자를 값으로 받고 tag -n은 붙은 값만 받는다", () => {
+    expect(reason(() => checkGuard("git", ["branch", "--format", "%(refname)"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("git", ["tag", "--format", "%(refname)"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("git", ["tag", "-n5"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("git", ["tag", "-n", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+  });
+
+  it("docker logs의 -f는 값을 받지 않고 ps의 -f는 값을 받는다", () => {
+    expect(reason(() => checkGuard("docker", ["logs", "-f", "--no-such-option", "web"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("docker", ["logs", "-f", "web"], root, cfg))).toBe("pass");
+    expect(reason(() => checkGuard("docker", ["ps", "-f", "status=running"], root, cfg))).toBe("pass");
+  });
+
+  it("build 프로필의 docker compose -f 값은 경로 검사를 받는다", () => {
+    const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const } };
+    expect(reason(() => checkGuard("docker", ["compose", "-f", "compose.yml", "ps"], root, build))).toBe("pass");
+    expect(reason(() => checkGuard("docker", ["compose", "-f", "../outside.yml", "ps"], root, build))).toBe("path_not_allowed");
+  });
+
+  it("journalctl -n, --lines는 줄 수 형식의 다음 인자만 값으로 받는다", () => {
+    for (const a of [["-n", "20"], ["-n", "+5"], ["--lines", "all"], ["-n20"], ["--lines=20"], ["-n"]]) {
+      expect(reason(() => checkGuard("journalctl", [...a, "--no-pager"], root, cfg))).toBe("pass");
+    }
+    expect(reason(() => checkGuard("journalctl", ["-n", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("journalctl", ["--lines", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+    expect(tokenizeArgs(["-n", "x"], { "-n": "count" })).toEqual([{ kind: "flag", name: "-n" }, { kind: "positional", name: "x" }]);
+  });
+
+  it("brew --json은 붙은 값만 받는다", () => {
+    expect(reason(() => checkGuard("brew", ["info", "--json", "--no-such-option"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("brew", ["info", "--json=v2", "wget"], root, cfg))).toBe("pass");
+  });
+});
+
+describe("조회 정책 범위", () => {
+  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const } };
+
+  it("npm audit은 위치 인자를 받지 않는다", () => {
+    for (const a of [["audit"], ["audit", "--json"]]) {
+      expect(reason(() => checkGuard("npm", a, root, cfg))).toBe("pass");
+    }
+    for (const g of [cfg, build]) {
+      for (const a of [["audit", "fix"], ["audit", "fix", "-g"], ["audit", "signatures"]]) {
+        expect(reason(() => checkGuard("npm", a, root, g))).toBe("arg_not_allowed");
+      }
+    }
+  });
+
+  it("cargo 기본 정책은 버전 조회만 허용하고 나머지 조회는 build 프로필에 둔다", () => {
+    for (const a of [["--version"], ["-V"]]) expect(reason(() => checkGuard("cargo", a, root, cfg))).toBe("pass");
+    for (const a of [["tree"], ["metadata", "--no-deps"], ["search", "serde"], ["pkgid"]]) {
+      expect(reason(() => checkGuard("cargo", a, root, cfg))).toBe("arg_not_allowed");
+      expect(reason(() => checkGuard("cargo", a, root, build))).toBe("pass");
+    }
+    expect(reason(() => checkGuard("cargo", ["tree", "--depth", "1"], root, build))).toBe("pass");
+  });
+
+  it("kubectl -o는 열거된 출력 형식만 허용한다", () => {
+    for (const a of [["-o", "json"], ["-o", "wide"], ["-oyaml"], ["-ojsonpath={.items[*].metadata.name}"], ["--output=custom-columns=NAME:.metadata.name"], ["--output", "go-template={{.kind}}"]]) {
+      expect(reason(() => checkGuard("kubectl", ["get", "pods", ...a], root, cfg))).toBe("pass");
+    }
+    for (const a of [["-o", "jsonpath-file=f"], ["--output=custom-columns-file=f"], ["-ogo-template-file=f"], ["-o", "templatefile=f"], ["-o", "unknown"]]) {
+      expect(reason(() => checkGuard("kubectl", ["get", "pods", ...a], root, cfg))).toBe("arg_not_allowed");
+    }
+  });
+
+  it("find 정책은 심볼릭 링크를 따라가는 -L을 허용하지 않는다", () => {
+    expect(reason(() => checkGuard("find", ["-L", "."], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("find", ["-P", "."], root, cfg))).toBe("pass");
+  });
+});
+
+describe("npx 실행 인자", () => {
+  it("npx에는 설치된 실행 파일만 쓰도록 --no를 앞에 붙인다", () => {
+    const args = ["vitest", "run"];
+    expect(buildExecArgs("npx", args)).toEqual(["--no", "vitest", "run"]);
+    expect(args).toEqual(["vitest", "run"]);
+  });
+});
+
+describe("정책 조회와 객체 프로토타입 키", () => {
+  const protoKeys = ["constructor", "toString", "hasOwnProperty", "__proto__"];
+
+  it("프로토타입 키 이름의 명령은 정책을 갖지 않는다", () => {
+    const policies = resolvePolicies({ ...cfg.guard, profile: "build" });
+    for (const k of protoKeys) {
+      expect(policies[k]).toBeUndefined();
+      expect(policySource({ ...cfg.guard, profile: "build" }, k)).toBeUndefined();
+    }
+  });
+
+  it("프로토타입 키 이름의 명령은 정책 없는 명령으로 검사된다", () => {
+    const c = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, ...protoKeys] } };
+    for (const k of protoKeys) expect(reason(() => checkGuard(k, ["-x"], root, c))).toBe("pass");
+  });
+
+  it("command_policies의 명령 정책은 그대로 적용된다", () => {
+    const own = { flags: {}, positionals: "none" as const };
+    expect(resolvePolicies({ ...cfg.guard, command_policies: { mytool: own } }).mytool).toBe(own);
+  });
+});
+
+describe("정책 없는 명령의 경로 검사", () => {
+  const base    = mkdtempSync(path.join(tmpdir(), "parism-plain-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "parism-plain-out-"));
+  const c       = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [base] } };
+  symlinkSync(outside, path.join(base, "ext"));
+  writeFileSync(path.join(base, "inner"), "x");
+
+  it("슬래시를 포함한 위치 인자는 경로 검사를 받는다", () => {
+    expect(reason(() => checkGuard("date", ["-f", "a/../../x"], base, c))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("date", ["-f", "sub/inner"], base, c))).toBe("pass");
+  });
+
+  it("허용 경로 밖을 가리키는 링크 이름은 위치 인자와 붙은 값 모두 차단한다", () => {
+    for (const a of [["-f", "ext"], ["-fext"], ["--file=ext"]]) {
+      expect(reason(() => checkGuard("date", a, base, c))).toBe("path_not_allowed");
+    }
+  });
+
+  it("허용 경로 안의 항목과 경로가 아닌 값은 통과한다", () => {
+    for (const a of [["-finner"], ["--file=inner"], ["+%Y/%m/%d"], ["-u"]]) {
+      expect(reason(() => checkGuard("date", a, base, c))).toBe("pass");
+    }
+    expect(reason(() => checkGuard("echo", ["hello", "a/b"], base, c))).toBe("pass");
   });
 });

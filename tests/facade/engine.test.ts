@@ -299,4 +299,23 @@ describe("ParismEngine.runPaged() 실행 결과 재사용", () => {
     expect(again.page_info?.cache?.hit).toBe(false);
     expect(again.page_info?.total_lines).toBe(3);
   });
+
+  it("실패한 실행 결과는 저장하지 않는다", async () => {
+    const dir    = makeDir(1);
+    const engine = engineFor(dir);
+    const first  = await engine.runPaged("ls", { args: ["-1", "missing"], cwd: dir, page: 0, page_size: 1 });
+    const second = await engine.runPaged("ls", { args: ["-1", "missing"], cwd: dir, page: 1, page_size: 1 });
+    expect(first.ok).toBe(false);
+    expect(second.page_info?.cache?.hit).toBe(false);
+  });
+
+  it("includeDiff 값이 다르면 저장된 결과를 재사용하지 않는다", async () => {
+    const dir    = makeDir(3);
+    const engine = engineFor(dir);
+    await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 0, page_size: 1 });
+    const other  = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 1, includeDiff: true });
+    const same   = await engine.runPaged("ls", { args: ["-1"], cwd: dir, page: 1, page_size: 1 });
+    expect(other.page_info?.cache?.hit).toBe(false);
+    expect(same.page_info?.cache?.hit).toBe(true);
+  });
 });

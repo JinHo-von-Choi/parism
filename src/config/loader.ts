@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { CommandPolicy } from "../engine/policy.js";
+import { realPathOf } from "../engine/guard.js";
 
 export interface CommandArgRestriction {
   blocked_flags: string[];
@@ -206,10 +207,16 @@ function unionOf<T>(a: T[], b: T[] = []): T[] {
   return [...new Set([...a, ...b])];
 }
 
+/**
+ * 프로젝트 allowed_paths 중 기준 경로 안에 있는 항목만 남긴다.
+ * 비교와 저장은 심볼릭 링크를 해석한 실경로로 한다. 저장소 안의 링크가 기준 경로 밖을 가리키면 버린다.
+ * 남는 항목이 없으면 기준 경로를 유지한다.
+ */
 function narrowAllowedPaths(base: string[], project: string[] | undefined): string[] {
   if (!project) return base;
   if (base.length === 0) return project;
-  const kept = project.filter(p => base.some(root => isWithin(p, root)));
+  const roots = base.map(realPathOf);
+  const kept  = project.map(realPathOf).filter(p => roots.some(root => isWithin(p, root)));
   if (kept.length < project.length) {
     process.stderr.write("[parism] WARNING: project allowed_paths outside the base paths were ignored.\n");
   }

@@ -8,7 +8,17 @@
 
 import type { PrismGuardConfig } from "../config/loader.js";
 
-export type FlagKind = "bool" | "value" | "path";
+/**
+ * 플래그 종류.
+ * bool: 값을 받지 않는다. value: 붙은 값 또는 다음 인자를 값으로 받는다.
+ * path: value와 같고 값이 경로 검사를 받는다.
+ * attached: 값을 `--x=값` 또는 `-x값`처럼 붙여서만 받는다. 다음 인자를 값으로 소비하지 않는다.
+ * count: 붙은 값을 받고, 다음 인자는 줄 수 형식(N, +N, all)일 때만 값으로 소비한다.
+ */
+export type FlagKind = "bool" | "value" | "path" | "attached" | "count";
+
+/** count 플래그가 다음 인자를 값으로 소비하는 형식 */
+const COUNT_VALUE = /^(\+?[0-9]+|all)$/;
 
 export interface CommandPolicy {
   subcommands?: string[];
@@ -30,6 +40,10 @@ export interface CommandPolicy {
   deniedValues?: Record<string, string[]>;
   /** 첫 위치 인자(스크립트 경로, 실행 대상 이름) 이후 인자는 대상 프로그램 몫으로 보고 검사하지 않는다. */
   stopAtPositional?: boolean;
+  /** 서브커맨드별 플래그 종류. 같은 이름의 flags 항목보다 우선하며 그 서브커맨드에서만 쓰인다. */
+  subFlags?: Record<string, Record<string, FlagKind>>;
+  /** 플래그별 허용 값. "="로 끝나는 항목은 그 접두사로 시작하는 값을, 나머지 항목은 같은 값만 허용한다. */
+  allowedValues?: Record<string, string[]>;
 }
 
 export type PolicySource = "default" | "build" | "config";
@@ -53,6 +67,7 @@ export interface TokenizeOptions {
  * 인자 배열을 플래그/위치 인자로 분해한다.
  * --long=value, 짧은 플래그 묶음(-abc), 값이 붙은 짧은 플래그(-nVALUE)를 정규화한다.
  * 값 소비 여부는 정책의 FlagKind로 판단한다. 값 플래그가 소비한 인자는 숫자 축약으로 보지 않는다.
+ * attached 플래그는 붙은 값만 받고 다음 인자를 소비하지 않는다.
  */
 export function tokenizeArgs(
   args:           string[],
@@ -85,7 +100,7 @@ export function tokenizeArgs(
       const name = eq >= 0 ? arg.slice(0, eq) : arg;
       if (eq >= 0) {
         out.push({ kind: "flag", name, value: arg.slice(eq + 1) });
-      } else if (flags[name] && flags[name] !== "bool" && i + 1 < args.length) {
+      } else if (i + 1 < args.length && consumesNext(flags, name, args[i + 1]!)) {
         out.push({ kind: "flag", name, value: args[++i] });
       } else {
         out.push({ kind: "flag", name });
@@ -95,12 +110,12 @@ export function tokenizeArgs(
 
     for (let j = 1; j < arg.length; j++) {
       const name = "-" + arg[j];
-      const kind = flags[name];
+      const kind = flagKind(flags, name);
       if (kind && kind !== "bool") {
         const rest = arg.slice(j + 1);
-        if (rest.length > 0)          out.push({ kind: "flag", name, value: rest });
-        else if (i + 1 < args.length) out.push({ kind: "flag", name, value: args[++i] });
-        else                          out.push({ kind: "flag", name });
+        if (rest.length > 0)                                                  out.push({ kind: "flag", name, value: rest });
+        else if (i + 1 < args.length && consumesNext(flags, name, args[i + 1]!)) out.push({ kind: "flag", name, value: args[++i] });
+        else                                                                  out.push({ kind: "flag", name });
         break;
       }
       out.push({ kind: "flag", name });
@@ -109,8 +124,29 @@ export function tokenizeArgs(
   return out;
 }
 
+/** 플래그 종류 조회. 객체 프로토타입 키는 플래그로 보지 않는다. */
+export function flagKind(flags: Record<string, FlagKind>, name: string): FlagKind | undefined {
+  return Object.hasOwn(flags, name) ? flags[name] : undefined;
+}
+
+/** 붙은 값이 없을 때 플래그가 다음 인자를 값으로 소비하는지 판단한다. */
+function consumesNext(flags: Record<string, FlagKind>, name: string, next: string): boolean {
+  const kind = flagKind(flags, name);
+  if (kind === "count") return COUNT_VALUE.test(next);
+  return kind === "value" || kind === "path";
+}
+
+/** 서브커맨드에 적용할 플래그 표. subFlags 항목이 flags 항목을 덮어쓴다. */
+export function effectiveFlags(policy: CommandPolicy, sub: string | undefined): Record<string, FlagKind> {
+  if (sub === undefined || !policy.subFlags || !Object.hasOwn(policy.subFlags, sub)) return policy.flags;
+  return { ...policy.flags, ...policy.subFlags[sub] };
+}
+
 /** gh 하위 동사 허용목록 */
 export const GH_READ_VERBS = ["list", "view", "status", "checks", "diff"];
+
+/** kubectl -o 허용 형식. 로컬 템플릿 파일을 읽는 *-file 형식은 넣지 않는다. */
+const KUBECTL_OUTPUT_FORMATS = ["json", "yaml", "wide", "name", "jsonpath=", "jsonpath-as-json=", "custom-columns=", "go-template=", "template="];
 
 const COMMON_GIT_READ = ["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "describe", "shortlog", "tag", "remote"];
 
@@ -126,15 +162,22 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
       "--stat": "bool", "--name-only": "bool", "--name-status": "bool", "--cached": "bool",
       "--staged": "bool", "-s": "bool", "-b": "bool", "--short": "bool", "--porcelain": "bool",
       "-v": "bool", "-vv": "bool", "-a": "bool", "-r": "bool", "--all": "bool", "--graph": "bool",
-      "--decorate": "bool", "--format": "value", "--pretty": "value", "--since": "value",
-      "--until": "value", "--author": "value", "-p": "bool", "--patch": "bool", "-U": "value",
-      "--unified": "value", "--abbrev-commit": "bool", "--no-color": "bool", "--show-current": "bool",
+      "--decorate": "bool", "--format": "attached", "--pretty": "attached", "--since": "value",
+      "--until": "value", "--author": "value", "-p": "bool", "--patch": "bool", "-U": "attached",
+      "--unified": "attached", "--abbrev-commit": "bool", "--no-color": "bool", "--show-current": "bool",
       "-L": "value", "--merged": "bool", "--no-merged": "bool", "-l": "bool", "--list": "bool",
       "--abbrev-ref": "bool", "--show-toplevel": "bool", "-w": "bool", "--numstat": "bool",
       "--shortstat": "bool", "--reverse": "bool", "--first-parent": "bool", "--no-merges": "bool", "--tags": "bool", "--always": "bool", "--long": "bool",
     },
     positionals: "any",
     subPositionals: { branch: "none", tag: "none", remote: "none" },
+    /** git이 실제로 다음 인자를 값으로 받는지는 서브커맨드마다 다르다. */
+    subFlags: {
+      branch:   { "--format": "value" },
+      tag:      { "--format": "value", "-n": "attached" },
+      blame:    { "-n": "bool" },
+      shortlog: { "-n": "bool" },
+    },
     leadingFlags: ["--no-pager"],
     numericFlag: true,
   },
@@ -143,7 +186,7 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
       "-name": "value", "-iname": "value", "-type": "value", "-maxdepth": "value", "-mindepth": "value",
       "-path": "value", "-ipath": "value", "-size": "value", "-mtime": "value", "-mmin": "value",
       "-newer": "path", "-empty": "bool", "-print": "bool", "-print0": "bool", "-not": "bool",
-      "-o": "bool", "-a": "bool", "-and": "bool", "-or": "bool", "-prune": "bool", "-L": "bool",
+      "-o": "bool", "-a": "bool", "-and": "bool", "-or": "bool", "-prune": "bool",
       "-P": "bool", "-user": "value", "-perm": "value", "-regex": "value", "-iregex": "value",
     },
     positionals: "path",
@@ -163,17 +206,17 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
   },
   node:   { flags: { "--version": "bool", "-v": "bool" }, positionals: "none" },
   npx:    { flags: { "--version": "bool" }, positionals: "none" },
-  npm:    { subcommands: ["ls", "list", "outdated", "view", "info", "audit", "--version", "-v"], flags: { "--depth": "value", "--json": "bool", "--all": "bool", "--omit": "value", "--prod": "bool", "--long": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
+  npm:    { subcommands: ["ls", "list", "outdated", "view", "info", "audit", "--version", "-v"], flags: { "--depth": "value", "--json": "bool", "--all": "bool", "--omit": "value", "--prod": "bool", "--long": "bool", "--global": "bool", "-g": "bool" }, positionals: "any", subPositionals: { audit: "none" } },
   pnpm:   { subcommands: ["list", "ls", "outdated", "why", "info", "--version"], flags: { "--depth": "value", "--json": "bool", "--long": "bool", "--prod": "bool", "-P": "bool", "--dev": "bool", "-D": "bool", "-r": "bool", "--recursive": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
-  docker: { subcommands: ["ps", "images", "inspect", "logs", "version", "info", "stats"], flags: { "-a": "bool", "--all": "bool", "-q": "bool", "--format": "value", "--no-trunc": "bool", "--tail": "value", "--since": "value", "--no-stream": "bool", "-f": "value", "--filter": "value" }, positionals: "any" },
-  kubectl: { subcommands: ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-l": "value", "--selector": "value", "--tail": "value", "--since": "value", "-c": "value", "--container": "value", "--context": "value", "-w": "bool", "--show-labels": "bool", "--previous": "bool" }, positionals: "any" },
+  docker: { subcommands: ["ps", "images", "inspect", "logs", "version", "info", "stats"], flags: { "-a": "bool", "--all": "bool", "-q": "bool", "--format": "value", "--no-trunc": "bool", "--tail": "value", "--since": "value", "--no-stream": "bool", "-f": "value", "--filter": "value" }, positionals: "any", subFlags: { logs: { "-f": "bool" } } },
+  kubectl: { subcommands: ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-l": "value", "--selector": "value", "--tail": "value", "--since": "value", "-c": "value", "--container": "value", "--context": "value", "-w": "bool", "--show-labels": "bool", "--previous": "bool" }, positionals: "any", allowedValues: { "-o": KUBECTL_OUTPUT_FORMATS, "--output": KUBECTL_OUTPUT_FORMATS } },
   helm:   { subcommands: ["list", "ls", "status", "history", "version"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-a": "bool", "--all": "bool" }, positionals: "any" },
   terraform: { subcommands: ["version"], flags: { "-json": "bool", "-no-color": "bool" }, positionals: "none", singleDashLong: true },
-  cargo:  { subcommands: ["tree", "metadata", "--version", "-V", "search", "pkgid"], flags: { "--depth": "value", "--format-version": "value", "--no-deps": "bool", "-e": "value", "--edges": "value", "-i": "value", "--invert": "value" }, positionals: "any" },
+  cargo:  { subcommands: ["--version", "-V"], flags: {}, positionals: "none" },
   apt:    { subcommands: ["list", "show", "policy", "search"], flags: { "--installed": "bool", "--upgradable": "bool", "-a": "bool", "--all-versions": "bool" }, positionals: "any" },
-  brew:   { subcommands: ["list", "info", "outdated", "--version", "search", "deps", "leaves", "config"], flags: { "--versions": "bool", "--formula": "bool", "--cask": "bool", "--json": "value", "-1": "bool", "--tree": "bool" }, positionals: "any" },
+  brew:   { subcommands: ["list", "info", "outdated", "--version", "search", "deps", "leaves", "config"], flags: { "--versions": "bool", "--formula": "bool", "--cask": "bool", "--json": "attached", "-1": "bool", "--tree": "bool" }, positionals: "any" },
   systemctl: { subcommands: ["list-units", "list-unit-files", "status", "is-active", "is-enabled", "is-failed", "show", "list-timers", "--version"], flags: { "--no-pager": "bool", "--type": "value", "-t": "value", "--state": "value", "--all": "bool", "-a": "bool", "--failed": "bool", "-p": "value", "--property": "value", "--plain": "bool", "--no-legend": "bool", "-l": "bool", "--full": "bool", "--user": "bool" }, positionals: "any" },
-  journalctl: { flags: { "-u": "value", "--unit": "value", "-n": "value", "--lines": "value", "--since": "value", "--until": "value", "-p": "value", "--priority": "value", "-o": "value", "--output": "value", "--no-pager": "bool", "-b": "bool", "--boot": "bool", "-k": "bool", "--dmesg": "bool", "-r": "bool", "--reverse": "bool", "-q": "bool", "--user": "bool", "-g": "value", "--grep": "value" }, positionals: "none" },
+  journalctl: { flags: { "-u": "value", "--unit": "value", "-n": "count", "--lines": "count", "--since": "value", "--until": "value", "-p": "value", "--priority": "value", "-o": "value", "--output": "value", "--no-pager": "bool", "-b": "bool", "--boot": "bool", "-k": "bool", "--dmesg": "bool", "-r": "bool", "--reverse": "bool", "-q": "bool", "--user": "bool", "-g": "value", "--grep": "value" }, positionals: "none" },
   gh:     { subcommands: ["pr", "issue", "repo", "run", "release", "status", "--version"], flags: { "--json": "value", "-L": "value", "--limit": "value", "-s": "value", "--state": "value", "-R": "value", "--repo": "value", "-q": "value", "--jq": "value", "--author": "value", "--label": "value", "-w": "bool", "--web": "bool" }, positionals: "any", subVerbs: { pr: GH_READ_VERBS, issue: GH_READ_VERBS, repo: GH_READ_VERBS, run: GH_READ_VERBS, release: GH_READ_VERBS } },
 };
 
@@ -183,6 +226,13 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
 function extendSubcommands(base: CommandPolicy, extra: string[], overrides: Partial<CommandPolicy> = {}): CommandPolicy {
   return { ...base, ...overrides, subcommands: [...(base.subcommands ?? []), ...extra] };
 }
+
+/** cargo 조회 서브커맨드는 저장소 설정의 rustc 래퍼를 실행할 수 있으므로 build 프로필에서만 허용한다. */
+const CARGO_QUERY_POLICY: CommandPolicy = {
+  subcommands: ["--version", "-V", "tree", "metadata", "search", "pkgid"],
+  flags:       { "--depth": "value", "--format-version": "value", "--no-deps": "bool", "-e": "value", "--edges": "value", "-i": "value", "--invert": "value" },
+  positionals: "any",
+};
 
 /** yarn 은 저장소가 지정한 yarnPath 스크립트를 실행하므로 build 프로필에서만 허용한다. */
 const YARN_POLICY: CommandPolicy = {
@@ -199,7 +249,7 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   npm:       extendSubcommands(DEFAULT_POLICIES.npm!, ["run", "test", "ci"]),
   pnpm:      extendSubcommands(DEFAULT_POLICIES.pnpm!, ["run", "test"]),
   yarn:      extendSubcommands(YARN_POLICY, ["run", "test"]),
-  cargo:     extendSubcommands(DEFAULT_POLICIES.cargo!, ["build", "test", "check"], {
+  cargo:     extendSubcommands(CARGO_QUERY_POLICY, ["build", "test", "check"], {
     subPositionals: { build: "none", check: "none" },
   }),
   terraform: extendSubcommands(DEFAULT_POLICIES.terraform!, ["show", "validate", "providers", "plan", "init"], {
@@ -209,28 +259,36 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   npx:       { flags: { "--version": "bool" }, positionals: "any", stopAtPositional: true },
   docker:    extendSubcommands(DEFAULT_POLICIES.docker!, ["compose"], {
     subVerbs: { compose: ["ps", "logs"] },
+    subFlags: { ...DEFAULT_POLICIES.docker!.subFlags, compose: { "-f": "path" } },
   }),
 };
 
 /**
  * 프로필과 설정을 반영한 명령별 유효 정책을 만든다.
  * 우선순위: guard.command_policies > build 프로필 > 기본 정책.
+ * 결과는 프로토타입이 없는 객체라서 객체 프로토타입 키 이름의 명령은 정책을 갖지 않는다.
  */
 export function resolvePolicies(guard: PrismGuardConfig): Record<string, CommandPolicy> {
-  return {
-    ...DEFAULT_POLICIES,
-    ...(guard.profile === "build" ? BUILD_PROFILE_POLICIES : {}),
-    ...(guard.command_policies ?? {}),
-  };
+  return Object.assign(
+    Object.create(null) as Record<string, CommandPolicy>,
+    DEFAULT_POLICIES,
+    guard.profile === "build" ? BUILD_PROFILE_POLICIES : {},
+    guard.command_policies ?? {},
+  );
+}
+
+/** 정책 표에 명령이 자기 속성으로 정의돼 있는지 확인한다. */
+export function hasPolicy(table: Record<string, CommandPolicy> | undefined, cmd: string): boolean {
+  return table !== undefined && Object.hasOwn(table, cmd) && table[cmd] !== undefined;
 }
 
 /**
  * 명령의 유효 정책이 어느 계층에서 왔는지 반환한다. 정책이 없으면 undefined.
  */
 export function policySource(guard: PrismGuardConfig, cmd: string): PolicySource | undefined {
-  if (guard.command_policies?.[cmd])                            return "config";
-  if (guard.profile === "build" && BUILD_PROFILE_POLICIES[cmd]) return "build";
-  if (DEFAULT_POLICIES[cmd])                                    return "default";
+  if (hasPolicy(guard.command_policies, cmd))                              return "config";
+  if (guard.profile === "build" && hasPolicy(BUILD_PROFILE_POLICIES, cmd)) return "build";
+  if (hasPolicy(DEFAULT_POLICIES, cmd))                                    return "default";
   return undefined;
 }
 
@@ -244,13 +302,19 @@ const GIT_SUBCOMMAND_OVERRIDES: Record<string, string[]> = {
   blame: ["--no-textconv"],
 };
 
+/** npx가 레지스트리에서 내려받지 않고 설치된 실행 파일만 실행하게 하는 옵션 */
+const NPX_LOCAL_ONLY = ["--no"];
+
 /**
  * 실제 실행에 쓸 인자 배열을 만든다. 입력 배열은 변경하지 않는다.
  * git이면 저장소 설정의 fsmonitor·pager를 끄는 -c 옵션을 맨 앞에 두고,
  * log·show·diff·blame 서브커맨드 뒤에는 textconv(및 외부 diff) 비활성 옵션을 붙인다.
  * 서브커맨드 위치는 유효 git 정책의 leadingFlags를 건너뛰어 찾는다. guard가 없으면 기본 정책을 쓴다.
+ * npx이면 맨 앞에 --no를 둔다. 표준 입력이 TTY가 아니면 npx는 설치 확인을 생략하므로
+ * 이 옵션이 없으면 설치되지 않은 패키지를 내려받아 실행한다.
  */
 export function buildExecArgs(cmd: string, args: string[], guard?: PrismGuardConfig): string[] {
+  if (cmd === "npx") return [...NPX_LOCAL_ONLY, ...args];
   if (cmd !== "git") return [...args];
 
   const policy  = guard ? resolvePolicies(guard).git : DEFAULT_POLICIES.git;
