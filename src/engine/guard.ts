@@ -1,7 +1,7 @@
 import path from "path";
 import { lstatSync, realpathSync } from "node:fs";
 import {
-  BUILD_PROFILE_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
+  BUILD_PROFILE_POLICIES, DEFAULT_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
   tokenizePolicyless, type CommandPolicy, type ParsedArg, type PolicySource,
 } from "./policy.js";
 import type { PrismConfig } from "../config/loader.js";
@@ -86,7 +86,8 @@ function isAllowedPath(targetPath: string, allowedPaths: string[]): boolean {
  * 1. 화이트리스트: cmd가 allowed_commands에 없으면 차단
  * 2. 인젝션 패턴: args 중 block_patterns에 포함된 패턴이 있으면 차단
  * 3. 명령별 인자 제한: command_arg_restrictions에 등록된 blocked_flags와 일치하면 차단
- * 4. 명령 정책: 유효 정책이 있는 명령은 서브커맨드·플래그·위치 인자를 허용목록으로 검사
+ * 4. 명령 정책: 유효 정책이 있는 명령은 서브커맨드·플래그·위치 인자를 허용목록으로 검사.
+ *    기본 정책이나 build 프로필 정책을 쓰는 기본 명령은 인자가 `--version` 하나뿐이면 정책 검사를 생략한다.
  * 5. 경로 제한: allowed_paths가 설정된 경우 cwd와 경로 후보(collectPathCandidates)가 허용 경로 하위인지 확인(심볼릭 링크 해석)
  */
 export function checkGuard(
@@ -137,9 +138,12 @@ export function checkGuard(
       "command_not_allowed",
     );
   }
-  const operands = policy
-    ? checkPolicy(cmd, args, policy, policySource(guard, cmd) ?? "default")
-    : { tokens: tokenizePolicyless(args), view: undefined };
+  const source   = policySource(guard, cmd) ?? "default";
+  const operands = !policy
+    ? { tokens: tokenizePolicyless(args), view: undefined }
+    : isVersionQuery(cmd, args, source)
+      ? { tokens: [], view: undefined }
+      : checkPolicy(cmd, args, policy, source);
 
   if (guard.allowed_paths.length > 0) {
     const resolvedCwd = path.resolve(cwd);
@@ -167,6 +171,14 @@ export function checkGuard(
   }
 }
 
+/**
+ * 기본 명령의 버전 조회인지 판단한다. 인자가 정확히 `--version` 하나이고
+ * 유효 정책이 command_policies가 아닌 기본 정책이나 build 프로필 정책이어야 한다.
+ */
+function isVersionQuery(cmd: string, args: string[], source: PolicySource): boolean {
+  return args.length === 1 && args[0] === "--version" && source !== "config" && hasPolicy(DEFAULT_POLICIES, cmd);
+}
+
 function deny(cmd: string, arg: string, source: PolicySource): never {
   throw new GuardError(
     `Argument '${arg}' is not allowed for command '${cmd}' (policy: ${source})`,
@@ -184,6 +196,7 @@ interface PolicyOperands {
  * 정책 허용목록 검사. 통과 시 경로 후보를 고를 토큰(앞 전역 플래그, 서브커맨드, 하위 동사 제외)과
  * 서브커맨드의 플래그 종류·위치 인자 규칙을 반영한 유효 정책을 반환한다.
  * subVerbs가 지정된 서브커맨드는 첫 위치 인자를 하위 동사 허용목록으로 검사한다.
+ * 위치 인자는 정책의 positionalChars, positionalPrefix, maxPositionals 조건도 만족해야 한다.
  */
 function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source: PolicySource): PolicyOperands {
   let lead = 0;
@@ -201,9 +214,11 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
   const tokens          = tokenizeArgs(rest, flags, policy.singleDashLong, {
     numericFlag:      policy.numericFlag,
     stopAtPositional: policy.stopAtPositional,
+    plusFlags:        policy.plusFlags,
   });
   const verbs           = sub !== undefined ? policy.subVerbs?.[sub] : undefined;
   let   verbChecked     = verbs === undefined;
+  let   positionalCount = 0;
 
   for (const t of tokens) {
     if (t.passthrough) {
@@ -226,10 +241,25 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
     }
     if (positionalMode === "none") deny(cmd, t.name, source);
     if (positionalMode === "url" && !/^https?:\/\//i.test(t.name)) deny(cmd, t.name, source);
+    if (!isAllowedPositional(policy, t.name, ++positionalCount)) deny(cmd, t.name, source);
     operands.push(t);
   }
   if (!verbChecked) deny(cmd, "(missing verb)", source);
   return { tokens: operands, view: { ...policy, flags, positionals: positionalMode } };
+}
+
+/**
+ * 위치 인자가 정책의 문자 집합, 접두사, 개수 조건을 만족하는지 검사한다. 조건이 없으면 허용한다.
+ * position은 1부터 센 위치 인자 순번이다.
+ */
+function isAllowedPositional(policy: CommandPolicy, arg: string, position: number): boolean {
+  if (policy.maxPositionals !== undefined && position > policy.maxPositionals) return false;
+  if (policy.positionalPrefix !== undefined && !arg.startsWith(policy.positionalPrefix)) return false;
+  if (policy.positionalChars !== undefined) {
+    const chars = policy.positionalChars;
+    if (arg.length === 0 || [...arg].some(ch => !chars.includes(ch))) return false;
+  }
+  return true;
 }
 
 /**
@@ -266,6 +296,8 @@ function existsUnder(cwd: string, value: string): boolean {
  * - path 종류 플래그의 값과, 위치 인자 규칙이 path인 위치 인자는 형식과 관계없이 모은다.
  * - 그 밖의 위치 인자와 플래그 값은 `/`를 포함하거나 `.`, `~`로 시작하거나
  *   cwd 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키면 모은다.
+ * - `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 모은다.
+ *   위치 인자 규칙이 url인 명령은 URL 질의 문자열 때문에 제외한다.
  * - stopAtPositional 이후 대상 프로그램 몫으로 넘긴 인자는 tokenizePolicyless로 분해해 같은 규칙을 적용한다.
  * policy는 서브커맨드의 플래그 종류와 위치 인자 규칙을 반영한 유효 정책이며, 정책 없는 명령은 undefined다.
  */
@@ -286,6 +318,8 @@ export function collectPathCandidates(tokens: ParsedArg[], policy: CommandPolicy
       continue;
     }
     if (policy?.positionals === "path" || isPathArg(t.name)) out.push(t.name);
+    const eq = t.name.indexOf("=");
+    if (eq >= 0 && policy?.positionals !== "url" && isPathLikeValue(t.name.slice(eq + 1))) out.push(t.name.slice(eq + 1));
   }
   if (passthrough.length > 0) out.push(...collectPathCandidates(tokenizePolicyless(passthrough), undefined, cwd));
   return out;

@@ -44,6 +44,14 @@ export interface CommandPolicy {
   subFlags?: Record<string, Record<string, FlagKind>>;
   /** 플래그별 허용 값. "="로 끝나는 항목은 그 접두사로 시작하는 값을, 나머지 항목은 같은 값만 허용한다. */
   allowedValues?: Record<string, string[]>;
+  /** 위치 인자 허용 문자. 지정하면 위치 인자는 이 문자로만 이루어져야 한다(ps의 옵션 낱말). */
+  positionalChars?: string;
+  /** 위치 인자 접두사. 지정하면 위치 인자는 이 문자열로 시작해야 한다(date의 +형식). */
+  positionalPrefix?: string;
+  /** 위치 인자 최대 개수 */
+  maxPositionals?: number;
+  /** `+`로 시작하는 인자도 `-` 플래그와 같이 플래그로 분해한다(lsof). */
+  plusFlags?: boolean;
 }
 
 export type PolicySource = "default" | "build" | "config";
@@ -61,6 +69,8 @@ export interface TokenizeOptions {
   numericFlag?:      boolean;
   /** 첫 위치 인자 이후 인자는 passthrough 위치 인자로 넘긴다. */
   stopAtPositional?: boolean;
+  /** `+`로 시작하는 인자를 짧은 플래그 묶음처럼 분해한다. 플래그 이름은 `+` 접두사를 유지한다. */
+  plusFlags?:        boolean;
 }
 
 /**
@@ -68,6 +78,7 @@ export interface TokenizeOptions {
  * --long=value, 짧은 플래그 묶음(-abc), 값이 붙은 짧은 플래그(-nVALUE)를 정규화한다.
  * 값 소비 여부는 정책의 FlagKind로 판단한다. 값 플래그가 소비한 인자는 숫자 축약으로 보지 않는다.
  * attached 플래그는 붙은 값만 받고 다음 인자를 소비하지 않는다.
+ * plusFlags이면 `+`로 시작하는 인자(`+` 하나는 제외)도 같은 규칙으로 `+X` 이름의 플래그로 분해한다.
  */
 export function tokenizeArgs(
   args:           string[],
@@ -81,7 +92,8 @@ export function tokenizeArgs(
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
 
-    if (endOfFlags || arg === "-" || !arg.startsWith("-")) {
+    const plus = opts.plusFlags === true && arg.length > 1 && arg.startsWith("+");
+    if (endOfFlags || (!plus && (arg === "-" || !arg.startsWith("-")))) {
       out.push({ kind: "positional", name: arg });
       if (opts.stopAtPositional) {
         for (const rest of args.slice(i + 1)) out.push({ kind: "positional", name: rest, passthrough: true });
@@ -95,7 +107,7 @@ export function tokenizeArgs(
       continue;
     }
 
-    if (arg.startsWith("--") || (singleDashLong && arg.length > 2)) {
+    if (!plus && (arg.startsWith("--") || (singleDashLong && arg.length > 2))) {
       const eq   = arg.indexOf("=");
       const name = eq >= 0 ? arg.slice(0, eq) : arg;
       if (eq >= 0) {
@@ -108,8 +120,9 @@ export function tokenizeArgs(
       continue;
     }
 
+    const prefix = arg[0]!;
     for (let j = 1; j < arg.length; j++) {
-      const name = "-" + arg[j];
+      const name = prefix + arg[j];
       const kind = flagKind(flags, name);
       if (kind && kind !== "bool") {
         const rest = arg.slice(j + 1);
@@ -192,9 +205,16 @@ const HEAD_TAIL_FLAGS: Record<string, FlagKind> = {
 };
 
 /**
+ * ps가 위치 인자로 받는 BSD식 옵션 낱말의 글자.
+ * 목록 선택과 출력 형식 글자만 둔다. 환경 변수를 함께 출력하는 수식어(e), 값을 받는 글자, 목록과 무관한 글자는 넣지 않는다.
+ */
+const PS_OPTION_LETTERS = "auxfwrljsvhcmnSHTgZ";
+
+/**
  * 파일·시스템 조회 명령 정책.
  * 출력 파일을 지정하는 옵션, 시스템 상태를 바꾸는 옵션과 위치 인자, 끝나지 않는 반복 실행 옵션,
  * 재귀 중 심볼릭 링크를 따라가는 옵션(ls -L, du -L, tree -l, grep -R)은 넣지 않는다.
+ * date의 위치 인자는 +로 시작하는 출력 형식 하나만 받는다.
  */
 const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   ls: {
@@ -205,10 +225,12 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
         "--all", "--almost-all", "--human-readable", "--si", "--recursive", "--reverse", "--directory", "--classify",
         "--inode", "--numeric-uid-gid", "--size", "--full-time", "--group-directories-first", "--no-group", "--author",
         "--escape", "--literal", "--quote-name", "--ignore-backups", "--kibibytes", "--context", "--file-type",
+        "-f", "-q", "-D", "--zero",
       ),
       "--sort": "value", "--time": "value", "--time-style": "value", "--format": "value", "--color": "attached",
       "--indicator-style": "value", "--quoting-style": "value", "--block-size": "value",
       "-I": "value", "--ignore": "value", "--hide": "value", "-w": "value", "--width": "value",
+      "-T": "value", "--hyperlink": "attached",
     },
     positionals: "path",
   },
@@ -248,8 +270,10 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
         "-a", "-d", "-f", "-i", "-s", "-h", "-D", "-p", "-u", "-g", "-F", "-C", "-n", "-J", "-X", "-N", "-Q",
         "-r", "-t", "-c", "-U", "-v", "-x", "-A", "-S", "-q",
         "--dirsfirst", "--noreport", "--du", "--prune", "--si", "--inodes", "--device", "--gitignore", "--matchdirs", "--ignore-case",
+        "--filesfirst",
       ),
       "-L": "value", "-I": "value", "-P": "value", "--charset": "value", "--filelimit": "value", "--sort": "attached", "--timefmt": "value",
+      "-H": "value",
     },
     positionals: "path",
   },
@@ -259,8 +283,10 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
         "--forest", "--no-headers", "--headers", "--cumulative"),
       "-o": "value", "-O": "value", "--format": "value", "-p": "value", "--pid": "value", "--ppid": "value",
       "-u": "value", "-U": "value", "--user": "value", "-g": "value", "-G": "value", "-C": "value", "-t": "value", "--sort": "value",
+      "-q": "value", "--width": "value",
     },
-    positionals: "any",
+    positionals:     "any",
+    positionalChars: PS_OPTION_LETTERS,
   },
   ping: {
     flags: {
@@ -287,6 +313,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
       "-p": "value", "-u": "value", "-c": "value", "-d": "value",
     },
     positionals: "path",
+    plusFlags:   true,
   },
   ss: {
     flags: {
@@ -304,7 +331,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   dig: {
     flags: {
       ...bools("-4", "-6", "-m", "-u", "-r"),
-      "-x": "value", "-t": "value", "-c": "value", "-p": "value", "-q": "value", "-b": "value",
+      "-x": "value", "-t": "value", "-c": "value", "-p": "value", "-q": "value", "-b": "value", "-f": "path",
     },
     positionals: "any",
   },
@@ -320,7 +347,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
       ),
       "-e": "value", "--regexp": "value", "-f": "path", "--file": "path", "-m": "value", "--max-count": "value",
       "-A": "value", "--after-context": "value", "-B": "value", "--before-context": "value", "-C": "value", "--context": "value",
-      "--include": "value", "--exclude": "value", "--exclude-dir": "value", "--color": "attached", "--colour": "attached",
+      "--include": "value", "--exclude": "value", "--exclude-dir": "value", "--exclude-from": "path", "--color": "attached", "--colour": "attached",
       "--binary-files": "value", "--label": "value", "-d": "value", "--directories": "value", "-D": "value", "--devices": "value",
     },
     positionals: "any",
@@ -343,7 +370,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
     positionals: "path",
   },
   pwd:   { flags: bools("-L", "-P"), positionals: "none" },
-  which: { flags: bools("-a", "-s"), positionals: "any" },
+  which: { flags: bools("-a", "--all", "-s"), positionals: "any" },
   echo:  { flags: bools("-n", "-e", "-E"), positionals: "any" },
   date: {
     flags: {
@@ -351,7 +378,9 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
       "-I": "attached", "--iso-8601": "attached", "--rfc-3339": "attached",
       "-d": "value", "--date": "value", "-r": "path", "--reference": "path",
     },
-    positionals: "none",
+    positionals:      "any",
+    positionalPrefix: "+",
+    maxPositionals:   1,
   },
   uname: {
     flags: bools(

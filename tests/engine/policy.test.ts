@@ -578,9 +578,9 @@ describe("기본 허용 명령 정책", () => {
     const denied: [string, string[]][] = [
       ["tree", ["-o", "x"]], ["tree", ["-R"]], ["tree", ["-l"]], ["ss", ["-D", "x"]], ["ss", ["-K"]], ["ss", ["-E"]],
       ["hostname", ["name"]], ["hostname", ["-F", "x"]], ["hostname", ["-b"]], ["date", ["-s", "x"]], ["date", ["--set=x"]],
-      ["date", ["+%Y"]], ["tail", ["-f", "x"]], ["tail", ["--follow", "x"]], ["ping", ["-f", "example.com"]], ["free", ["-s", "1"]],
+      ["tail", ["-f", "x"]], ["tail", ["--follow", "x"]], ["ping", ["-f", "example.com"]], ["free", ["-s", "1"]],
       ["netstat", ["-c"]], ["lsof", ["-r"]], ["grep", ["-R", "x", "."]], ["du", ["-L", "."]], ["ls", ["-L", "."]],
-      ["dig", ["-f", "x"]], ["dig", ["-k", "x"]], ["uname", ["x"]], ["pwd", ["x"]], ["free", ["x"]], ["netstat", ["x"]],
+      ["dig", ["-k", "x"]], ["uname", ["x"]], ["pwd", ["x"]], ["free", ["x"]], ["netstat", ["x"]],
     ];
     for (const [cmd, args] of denied) {
       expect([cmd, args, reason(() => checkGuard(cmd, args, root, cfg))]).toEqual([cmd, args, "arg_not_allowed"]);
@@ -590,5 +590,125 @@ describe("기본 허용 명령 정책", () => {
   it("path 종류 플래그 값은 경로 검사를 받는다", () => {
     expect(reason(() => checkGuard("grep", ["-f", "/etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
     expect(reason(() => checkGuard("date", ["-r", "/etc/hostname"], root, cfg))).toBe("path_not_allowed");
+  });
+});
+
+describe("ps 위치 인자", () => {
+  it("허용 글자로만 된 옵션 낱말과 대시 옵션은 통과한다", () => {
+    for (const a of [["aux"], ["ax"], ["auxf"], ["auxww"], ["axjf"], ["-ef"], ["-eo", "pid,comm"], ["-e", "-o", "pid,user,args"]]) {
+      expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "pass"]);
+    }
+  });
+
+  it("환경 표시 수식어, 허용 목록 밖 글자, 그 밖의 위치 인자는 거부한다", () => {
+    for (const a of [["e"], ["auxe"], ["axeww"], ["L"], ["aux", "1"], ["123"], ["aux", "sub/x"], ["a-x"]]) {
+      expect([a, reason(() => checkGuard("ps", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+});
+
+describe("버전 조회", () => {
+  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const } };
+
+  it("기본 명령은 두 프로필에서 인자가 --version 하나뿐이면 통과한다", () => {
+    for (const g of [cfg, build]) {
+      for (const cmd of DEFAULT_CONFIG.guard.allowed_commands) {
+        expect([cmd, reason(() => checkGuard(cmd, ["--version"], root, g))]).toEqual([cmd, "pass"]);
+      }
+    }
+  });
+
+  it("--help는 허용하지 않는다", () => {
+    for (const cmd of DEFAULT_CONFIG.guard.allowed_commands) {
+      expect([cmd, reason(() => checkGuard(cmd, ["--help"], root, cfg))]).toEqual([cmd, "arg_not_allowed"]);
+    }
+  });
+
+  it("다른 인자와 함께 오면 정책 검사를 받는다", () => {
+    expect(reason(() => checkGuard("ls", ["--version", "sub"], root, cfg))).toBe("arg_not_allowed");
+    expect(reason(() => checkGuard("ps", ["--version", "e"], root, cfg))).toBe("arg_not_allowed");
+  });
+
+  it("command_policies로 덮어쓴 정책은 그 정책을 따른다", () => {
+    const own = { ...cfg, guard: { ...cfg.guard, command_policies: { ls: { flags: {}, positionals: "none" as const } } } };
+    expect(reason(() => checkGuard("ls", ["--version"], root, own))).toBe("arg_not_allowed");
+  });
+});
+
+describe("조회 명령의 추가 허용 인자", () => {
+  it("읽기 용도의 추가 인자는 통과한다", () => {
+    const ok: [string, string[]][] = [
+      ["date", ["+%Y-%m-%d"]], ["date", ["-u", "+%H:%M"]], ["date", ["-d", "yesterday", "+%F"]],
+      ["echo", ["-n", "x"]], ["echo", ["-e", "a"]], ["echo", ["-E", "a"]], ["echo", ["-ne", "a"]],
+      ["ls", ["-f"]], ["ls", ["-q"]], ["ls", ["-T", "4"]], ["ls", ["-D"]], ["ls", ["--zero"]], ["ls", ["--hyperlink"]], ["ls", ["--hyperlink=never"]],
+      ["ps", ["-ef", "--width", "200"]], ["ps", ["-q", "1", "-o", "pid,comm"]],
+      ["tree", ["--filesfirst", "sub"]], ["tree", ["-H", "base", "sub"]],
+      ["which", ["-a", "node"]], ["which", ["--all", "node"]],
+      ["grep", ["--exclude-from", "f", "-r", "x", "."]], ["grep", ["--exclude-from=f", "x", "f"]], ["dig", ["-f", "f"]],
+    ];
+    for (const [cmd, args] of ok) {
+      expect([cmd, args, reason(() => checkGuard(cmd, args, root, cfg))]).toEqual([cmd, args, "pass"]);
+    }
+  });
+
+  it("date 위치 인자는 +로 시작하는 형식 하나만 받는다", () => {
+    for (const a of [["x"], ["+%Y", "+%m"], ["+%Y", "x"], ["0101"]]) {
+      expect([a, reason(() => checkGuard("date", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+
+  it("grep --exclude-from과 dig -f의 값은 경로 검사를 받는다", () => {
+    expect(reason(() => checkGuard("grep", ["--exclude-from", "/etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("grep", ["--exclude-from=/etc/hostname", "x", "."], root, cfg))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("dig", ["-f", "/etc/hostname"], root, cfg))).toBe("path_not_allowed");
+  });
+});
+
+describe("lsof의 + 옵션", () => {
+  it("+로 시작하는 인자는 플래그로 보고 정책에 없으면 거부한다", () => {
+    for (const a of [["+D", "sub"], ["+d", "sub"], ["+r"], ["+r1"], ["+c", "15"], ["+L1"], ["-n", "+w"]]) {
+      expect([a, reason(() => checkGuard("lsof", a, root, cfg))]).toEqual([a, "arg_not_allowed"]);
+    }
+  });
+
+  it("- 옵션과 경로 위치 인자는 그대로 통과한다", () => {
+    for (const a of [["-i", ":8080"], ["-nP", "-iTCP", "-sTCP:LISTEN"], ["sub"]]) {
+      expect([a, reason(() => checkGuard("lsof", a, root, cfg))]).toEqual([a, "pass"]);
+    }
+  });
+
+  it("tokenizeArgs는 plusFlags일 때 + 인자를 플래그로 분해한다", () => {
+    expect(tokenizeArgs(["+D", "x"], { "+D": "path" }, false, { plusFlags: true }))
+      .toEqual([{ kind: "flag", name: "+D", value: "x" }]);
+    expect(tokenizeArgs(["+D", "x"], {}).map(t => t.kind)).toEqual(["positional", "positional"]);
+  });
+});
+
+describe("= 뒤 경로형 값", () => {
+  const base    = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-assign-")));
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), "parism-assign-out-")));
+  const c       = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [base], allowed_commands: [...DEFAULT_CONFIG.guard.allowed_commands, "mytool"] } };
+  mkdirSync(path.join(base, "sub"));
+
+  it("정책 없는 명령의 key=값 위치 인자는 값이 허용 경로 밖이면 거부한다", () => {
+    for (const a of [[`key=${outside}`], [`key=${outside}/f`], ["-x", `opt=${outside}`], ["key=../f"]]) {
+      expect([a, reason(() => checkGuard("mytool", a, base, c))]).toEqual([a, "path_not_allowed"]);
+    }
+  });
+
+  it("정책 명령의 +opt=값 위치 인자도 값이 허용 경로 밖이면 거부한다", () => {
+    for (const a of [[`+opt=${outside}`, "example.com"], ["example.com", "+opt=../f"]]) {
+      expect([a, reason(() => checkGuard("dig", a, base, c))]).toEqual([a, "path_not_allowed"]);
+    }
+  });
+
+  it("값이 허용 경로 안이거나 경로형이 아니면 통과한다", () => {
+    for (const [cmd, a] of [
+      ["mytool", ["key=./sub"]], ["mytool", [`key=${base}/sub`]], ["mytool", ["key=value"]], ["mytool", ["a=b=c"]],
+      ["dig", ["+opt=./sub", "example.com"]], ["dig", ["+short", "example.com"]], ["dig", ["+opt=3", "example.com"]],
+      ["curl", ["-s", "https://example.com/a?next=/b"]],
+    ] as [string, string[]][]) {
+      expect([cmd, a, reason(() => checkGuard(cmd, a, base, c))]).toEqual([cmd, a, "pass"]);
+    }
   });
 });
