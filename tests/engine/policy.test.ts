@@ -249,45 +249,69 @@ describe("인자 분류 규칙", () => {
   });
 });
 
+/** git 실행 인자 앞에 주입되는 저장소 설정 무력화 옵션 */
+const GIT_PREFIX = [
+  "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "core.hooksPath=/dev/null",
+  "-c", "log.showSignature=false", "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+];
+
 describe("buildExecArgs", () => {
+  it("저장소 hooks 경로와 서명 검증 프로그램을 무력화하는 옵션을 맨 앞에 둔다", () => {
+    const out = buildExecArgs("git", ["status"]);
+    expect(out.slice(0, GIT_PREFIX.length)).toEqual(GIT_PREFIX);
+    for (const opt of ["core.hooksPath=/dev/null", "log.showSignature=false", "gpg.program=false", "gpg.ssh.program=false", "gpg.x509.program=false"]) {
+      expect(out[out.indexOf(opt) - 1]).toBe("-c");
+    }
+  });
+
+  it("log와 show에는 서명 표시 비활성 옵션을 붙인다", () => {
+    expect(buildExecArgs("git", ["log", "--oneline"])).toEqual(
+      [...GIT_PREFIX, "log", "--no-textconv", "--no-ext-diff", "--no-show-signature", "--oneline"],
+    );
+    expect(buildExecArgs("git", ["show", "HEAD"])).toEqual(
+      [...GIT_PREFIX, "show", "--no-textconv", "--no-ext-diff", "--no-show-signature", "HEAD"],
+    );
+    expect(buildExecArgs("git", ["diff"])).not.toContain("--no-show-signature");
+  });
+
   it("blame에는 --no-textconv만 주입된다", () => {
     expect(buildExecArgs("git", ["blame", "f.ts"])).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "blame", "--no-textconv", "f.ts"],
+      [...GIT_PREFIX, "blame", "--no-textconv", "f.ts"],
     );
   });
 
   it("유효 git 정책의 leadingFlags를 기준으로 서브커맨드를 찾는다", () => {
     const guard = { ...cfg.guard, command_policies: { git: { ...DEFAULT_POLICIES.git!, leadingFlags: ["--no-pager", "--literal-pathspecs"] } } };
     expect(buildExecArgs("git", ["--literal-pathspecs", "log"], guard)).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "--literal-pathspecs", "log", "--no-textconv", "--no-ext-diff"],
+      [...GIT_PREFIX, "--literal-pathspecs", "log", "--no-textconv", "--no-ext-diff", "--no-show-signature"],
     );
     expect(buildExecArgs("git", ["--literal-pathspecs", "log"])).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "--literal-pathspecs", "log"],
+      [...GIT_PREFIX, "--literal-pathspecs", "log"],
     );
   });
 
   it("git 실행 인자에 저장소 설정 무력화 옵션이 주입된다", () => {
     expect(buildExecArgs("git", ["diff", "--stat"])).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "diff", "--no-textconv", "--no-ext-diff", "--stat"],
+      [...GIT_PREFIX, "diff", "--no-textconv", "--no-ext-diff", "--stat"],
     );
     expect(buildExecArgs("ls", ["-l"])).toEqual(["-l"]);
   });
 
   it("앞선 전역 플래그를 건너뛰고 서브커맨드를 찾는다", () => {
     expect(buildExecArgs("git", ["--no-pager", "log", "-1"])).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "--no-pager", "log", "--no-textconv", "--no-ext-diff", "-1"],
+      [...GIT_PREFIX, "--no-pager", "log", "--no-textconv", "--no-ext-diff", "--no-show-signature", "-1"],
     );
   });
 
   it("log, show, diff 외 서브커맨드에는 textconv 옵션을 붙이지 않는다", () => {
     expect(buildExecArgs("git", ["status", "-sb"])).toEqual(
-      ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "status", "-sb"],
+      [...GIT_PREFIX, "status", "-sb"],
     );
   });
 
   it("프로토타입 키 서브커맨드도 예외 없이 처리한다", () => {
     for (const sub of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
-      expect(buildExecArgs("git", [sub])).toEqual(["-c", "core.fsmonitor=false", "-c", "core.pager=cat", sub]);
+      expect(buildExecArgs("git", [sub])).toEqual([...GIT_PREFIX, sub]);
     }
   });
 

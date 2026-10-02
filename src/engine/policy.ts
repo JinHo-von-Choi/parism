@@ -528,12 +528,24 @@ export function policySource(guard: PrismGuardConfig, cmd: string): PolicySource
   return undefined;
 }
 
-const GIT_CONFIG_OVERRIDES = ["-c", "core.fsmonitor=false", "-c", "core.pager=cat"];
+/**
+ * git 실행 인자 앞에 두는 설정 덮어쓰기.
+ * 저장소 설정이 지정한 fsmonitor, pager, hooks 경로, 서명 표시와 서명 검증 프로그램을 쓰지 않게 한다.
+ */
+const GIT_CONFIG_OVERRIDES = [
+  "-c", "core.fsmonitor=false",
+  "-c", "core.pager=cat",
+  "-c", "core.hooksPath=/dev/null",
+  "-c", "log.showSignature=false",
+  "-c", "gpg.program=false",
+  "-c", "gpg.ssh.program=false",
+  "-c", "gpg.x509.program=false",
+];
 
 /** 서브커맨드 뒤에 붙일 옵션. blame은 외부 diff 옵션을 받지 않으므로 textconv만 끈다. */
 const GIT_SUBCOMMAND_OVERRIDES: Record<string, string[]> = {
-  log:   ["--no-textconv", "--no-ext-diff"],
-  show:  ["--no-textconv", "--no-ext-diff"],
+  log:   ["--no-textconv", "--no-ext-diff", "--no-show-signature"],
+  show:  ["--no-textconv", "--no-ext-diff", "--no-show-signature"],
   diff:  ["--no-textconv", "--no-ext-diff"],
   blame: ["--no-textconv"],
 };
@@ -543,8 +555,8 @@ const NPX_LOCAL_ONLY = ["--no"];
 
 /**
  * 실제 실행에 쓸 인자 배열을 만든다. 입력 배열은 변경하지 않는다.
- * git이면 저장소 설정의 fsmonitor·pager를 끄는 -c 옵션을 맨 앞에 두고,
- * log·show·diff·blame 서브커맨드 뒤에는 textconv(및 외부 diff) 비활성 옵션을 붙인다.
+ * git이면 저장소 설정의 fsmonitor·pager·hooks·서명 검증 프로그램을 끄는 -c 옵션을 맨 앞에 두고,
+ * log·show·diff·blame 서브커맨드 뒤에는 textconv(및 외부 diff) 비활성 옵션을, log·show에는 서명 표시 비활성 옵션을 붙인다.
  * 서브커맨드 위치는 유효 git 정책의 leadingFlags를 건너뛰어 찾는다. guard가 없으면 기본 정책을 쓴다.
  * npx이면 맨 앞에 --no를 둔다. 표준 입력이 TTY가 아니면 npx는 설치 확인을 생략하므로
  * 이 옵션이 없으면 설치되지 않은 패키지를 내려받아 실행한다.
