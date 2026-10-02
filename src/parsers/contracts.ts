@@ -11,6 +11,9 @@
 import type { ParserContract } from "./registry.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
+import { lsHint, findHint, duHint, dfHint, psHint, ssHint, digHint, grepHint, envHint, freeHint, unameHint, idHint,
+         journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
+         ghPrListHint, npmListHint, npmHint } from "./hints.js";
 
 /** 이름 목록을 같은 값 방식의 플래그 표로 만든다. */
 function flags(arity: FlagArity, ...names: string[]): Record<string, FlagArity> {
@@ -58,6 +61,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedValues:      { "--format": /^(long|verbose)$/, "--color": /^(never|auto)$/ },
     requiredFlags:       ["-l", "-n", "--numeric-uid-gid", "--format"],
     acceptedPositionals: { max: 1 },
+    hint:                lsHint,
     noise: /^total \d+|^\S.*:$/, rowsKey: "entries", rowFields: LS_FIELDS,
   },
   find: {
@@ -67,6 +71,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...bools("-empty", "-print", "-not", "-o", "-a", "-and", "-or", "-prune", "-P"),
     },
     singleDashLong: true,
+    hint:           findHint,
     rowsKey: "paths",
   },
   stat: {
@@ -80,6 +85,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         "--separate-dirs", "--count-links", "--dereference-args", "--no-dereference", "--inodes"),
       ...values("-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size"),
     },
+    hint:    duHint,
     rowsKey: "entries", rowFields: ["size", "path"],
   },
   df: {
@@ -88,12 +94,14 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...values("-t", "--type", "-x", "--exclude-type", "-B", "--block-size"),
     },
     acceptedValues: { "-B": /^(1K|1024)$/, "--block-size": /^(1K|1024)$/ },
+    hint:           dfHint,
     headerLines: 1, rowsKey: "filesystems",
     rowFields: ["filesystem", "blocks_1k", "used", "available", "use_percent", "mounted_on"],
   },
   ps: {
     acceptedFlags:       { ...bools("-w", "--cumulative"), ...values("--sort", "--width") },
     acceptedPositionals: { min: 1, max: 1, pattern: /^[axw]*u[axw]*$/ },
+    hint:                psHint,
     headerLines: 1, rowsKey: "processes", rowFields: PS_FIELDS,
   },
   ping: {
@@ -129,11 +137,13 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedValues:      { "-f": /^inet6?$/, "--family": /^inet6?$/ },
     acceptedPositionals: { max: 0 },
     supports:            supportsSsTable,
+    hint:                ssHint,
     headerLines: 1, rowsKey: "connections", rowFields: SS_FIELDS,
   },
   dig: {
     acceptedFlags: { ...bools("+tcp", "+stats", "+nostats", "-4", "-6", "-m", "-r"), ...values("-x", "-t", "-c", "-p", "-q", "-b") },
     plusFlags:     true,
+    hint:          digHint,
   },
   grep: {
     acceptedFlags: {
@@ -146,6 +156,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...flags("attached", "--color", "--colour"),
     },
     acceptedValues: { "--color": /^(never|auto|)$/, "--colour": /^(never|auto|)$/ },
+    hint:           grepHint,
     rowsKey: "matches", rowFields: ["file", "line", "text"],
   },
   wc: {
@@ -154,18 +165,20 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     exclusiveFlags: WC_COUNTERS,
     rowsKey: "entries", rowFields: ["count", "file"],
   },
-  env:   { acceptedFlags: {}, acceptedPositionals: { max: 0 } },
+  env:   { acceptedFlags: {}, acceptedPositionals: { max: 0 }, hint: envHint },
   pwd:   { acceptedFlags: bools("-L", "-P"), acceptedPositionals: { max: 0 } },
   which: { acceptedFlags: bools("-a", "-s"), rowsKey: "paths" },
   free: {
     acceptedFlags:       bools("-b", "-k", "-m", "-g", "-t", "-l", "-v", "--bytes", "--kibi", "--mebi", "--gibi", "--total", "--lohi", "--committed"),
     acceptedPositionals: { max: 0 },
+    hint:                freeHint,
   },
-  uname: { acceptedFlags: bools("-a", "--all"), requiredFlags: ["-a", "--all"], acceptedPositionals: { max: 0 } },
+  uname: { acceptedFlags: bools("-a", "--all"), requiredFlags: ["-a", "--all"], acceptedPositionals: { max: 0 }, hint: unameHint },
   id: {
     acceptedFlags:       bools("-u", "-g", "-G"),
     exclusiveFlags:      ["-u", "-g", "-G"],
     acceptedPositionals: { max: 1 },
+    hint:                idHint,
   },
   systemctl: {
     leadingFlags: bools("--user", "--no-pager"),
@@ -184,6 +197,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedValues:      { "-o": /^short-iso(-precise)?$/, "--output": /^short-iso(-precise)?$/ },
     requiredFlags:       ["-o", "--output"],
     acceptedPositionals: { max: 0 },
+    hint:                journalctlHint,
     noise: /^-- No entries --$/, rowsKey: "entries", rowFields: ["timestamp", "hostname", "unit", "pid", "message"],
   },
   tasklist: { headerLines: 2 },
@@ -196,6 +210,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       "get pods":   kubectlGet(),
       "get events": kubectlGet(),
     },
+    hint:        kubectlHint,
     headerLines: 1,
   },
   docker: {
@@ -203,6 +218,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ps: {
         acceptedFlags:       { ...bools("-a", "--all", "--no-trunc", "-l", "--latest"), ...values("-f", "--filter", "-n", "--last") },
         acceptedPositionals: { max: 0 },
+        hint:                dockerPsHint,
         rowsKey: "containers", rowFields: DOCKER_PS,
       },
     },
@@ -213,9 +229,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       "pr list": {
         acceptedFlags:       values("--json", "-L", "--limit", "-s", "--state", "-R", "--repo", "--author", "--label"),
         acceptedPositionals: { max: 0 },
+        hint:                ghPrListHint,
         rowsKey: "pull_requests",
       },
     },
+    hint: ghHint,
   },
   helm: {
     subcommands: { list: helmList(), ls: helmList() },
@@ -230,6 +248,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   npm: {
     subcommands: { ls: npmList(), list: npmList() },
+    hint:        npmHint,
     rowsKey: "dependencies", rowLine: /^[\s│├└|`+─┬-]*[├└`+][─-]/, rowFields: ["name", "version", "depth"],
   },
   cargo: { subcommands: {} },
@@ -238,6 +257,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     subcommands:  {
       status: {
         acceptedFlags: { ...bools("--long", "-v", "--verbose", "-b", "--branch"), ...flags("attached", "-u", "--untracked-files") },
+        hint:          gitStatusHint,
       },
       log: {
         acceptedFlags: {
@@ -248,11 +268,13 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         },
         acceptedValues: { "--format": /^(oneline|%h %s|%H %s)$/, "--pretty": /^(oneline|format:%h %s|format:%H %s)$/ },
         requiredFlags:  ["--oneline", "--format", "--pretty"],
+        hint:           gitLogHint,
         rowsKey: "commits", rowFields: ["hash", "message"],
       },
       branch: {
         acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l"),
         requiredFlags: ["-v", "--verbose"],
+        hint:          gitBranchHint,
         rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message"],
       },
       diff: {
@@ -284,6 +306,7 @@ function kubectlGet(): ParserContract {
   return {
     acceptedFlags:  values("-n", "--namespace", "-l", "--selector", "--context", "-o", "--output"),
     acceptedValues: { "-o": /^wide$/, "--output": /^wide$/ },
+    hint:           kubectlJsonHint,
   };
 }
 
@@ -302,5 +325,6 @@ function npmList(): ParserContract {
     acceptedFlags:       { ...bools("--prod", "--long", "-g", "--global"), ...values("--depth", "--omit") },
     acceptedValues:      { "--depth": /^0$/ },
     acceptedPositionals: { max: 0 },
+    hint:                npmListHint,
   };
 }

@@ -2,7 +2,8 @@ import { z }                  from "zod";
 import { zodToJsonSchema }      from "zod-to-json-schema";
 import { tryParseNativeJson }   from "./json-passthrough.js";
 import { countDataLines, isSilentEmpty } from "./invariants.js";
-import { resolveContract, checkFormat, type FlagArity, type PositionalRule } from "./format.js";
+import { resolveContract, checkFormat, buildHint,
+         type FlagArity, type PositionalRule, type FormatHint, type HintDraft } from "./format.js";
 
 /**
  * 출력 형식.
@@ -49,6 +50,11 @@ export interface ParserContract {
   /** 단일 대시 긴 이름(-name)만 쓰고 단문자 묶음으로 나누지 않는다(find). */
   singleDashLong?:      boolean;
   supports?:    (args: string[]) => boolean;
+  /**
+   * 형식 밖의 인자일 때 같은 정보를 얻는 인자를 제안한다. 서브커맨드 다음 인자를 받아 그 자리를 대신할 인자를 돌려준다.
+   * 제안할 인자가 없으면 null.
+   */
+  hint?:        (rest: string[]) => HintDraft | null;
   /** 데이터가 아닌 머리 줄 수(공백 줄 제외). 머리만 있는 출력은 정상적인 빈 결과로 본다. */
   headerLines?: number;
   /** 데이터가 아닌 줄(합계, 범례, 안내 문구) 패턴. */
@@ -108,7 +114,14 @@ export interface ParseResult {
   parse_error?: {
     reason:  ParseErrorReason;
     message: string;
+    /** unsupported_format일 때 같은 정보를 처리 가능한 형식으로 얻는 인자 */
+    hint?:   FormatHint;
   };
+}
+
+/** native JSON 폴백까지 적용한 결과. native는 parsed가 폴백에서 왔는지 나타낸다. */
+export interface FallbackParseResult extends ParseResult {
+  native: boolean;
 }
 
 /**
@@ -191,12 +204,14 @@ export class ParserRegistry {
     const declared = this.contracts.get(cmd);
     const format   = declared ? checkFormat(declared, args) : undefined;
     const contract = format?.contract;
-    if (format && !format.accepted) {
+    if (declared && format && !format.accepted) {
+      const hint = buildHint(declared, args);
       return {
         parsed:      null,
         parse_error: {
           reason:  "unsupported_format",
           message: `Output format of '${[cmd, ...args].join(" ")}' is not supported by the '${cmd}' parser: ${format.reason}`,
+          ...(hint && { hint }),
         },
       };
     }
@@ -237,6 +252,19 @@ export class ParserRegistry {
     }
 
     return { parsed };
+  }
+
+  /**
+   * parse()에 native JSON 폴백을 더한다. 파서 결과가 null이면 stdout 전체를 JSON 문서로 읽어 본다.
+   * 폴백이 성공하면 unsupported_format 실패와 안내는 결과에 남기지 않는다.
+   */
+  parseWithFallback(cmd: string, args: string[], raw: string, ctx?: ParseContext, strictSchemas = false): FallbackParseResult {
+    const result = this.parse(cmd, args, raw, ctx, strictSchemas);
+    if (result.parsed != null) return { ...result, native: false };
+    const native = tryParseNativeJson(raw);
+    if (native === null) return { ...result, native: false };
+    const error = result.parse_error?.reason === "unsupported_format" ? undefined : result.parse_error;
+    return { parsed: native, ...(error && { parse_error: error }), native: true };
   }
 }
 

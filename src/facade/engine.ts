@@ -22,7 +22,6 @@ import { paginateLines }                                                        
 import { Semaphore }                                                                from "../engine/semaphore.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
-import { tryParseNativeJson }                                                       from "../parsers/json-passthrough.js";
 import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
 import { PipelineTimer }                                                            from "../engine/telemetry.js";
@@ -145,10 +144,8 @@ export class ParismEngine {
     const parseFormat   = format === "json-no-raw" ? "json" : format;
     const strictSchemas = this.config.parsers?.strict_schemas ?? false;
 
-    const parseResult = this.registry.parse(cmd, args, envelope.stdout.raw, { maxItems: this.config.guard.max_items, format: parseFormat }, strictSchemas);
-    let parsed = parseResult.parsed;
-    const nativeParsed = parsed == null ? tryParseNativeJson(envelope.stdout.raw) : null;
-    if (parsed == null) parsed = nativeParsed;
+    const parseResult = this.registry.parseWithFallback(cmd, args, envelope.stdout.raw, { maxItems: this.config.guard.max_items, format: parseFormat }, strictSchemas);
+    const parsed      = parseResult.parsed;
 
     // adaptive format: 항목 수 기준 자동 포맷 선택
     let useCompact  = parseFormat === "compact";
@@ -167,10 +164,8 @@ export class ParismEngine {
     }
 
     const final = useCompact ? toCompact(parsed) : parsed;
-    /** native JSON 폴백이 성공하면 unsupported_format은 실패로 노출하지 않는다. */
-    const parseError   = parseResult.parse_error?.reason === "unsupported_format" && nativeParsed !== null
-      ? undefined
-      : parseResult.parse_error;
+    /** native JSON 폴백이 성공하면 parseWithFallback이 unsupported_format을 결과에서 뺀다. */
+    const parseError   = parseResult.parse_error;
     const stdout       = dropRaw && final !== null
       ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
       : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
@@ -178,8 +173,8 @@ export class ParismEngine {
     // parse failure 정규화: parser_exception은 failure로 승격, parser_not_found는 ok=true인 정보성 실패
     let parseFailure = envelope.failure;
     if (parseError) {
-      parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message };
-    } else if (parseResult.parsed === null && !parseResult.parse_error && nativeParsed === null && envelope.ok) {
+      parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message, ...(parseError.hint && { hint: parseError.hint }) };
+    } else if (parsed === null && envelope.ok) {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };
     }

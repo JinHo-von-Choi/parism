@@ -33,6 +33,25 @@ export interface FormatVerdict {
   reason?:  string;
 }
 
+/**
+ * 형식 밖의 인자 대신 쓸 수 있는 인자 안내. 같은 명령에 args를 주면 같은 정보를
+ * 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는다.
+ */
+export interface FormatHint {
+  args:   string[];
+  reason: string;
+}
+
+/**
+ * 계약의 hint 함수가 돌려주는 초안.
+ * args는 서브커맨드 다음 인자(rest)를 대신하며, native가 참이면 결과가 JSON 문서라 파서 형식 검사를 거치지 않는다.
+ */
+export interface HintDraft {
+  args:    string[];
+  reason:  string;
+  native?: boolean;
+}
+
 /** 숫자 축약 플래그(-5)의 선언 이름 */
 export const NUMBER_FLAG = "-<number>";
 
@@ -42,6 +61,8 @@ export interface ResolvedContract {
   contract:   ParserContract;
   /** 일치한 서브커맨드 키. 서브커맨드 선언이 없거나 일치하지 않으면 null */
   subcommand: string | null;
+  /** 앞쪽 전역 옵션과 서브커맨드 낱말 */
+  prefix:     string[];
   /** 서브커맨드 낱말 다음부터의 인자 */
   rest:       string[];
 }
@@ -69,20 +90,21 @@ export function skipLeadingFlags(contract: ParserContract, args: string[]): numb
 export function resolveContract(contract: ParserContract, args: string[]): ResolvedContract {
   const { subcommands, ...base } = contract;
   const start = skipLeadingFlags(contract, args);
-  if (!subcommands) return { contract: base, subcommand: null, rest: args.slice(start) };
+  if (!subcommands) return { contract: base, subcommand: null, prefix: args.slice(0, start), rest: args.slice(start) };
 
   const keys = Object.keys(subcommands).filter(k => k !== "").sort((a, b) => b.split(" ").length - a.split(" ").length);
   for (const key of keys) {
     const words = key.split(" ");
     if (words.every((w, j) => args[start + j] === w)) {
-      return { contract: { ...base, ...subcommands[key] }, subcommand: key, rest: args.slice(start + words.length) };
+      const end = start + words.length;
+      return { contract: { ...base, ...subcommands[key] }, subcommand: key, prefix: args.slice(0, end), rest: args.slice(end) };
     }
   }
   const bare = args[start] === undefined || args[start]!.startsWith("-");
   if (bare && Object.hasOwn(subcommands, "")) {
-    return { contract: { ...base, ...subcommands[""] }, subcommand: "", rest: args.slice(start) };
+    return { contract: { ...base, ...subcommands[""] }, subcommand: "", prefix: args.slice(0, start), rest: args.slice(start) };
   }
-  return { contract: base, subcommand: null, rest: args.slice(start) };
+  return { contract: base, subcommand: null, prefix: args.slice(0, start), rest: args.slice(start) };
 }
 
 /** 형식 선언(허용 플래그, 위치 인자 규칙, 서브커맨드)이 있는 계약인지 */
@@ -192,4 +214,19 @@ export function checkFormat(contract: ParserContract, args: string[]): FormatVer
   }
   if (eff.supports && !eff.supports(args)) return reject("arguments are outside the parser's custom format rule");
   return { accepted: true, contract: eff };
+}
+
+/**
+ * 형식 밖의 args에 대한 안내를 만든다. 유효 계약의 hint 함수가 서브커맨드 다음 인자를 바꾼 초안을 내면
+ * 앞쪽 전역 옵션과 서브커맨드를 다시 붙인다. 초안이 native JSON이 아니면 같은 계약의 형식 검사를 통과해야 하고,
+ * 원래 args와 같으면 안내하지 않는다.
+ */
+export function buildHint(contract: ParserContract, args: string[]): FormatHint | undefined {
+  const resolved = resolveContract(contract, args);
+  const draft    = resolved.contract.hint?.(resolved.rest);
+  if (!draft) return undefined;
+  const full = [...resolved.prefix, ...draft.args];
+  if (full.length === args.length && full.every((a, i) => a === args[i])) return undefined;
+  if (!draft.native && !checkFormat(contract, full).accepted) return undefined;
+  return { args: full, reason: draft.reason };
 }

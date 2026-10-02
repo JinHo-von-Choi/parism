@@ -35,6 +35,7 @@ Usage:
 4. Large output: run_paged(page=0) first, check page_info.total_lines, fetch needed pages.
 5. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
 6. stdout.parsed has structured data; stdout.raw is fallback.
+7. failure.reason = 'unsupported_format' means the parser does not handle those args. When failure.hint = { args, reason } is present, rerun the same command with hint.args to get the same information parsed.
 
 Notes:
 - When config.telemetry.enabled is true, responses include a telemetry field with per-stage timing (guard_ms, exec_ms, parse_ms, redact_ms, total_ms, raw_bytes).

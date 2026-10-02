@@ -60,6 +60,20 @@ describe("ParismEngine.run()", () => {
     expect(result.args).toEqual(["status", "-s"]);
   });
 
+  it("형식 밖의 인자는 failure.hint로 같은 정보를 얻는 인자를 안내한다", async () => {
+    const result = await engine.run("uname", { args: ["-r"] });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout.parsed).toBeNull();
+    expect(result.stdout.raw).not.toBe("");
+    expect(result.failure).toMatchObject({ kind: "parse", reason: "unsupported_format", hint: { args: ["-a"], reason: expect.any(String) } });
+    expect(result.stdout.parse_error?.hint?.args).toEqual(["-a"]);
+
+    const retry = await engine.run("uname", { args: result.failure!.hint!.args });
+    expect(retry.failure).toBeUndefined();
+    expect(retry.stdout.parsed).not.toBeNull();
+  });
+
   it("파서 미등록 명령은 ok=true이고 failure.reason=parser_not_found를 반환한다", async () => {
     const result = await engine.run("echo", { args: ["plain text"] });
 
