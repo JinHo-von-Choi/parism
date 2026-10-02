@@ -109,6 +109,18 @@ describe("정책 가드: 보강", () => {
     for (const [cmd, a] of denied) expect(reason(() => checkGuard(cmd, [...a], root, build))).toBe("arg_not_allowed");
   });
 
+  it("terraform 기본 정책은 version만 허용하고 provider를 불러올 수 있는 서브커맨드는 build 프로필에 둔다", () => {
+    expect(reason(() => checkGuard("terraform", ["version", "-json"], root, cfg))).toBe("pass");
+    for (const sub of ["show", "validate", "providers", "plan", "init"]) {
+      expect(reason(() => checkGuard("terraform", [sub], root, cfg))).toBe("arg_not_allowed");
+    }
+    for (const a of [["show", "-json"], ["validate", "-no-color"], ["providers"], ["version"]]) {
+      expect(reason(() => checkGuard("terraform", a, root, build))).toBe("pass");
+    }
+    expect(reason(() => checkGuard("terraform", ["show", "-json", "../outside.tfplan"], root, build))).toBe("path_not_allowed");
+    expect(reason(() => checkGuard("terraform", ["validate", "extra"], root, build))).toBe("arg_not_allowed");
+  });
+
   it("build 프로필의 node 위치 인자는 경로 검사를 받는다", () => {
     expect(reason(() => checkGuard("node", ["dist/index.js"], root, build))).toBe("pass");
     expect(reason(() => checkGuard("node", ["../evil.js"], root, build))).toBe("path_not_allowed");

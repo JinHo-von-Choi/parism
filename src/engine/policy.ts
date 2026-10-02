@@ -166,7 +166,7 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
   docker: { subcommands: ["ps", "images", "inspect", "logs", "version", "info", "stats"], flags: { "-a": "bool", "--all": "bool", "-q": "bool", "--format": "value", "--no-trunc": "bool", "--tail": "value", "--since": "value", "--no-stream": "bool", "-f": "value", "--filter": "value" }, positionals: "any" },
   kubectl: { subcommands: ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-l": "value", "--selector": "value", "--tail": "value", "--since": "value", "-c": "value", "--container": "value", "--context": "value", "-w": "bool", "--show-labels": "bool", "--previous": "bool" }, positionals: "any" },
   helm:   { subcommands: ["list", "ls", "status", "history", "version"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-a": "bool", "--all": "bool" }, positionals: "any" },
-  terraform: { subcommands: ["version", "show", "validate", "providers"], flags: { "-json": "bool", "-no-color": "bool" }, positionals: "any", singleDashLong: true },
+  terraform: { subcommands: ["version"], flags: { "-json": "bool", "-no-color": "bool" }, positionals: "none", singleDashLong: true },
   cargo:  { subcommands: ["tree", "metadata", "--version", "-V", "search", "pkgid"], flags: { "--depth": "value", "--format-version": "value", "--no-deps": "bool", "-e": "value", "--edges": "value", "-i": "value", "--invert": "value" }, positionals: "any" },
   apt:    { subcommands: ["list", "show", "policy", "search"], flags: { "--installed": "bool", "--upgradable": "bool", "-a": "bool", "--all-versions": "bool" }, positionals: "any" },
   brew:   { subcommands: ["list", "info", "outdated", "--version", "search", "deps", "leaves", "config"], flags: { "--versions": "bool", "--formula": "bool", "--cask": "bool", "--json": "value", "-1": "bool", "--tree": "bool" }, positionals: "any" },
@@ -193,8 +193,8 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   cargo:     extendSubcommands(DEFAULT_POLICIES.cargo!, ["build", "test", "check"], {
     subPositionals: { build: "none", check: "none" },
   }),
-  terraform: extendSubcommands(DEFAULT_POLICIES.terraform!, ["plan", "init"], {
-    subPositionals: { plan: "none", init: "none" },
+  terraform: extendSubcommands(DEFAULT_POLICIES.terraform!, ["show", "validate", "providers", "plan", "init"], {
+    subPositionals: { show: "path" },
   }),
   node:      { flags: { "--version": "bool", "-v": "bool" }, positionals: "path", stopAtPositional: true },
   npx:       { flags: { "--version": "bool" }, positionals: "any", stopAtPositional: true },
