@@ -782,4 +782,19 @@ describe("실행 자원 설정", () => {
       expect(warnings.filter(w => w.includes("guard.max_page_size"))).toHaveLength(1);
     }
   });
+
+  it("default_page_size는 max_page_size를 넘지 않는다", async () => {
+    const cases: [Record<string, number>, number][] = [
+      [{ default_page_size: 5000 }, 1000],
+      [{ max_page_size: 50 }, 50],
+      [{ default_page_size: 20, max_page_size: 50 }, 20],
+      [{ default_page_size: 0, max_page_size: 50 }, 0],
+    ];
+    for (const [guard, expected] of cases) {
+      const globalPath = tmpConfig({ guard });
+      const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+      expect([guard, cfg.guard.default_page_size]).toEqual([guard, expected]);
+      expect((await loadConfig(globalPath)).guard.default_page_size).toBe(expected);
+    }
+  });
 });

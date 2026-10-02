@@ -85,6 +85,15 @@ const DEFAULT_MAX_CONCURRENCY = 4;
 /** 설정에 page_size 상한이 없을 때(이전 형식의 설정 객체) 쓰는 값 */
 const DEFAULT_MAX_PAGE_SIZE = 1000;
 
+/**
+ * 세마포어에 쓸 동시 실행 상한. 검증을 거치지 않은 설정 객체도 받으므로
+ * 값이 없거나 유한한 수가 아니면 기본값을, 1 미만이면 1을 쓰고 소수는 버린다.
+ */
+function concurrencyLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_CONCURRENCY;
+  return Math.max(1, Math.floor(value));
+}
+
 export class ParismEngine {
   private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
   /** 자식 프로세스 동시 실행 상한. 넘는 요청은 자리가 날 때까지 대기한다. */
@@ -94,7 +103,7 @@ export class ParismEngine {
     private readonly config:   PrismConfig,
     private readonly registry: ParserRegistry,
   ) {
-    this.execSlots = new Semaphore(config.guard.max_concurrency ?? DEFAULT_MAX_CONCURRENCY);
+    this.execSlots = new Semaphore(concurrencyLimit(config.guard.max_concurrency));
   }
 
   /**

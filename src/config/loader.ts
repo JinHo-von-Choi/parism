@@ -114,17 +114,19 @@ export const DEFAULT_CONFIG: PrismConfig = {
 /**
  * guard 설정을 기본값과 병합한다.
  * command_arg_restrictions는 하위 키 기준으로 깊은 병합하여 기본 보안 제한 유실을 방지한다.
+ * default_page_size는 max_page_size를 넘지 않게 줄인다.
  */
 function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig {
   const mergedCommandArgRestrictions = {
     ...DEFAULT_CONFIG.guard.command_arg_restrictions,
     ...(userGuard.command_arg_restrictions ?? {}),
   };
+  const merged = { ...DEFAULT_CONFIG.guard, ...userGuard };
 
   return {
-    ...DEFAULT_CONFIG.guard,
-    ...userGuard,
+    ...merged,
     command_arg_restrictions: mergedCommandArgRestrictions,
+    default_page_size:        Math.min(merged.default_page_size, merged.max_page_size),
   };
 }
 
