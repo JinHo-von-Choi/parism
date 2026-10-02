@@ -51,6 +51,12 @@ describe("ParismEngine.run()", () => {
     expect(result.guard_error?.reason).toBe("command_not_allowed");
   });
 
+  it("git 실행 봉투의 args는 사용자가 보낸 원본이다", async () => {
+    const result = await engine.run("git", { args: ["status", "-s"] });
+
+    expect(result.args).toEqual(["status", "-s"]);
+  });
+
   it("파서 미등록 명령은 ok=true이고 failure.reason=parser_not_found를 반환한다", async () => {
     const result = await engine.run("echo", { args: ["plain text"] });
 
@@ -131,6 +137,19 @@ describe("ParismEngine.describe()", () => {
   it("telemetry_enabled가 기본 비활성이다", () => {
     const desc = engine.describe();
     expect(desc.telemetry_enabled).toBe(false);
+  });
+
+  it("guard_summary.policies에 적용 중인 명령 정책이 노출된다", () => {
+    const desc = engine.describe();
+    expect(desc.guard_summary.policies.git.subcommands).toContain("status");
+  });
+
+  it("guard_summary.policies는 프로필과 설정을 반영한다", () => {
+    const cfg  = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, profile: "build" as const, command_policies: { env: { flags: { "-0": "bool" as const }, positionals: "none" as const } } } };
+    const desc = new ParismEngine(cfg, registry).describe();
+    expect(desc.guard_summary.profile).toBe("build");
+    expect(desc.guard_summary.policies.npm.subcommands).toContain("run");
+    expect(desc.guard_summary.policies.env.flags).toEqual(["-0"]);
   });
 });
 

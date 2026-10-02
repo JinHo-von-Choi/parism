@@ -15,6 +15,7 @@ import type { OutputFormat }                                                    
 import type { ResponseEnvelope }                                                    from "../types/envelope.js";
 import { execute }                                                                  from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
+import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
@@ -101,13 +102,14 @@ export class ParismEngine {
     timer?.markEnd("guard");
 
     timer?.markStart("exec");
-    const envelope = await execute(
-      cmd, args, cwd,
+    const executed = await execute(
+      cmd, buildExecArgs(cmd, args), cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
       this.config.guard.timeout_ms,
       this.config.guard.max_output_bytes,
       includeDiff,
     );
+    const envelope = { ...executed, args };
     timer?.markEnd("exec");
     timer?.setRawBytes(Buffer.byteLength(envelope.stdout.raw, "utf8"));
 
@@ -188,6 +190,14 @@ export class ParismEngine {
         command_arg_restrictions: Object.fromEntries(
           Object.entries(guard.command_arg_restrictions).map(([k, v]) => [k, { ...v }]),
         ),
+        profile:                 guard.profile ?? "readonly",
+        policies:                Object.fromEntries(
+          Object.entries(resolvePolicies(guard)).map(([k, p]) => [k, {
+            ...(p.subcommands && { subcommands: [...p.subcommands] }),
+            flags:       Object.keys(p.flags),
+            positionals: p.positionals,
+          }]),
+        ),
       },
       telemetry_enabled: this.config.telemetry?.enabled === true,
     };
@@ -239,13 +249,14 @@ export class ParismEngine {
     // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
     // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
     // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
-    const envelope               = await execute(
-      cmd, args, cwd,
+    const executed               = await execute(
+      cmd, buildExecArgs(cmd, args), cwd,
       this.config.guard.secrets?.env_patterns ?? this.config.guard.env_secret_patterns ?? [],
       this.config.guard.timeout_ms,
       0,
       includeDiff,
     );
+    const envelope               = { ...executed, args };
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
     const pagedRaw               = lines.join("\n") + (lines.length > 0 ? "\n" : "");
     let   enriched               = {
@@ -292,6 +303,8 @@ export interface DescribeResult {
     timeout_ms:              number;
     max_output_bytes:        number;
     command_arg_restrictions: Record<string, { blocked_flags?: string[]; allowed_flags?: string[] }>;
+    profile:                 "readonly" | "build";
+    policies:                Record<string, { subcommands?: string[]; flags: string[]; positionals: string }>;
   };
   telemetry_enabled:  boolean;
 }

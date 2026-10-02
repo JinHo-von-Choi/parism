@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import type { CommandPolicy } from "../engine/policy.js";
 
 export interface CommandArgRestriction {
   blocked_flags: string[];
@@ -21,6 +22,7 @@ export interface PrismGuardConfig {
   default_page_size:        number;   // run_paged 기본 줄 수, 0=비활성
   block_patterns:           string[];
   command_arg_restrictions: Record<string, CommandArgRestriction>;
+  command_policies?:        Record<string, CommandPolicy>;
   /** @deprecated guard.secrets.env_patterns 으로 이전하세요. v2.0.0 제거 예정. */
   env_secret_patterns:      string[];
   secrets?:                 PrismGuardSecretsConfig;
@@ -252,7 +254,7 @@ function narrowArgRestrictions(
  * 프로젝트 설정 병합 규칙.
  * 전역 설정이 trust_project_config=true가 아니면 프로젝트 설정은 가드를 좁히기만 한다:
  * allowed_commands·allowed_paths는 교집합, timeout_ms·max_output_bytes는 더 엄격한 값,
- * block_patterns·command_arg_restrictions는 합집합, profile 등 그 외 키는 무시한다.
+ * block_patterns·command_arg_restrictions는 합집합, profile·command_policies 등 그 외 키는 무시한다.
  */
 function narrowGuard(base: PrismGuardConfig, project: PartialPrismGuardConfig): PrismGuardConfig {
   return {
@@ -421,9 +423,14 @@ function envToConfig(envPrefix: string): Partial<PrismConfig> {
   return result;
 }
 
+/** command_policies는 명령 단위로 병합해 상위 레이어의 다른 명령 정책을 유지한다. */
 function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismConfig {
+  const guard: PartialPrismGuardConfig = { ...base.guard, ...(override.guard ?? {}) };
+  if (base.guard.command_policies && override.guard?.command_policies) {
+    guard.command_policies = { ...base.guard.command_policies, ...override.guard.command_policies };
+  }
   return {
-    guard: mergeGuardConfig({ ...base.guard, ...(override.guard ?? {}) }),
+    guard: mergeGuardConfig(guard),
     parsers: {
       ...(base.parsers ?? {}),
       ...(override.parsers ?? {}),

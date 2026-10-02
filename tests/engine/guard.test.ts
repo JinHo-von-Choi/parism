@@ -191,7 +191,7 @@ describe("checkGuard()", () => {
     try {
       checkGuard("git", ["add", "/etc/passwd"], "/home/user/project", cfg2);
     } catch (e) {
-      expect((e as GuardError).reason).toBe("path_not_allowed");
+      expect((e as GuardError).reason).toBe("arg_not_allowed");
     }
   });
 
@@ -226,6 +226,7 @@ describe("checkGuard()", () => {
       guard: {
         ...cfg.guard,
         allowed_commands: [...cfg.guard.allowed_commands, "node"],
+        profile:          "build" as const,
       },
     };
     expect(() => checkGuard("node", ["foo/../../evil.js"], cwdOk, cfg2))
@@ -243,6 +244,7 @@ describe("checkGuard()", () => {
       guard: {
         ...cfg.guard,
         allowed_commands: [...cfg.guard.allowed_commands, "node"],
+        profile:          "build" as const,
       },
     };
     expect(() => checkGuard("node", ["./local.js"], cwdOk, cfg2)).not.toThrow();

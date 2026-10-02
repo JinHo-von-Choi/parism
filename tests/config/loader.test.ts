@@ -394,6 +394,20 @@ describe("설정 신뢰 경계", () => {
     expect(cfg.guard.allowed_commands).toContain("make");
   });
 
+  it("신뢰하지 않는 프로젝트 설정의 command_policies는 무시된다", async () => {
+    const projectPath = tmpConfig({ guard: { command_policies: { npm: { subcommands: ["run"], flags: {}, positionals: "any" } } } });
+    const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath });
+    expect(cfg.guard.command_policies).toBeUndefined();
+  });
+
+  it("신뢰하는 프로젝트 설정의 command_policies는 명령 단위로 병합된다", async () => {
+    const globalPath  = tmpConfig({ trust_project_config: true, guard: { command_policies: { git: { subcommands: ["status"], flags: {}, positionals: "none" } } } });
+    const projectPath = tmpConfig({ guard: { command_policies: { npm: { subcommands: ["run"], flags: {}, positionals: "any" } } } });
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.guard.command_policies?.npm?.subcommands).toEqual(["run"]);
+    expect(cfg.guard.command_policies?.git?.subcommands).toEqual(["status"]);
+  });
+
   it("프로젝트 설정의 trust_project_config는 무시된다", async () => {
     const projectPath = tmpConfig({ trust_project_config: true, guard: { allowed_commands: ["make"] } });
     const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath });
