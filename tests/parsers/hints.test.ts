@@ -28,7 +28,8 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["ss", ["-H", "-tu"], ["-tu"], "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port\nudp UNCONN 0 0 0.0.0.0:68 0.0.0.0:*\n"],
   ["dig", ["+short", "example.com"], ["example.com"],
     ";; QUESTION SECTION:\n;example.com. IN A\n\n;; ANSWER SECTION:\nexample.com. 300 IN A 93.184.215.14\n"],
-  ["grep", ["-Z", "-l", "x", "a", "b"], ["-l", "x", "a", "b"], "a\n"],
+  ["grep", ["-Z", "x", "a", "b"], ["x", "a", "b"], "a:hit\nb:hit\n"],
+  ["grep", ["-A1", "x", "f"], ["-n", "-A1", "x", "f"], "7:hit\n8-next\n"],
   ["env", ["-0"], [], "HOME=/home/u\n"],
   ["free", ["-h"], ["-b"], "               total        used        free      shared  buff/cache   available\nMem:      1024 512 512 0 0 512\n"],
   ["uname", ["-r"], ["-a"], "Linux host 6.8.0-1-generic #1 SMP x86_64 x86_64 x86_64 GNU/Linux\n"],
@@ -79,7 +80,7 @@ describe("failure.hint 안내 인자", () => {
 
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
-      ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-A1", "x", "f"]],
+      ["ls", ["-lR"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
       ["curl", ["-s", "https://example.com"]], ["ss", ["-a"]], ["apt", ["list"]], ["docker", ["stats", "--no-stream"]], ["stat", ["a", "b"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");

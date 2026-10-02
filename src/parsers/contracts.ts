@@ -11,6 +11,7 @@
 import type { ParserContract } from "./registry.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
+import { supportsGrep }     from "./text/grep.js";
 import { lsHint, findHint, duHint, dfHint, psHint, ssHint, digHint, grepHint, envHint, freeHint, unameHint, idHint,
          journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
          ghPrListHint, npmListHint, npmHint } from "./hints.js";
@@ -147,17 +148,18 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   grep: {
     acceptedFlags: {
-      ...bools("-r", "-R", "-n", "-l", "-i", "-y", "-v", "-w", "-x", "-c", "-o", "-h", "-H", "-E", "-F", "-G", "-P", "-s", "-q", "-a", "-I", "-T",
-        "--recursive", "--line-number", "--files-with-matches", "--ignore-case", "--no-ignore-case", "--invert-match",
+      ...bools("-r", "-R", "-n", "-l", "-L", "-b", "-Z", "-i", "-y", "-v", "-w", "-x", "-c", "-o", "-h", "-H", "-E", "-F", "-G", "-P", "-s", "-q", "-a", "-I", "-T",
+        NUMBER_FLAG, "--recursive", "--line-number", "--files-with-matches", "--files-without-match", "--byte-offset", "--null", "--ignore-case", "--no-ignore-case", "--invert-match",
         "--word-regexp", "--line-regexp", "--count", "--only-matching", "--no-filename", "--with-filename", "--extended-regexp",
         "--fixed-strings", "--basic-regexp", "--perl-regexp", "--no-messages", "--quiet", "--silent", "--text", "--initial-tab"),
-      ...values("-e", "--regexp", "-f", "--file", "-m", "--max-count", "--include", "--exclude", "--exclude-dir", "--exclude-from",
+      ...values("-e", "--regexp", "-f", "--file", "-m", "--max-count", "-A", "-B", "-C", "--after-context", "--before-context", "--context", "--include", "--exclude", "--exclude-dir", "--exclude-from",
         "--binary-files", "--label", "-d", "--directories", "-D", "--devices"),
       ...flags("attached", "--color", "--colour"),
     },
     acceptedValues: { "--color": /^(never|auto|)$/, "--colour": /^(never|auto|)$/ },
+    supports:       supportsGrep,
     hint:           grepHint,
-    rowsKey: "matches", rowFields: ["file", "line", "text"],
+    noise: /^--$/, rowsKey: "matches", rowFields: ["file", "line", "text", "byte_offset", "context"],
   },
   wc: {
     acceptedFlags:  { ...bools(...WC_COUNTERS), "--total": "attached" },
