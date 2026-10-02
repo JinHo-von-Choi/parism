@@ -53,6 +53,17 @@ function isDefaultValue(value: unknown, top = false): boolean {
   return false;
 }
 
+/**
+ * 메타 키를 뺀 최상위 값이 모두 유한한 숫자인 결과인지 판정한다(id -u의 { uid: 0 } 등).
+ * 이런 결과는 파서가 숫자만 있는 출력을 그대로 읽은 것이므로 0도 인식된 값으로 본다.
+ * 문자열·배열·하위 객체가 섞인 결과의 0은 기본값으로 남겨 인식 실패를 가리지 않는다.
+ */
+function isNumericRecord(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const fields = Object.entries(value as Record<string, unknown>).filter(([k]) => !META_KEYS.has(k) && !k.startsWith("_"));
+  return fields.length > 0 && fields.every(([, v]) => typeof v === "number" && Number.isFinite(v));
+}
+
 /** 머리 줄과 noise 패턴을 제외하고 남는 비공백 줄 수. */
 function countDataLines(raw: string, contract: ParserContract | undefined): number {
   const lines = raw.split(/\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
@@ -189,7 +200,7 @@ export class ParserRegistry {
     if (parsed == null) return { parsed: null };
 
     const dataLines = countDataLines(raw, contract);
-    if (dataLines > 0 && isDefaultValue(parsed, true) && tryParseNativeJson(raw) === null) {
+    if (dataLines > 0 && isDefaultValue(parsed, true) && !isNumericRecord(parsed) && tryParseNativeJson(raw) === null) {
       return {
         parsed:      null,
         parse_error: { reason: "unrecognized_output", message: `The '${cmd}' parser recognized nothing in ${dataLines} output line(s)` },

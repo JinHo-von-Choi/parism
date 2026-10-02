@@ -36,3 +36,18 @@ describe("파서 실패 계약", () => {
     expect(r.parsed.units[0]).toMatchObject({ name: "cron.service", sub: "running" });
   });
 });
+
+describe("숫자 0 값", () => {
+  it("id -u, id -g의 0은 인식된 값이다", () => {
+    expect(parse("id", ["-u"], "0\n")).toEqual({ parsed: { uid: 0 } });
+    expect(parse("id", ["-g"], "0\n")).toEqual({ parsed: { gid: 0 } });
+  });
+
+  it("문자열이나 하위 값과 섞인 0만 있는 결과는 계속 unrecognized_output이다", () => {
+    expect(parse("ls", ["-l"], "this is not ls output\n").parse_error?.reason).toBe("unrecognized_output");
+    expect(parse("id", [], "not id output\n").parse_error?.reason).toBe("unrecognized_output");
+    expect(parse("ping", [], "not ping output\n").parse_error?.reason).toBe("unrecognized_output");
+    expect(parse("curl", ["-I", "https://example.com"], "not a header\n").parse_error?.reason).toBe("unrecognized_output");
+    expect(parse("free", [], "not free output\n").parse_error?.reason).toBe("unrecognized_output");
+  });
+});
