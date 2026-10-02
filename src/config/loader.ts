@@ -80,7 +80,7 @@ export const DEFAULT_CONFIG: PrismConfig = {
       "kubectl", "docker", "gh",
       "systemctl", "journalctl",
       "helm", "terraform", "apt", "brew",
-      "npm", "pnpm", "yarn", "cargo",
+      "npm", "pnpm", "cargo",
     ],
     allowed_paths:    [process.cwd()],
     timeout_ms:       10000,

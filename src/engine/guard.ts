@@ -1,6 +1,6 @@
 import path from "path";
 import { realpathSync } from "node:fs";
-import { policySource, resolvePolicies, tokenizeArgs, type CommandPolicy, type PolicySource } from "./policy.js";
+import { BUILD_PROFILE_POLICIES, policySource, resolvePolicies, tokenizeArgs, type CommandPolicy, type PolicySource } from "./policy.js";
 import type { PrismConfig } from "../config/loader.js";
 
 /**
@@ -149,6 +149,12 @@ export function checkGuard(
   }
 
   const policy      = resolvePolicies(guard)[cmd];
+  if (!policy && BUILD_PROFILE_POLICIES[cmd]) {
+    throw new GuardError(
+      `Command '${cmd}' requires the build profile`,
+      "command_not_allowed",
+    );
+  }
   const policyPaths = policy
     ? checkPolicy(cmd, args, policy, policySource(guard, cmd) ?? "default")
     : attachedFlagPaths(args);
@@ -217,6 +223,7 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
       const kind = policy.flags[t.name];
       if (!kind && !(policy.numericFlag && /^-[0-9]+$/.test(t.name))) deny(cmd, t.name, source);
       if (t.value?.startsWith("@") && policy.fileRefFlags?.includes(t.name)) deny(cmd, `${t.name} ${t.value}`, source);
+      if (t.value !== undefined && policy.deniedValues?.[t.name]?.some(d => t.value!.includes(d))) deny(cmd, `${t.name} ${t.value}`, source);
       if (kind === "path" && t.value) paths.push(t.value);
       continue;
     }

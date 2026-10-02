@@ -80,7 +80,7 @@ describe("정책 가드", () => {
 });
 
 describe("정책 가드: 보강", () => {
-  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_commands: [...cfg.guard.allowed_commands, "node", "npx"] } };
+  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_commands: [...cfg.guard.allowed_commands, "node", "npx", "yarn"] } };
 
   it("GuardError 메시지는 차단된 인자와 정책 출처를 포함한다", () => {
     const messageOf = (fn: () => void) => { try { fn(); return ""; } catch (e) { return (e as GuardError).message; } };
@@ -152,7 +152,7 @@ describe("정책 가드: 보강", () => {
 });
 
 describe("인자 분류 규칙", () => {
-  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_commands: [...cfg.guard.allowed_commands, "node", "npx"] } };
+  const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_commands: [...cfg.guard.allowed_commands, "node", "npx", "yarn"] } };
 
   it("숫자 축약 플래그는 플래그 자리에서만 인식하고 토큰을 버리지 않는다", () => {
     expect(tokenizeArgs(["-5", "x"], {}, false, { numericFlag: true })).toEqual([
@@ -194,13 +194,30 @@ describe("인자 분류 규칙", () => {
     expect(reason(() => checkGuard("curl", ["-H", "Accept: text/plain", "-w", "%{http_code}", "https://example.com"], root, cfg))).toBe("pass");
   });
 
-  it("pnpm, yarn 기본 정책은 조회 서브커맨드만 허용한다", () => {
-    for (const [cmd, a] of [["pnpm", ["list"]], ["pnpm", ["why", "react"]], ["pnpm", ["outdated"]], ["yarn", ["info", "react"]], ["yarn", ["--version"]]] as const) {
-      expect(reason(() => checkGuard(cmd, [...a], root, cfg))).toBe("pass");
+  it("curl의 write-out 값에 %output{ 지시어가 있으면 허용하지 않는다", () => {
+    for (const a of [["-w", "%output{/tmp/x}%{http_code}", "https://example.com"], ["--write-out=%output{/tmp/y}", "https://example.com"], ["-sw%output{/tmp/x}", "https://example.com"]]) {
+      expect(reason(() => checkGuard("curl", a, root, cfg))).toBe("arg_not_allowed");
     }
-    for (const [cmd, a] of [["pnpm", ["run", "build"]], ["pnpm", ["dlx", "x"]], ["pnpm", ["exec", "x"]], ["yarn", []], ["yarn", ["build"]], ["yarn", ["test"]]] as const) {
-      expect(reason(() => checkGuard(cmd, [...a], root, cfg))).toBe("arg_not_allowed");
+  });
+
+  it("pnpm 기본 정책은 조회 서브커맨드만 허용한다", () => {
+    for (const a of [["list"], ["why", "react"], ["outdated"]]) {
+      expect(reason(() => checkGuard("pnpm", a, root, cfg))).toBe("pass");
     }
+    for (const a of [["run", "build"], ["dlx", "x"], ["exec", "x"]]) {
+      expect(reason(() => checkGuard("pnpm", a, root, cfg))).toBe("arg_not_allowed");
+    }
+  });
+
+  it("yarn은 기본 정책과 기본 허용 명령에 없고 build 프로필에서만 실행된다", () => {
+    expect(DEFAULT_POLICIES.yarn).toBeUndefined();
+    expect(DEFAULT_CONFIG.guard.allowed_commands).not.toContain("yarn");
+    const readonlyWithYarn = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, "yarn"] } };
+    for (const a of [["info", "react"], ["--version"], ["run", "build"]]) {
+      expect(reason(() => checkGuard("yarn", a, root, readonlyWithYarn))).toBe("command_not_allowed");
+      expect(reason(() => checkGuard("yarn", a, root, cfg))).toBe("command_not_allowed");
+    }
+    expect(reason(() => checkGuard("yarn", ["info", "react"], root, build))).toBe("pass");
   });
 
   it("build 프로필에서 pnpm, yarn은 run과 test를 추가로 허용한다", () => {
@@ -264,6 +281,12 @@ describe("buildExecArgs", () => {
     expect(buildExecArgs("git", ["status", "-sb"])).toEqual(
       ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "status", "-sb"],
     );
+  });
+
+  it("프로토타입 키 서브커맨드도 예외 없이 처리한다", () => {
+    for (const sub of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(buildExecArgs("git", [sub])).toEqual(["-c", "core.fsmonitor=false", "-c", "core.pager=cat", sub]);
+    }
   });
 
   it("입력 배열을 변경하지 않는다", () => {

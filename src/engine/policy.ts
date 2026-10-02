@@ -26,6 +26,8 @@ export interface CommandPolicy {
   subVerbs?: Record<string, string[]>;
   /** 값이 @로 시작하면 로컬 파일을 읽는 값 플래그. @ 값은 허용하지 않는다. */
   fileRefFlags?: string[];
+  /** 플래그별 금지 부분 문자열. 값에 하나라도 포함되면 거부한다. */
+  deniedValues?: Record<string, string[]>;
   /** 첫 위치 인자(스크립트 경로, 실행 대상 이름) 이후 인자는 대상 프로그램 몫으로 보고 검사하지 않는다. */
   stopAtPositional?: boolean;
 }
@@ -157,12 +159,12 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
     },
     positionals:  "url",
     fileRefFlags: ["-H", "--header", "-w", "--write-out"],
+    deniedValues: { "-w": ["%output{"], "--write-out": ["%output{"] },
   },
   node:   { flags: { "--version": "bool", "-v": "bool" }, positionals: "none" },
   npx:    { flags: { "--version": "bool" }, positionals: "none" },
   npm:    { subcommands: ["ls", "list", "outdated", "view", "info", "audit", "--version", "-v"], flags: { "--depth": "value", "--json": "bool", "--all": "bool", "--omit": "value", "--prod": "bool", "--long": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
   pnpm:   { subcommands: ["list", "ls", "outdated", "why", "info", "--version"], flags: { "--depth": "value", "--json": "bool", "--long": "bool", "--prod": "bool", "-P": "bool", "--dev": "bool", "-D": "bool", "-r": "bool", "--recursive": "bool", "--global": "bool", "-g": "bool" }, positionals: "any" },
-  yarn:   { subcommands: ["list", "ls", "outdated", "why", "info", "--version"], flags: { "--depth": "value", "--json": "bool", "--pattern": "value" }, positionals: "any" },
   docker: { subcommands: ["ps", "images", "inspect", "logs", "version", "info", "stats"], flags: { "-a": "bool", "--all": "bool", "-q": "bool", "--format": "value", "--no-trunc": "bool", "--tail": "value", "--since": "value", "--no-stream": "bool", "-f": "value", "--filter": "value" }, positionals: "any" },
   kubectl: { subcommands: ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-l": "value", "--selector": "value", "--tail": "value", "--since": "value", "-c": "value", "--container": "value", "--context": "value", "-w": "bool", "--show-labels": "bool", "--previous": "bool" }, positionals: "any" },
   helm:   { subcommands: ["list", "ls", "status", "history", "version"], flags: { "-n": "value", "--namespace": "value", "-A": "bool", "--all-namespaces": "bool", "-o": "value", "--output": "value", "-a": "bool", "--all": "bool" }, positionals: "any" },
@@ -182,6 +184,13 @@ function extendSubcommands(base: CommandPolicy, extra: string[], overrides: Part
   return { ...base, ...overrides, subcommands: [...(base.subcommands ?? []), ...extra] };
 }
 
+/** yarn 은 저장소가 지정한 yarnPath 스크립트를 실행하므로 build 프로필에서만 허용한다. */
+const YARN_POLICY: CommandPolicy = {
+  subcommands: ["list", "ls", "outdated", "why", "info", "--version"],
+  flags:       { "--depth": "value", "--json": "bool", "--pattern": "value" },
+  positionals: "any",
+};
+
 /**
  * guard.profile이 "build"일 때 기본 정책 위에 덮어쓰는 정책.
  * 빌드·시험 실행에 필요한 서브커맨드만 더한다. 경로 위치 인자는 allowed_paths 검사를 그대로 받는다.
@@ -189,7 +198,7 @@ function extendSubcommands(base: CommandPolicy, extra: string[], overrides: Part
 export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   npm:       extendSubcommands(DEFAULT_POLICIES.npm!, ["run", "test", "ci"]),
   pnpm:      extendSubcommands(DEFAULT_POLICIES.pnpm!, ["run", "test"]),
-  yarn:      extendSubcommands(DEFAULT_POLICIES.yarn!, ["run", "test"]),
+  yarn:      extendSubcommands(YARN_POLICY, ["run", "test"]),
   cargo:     extendSubcommands(DEFAULT_POLICIES.cargo!, ["build", "test", "check"], {
     subPositionals: { build: "none", check: "none" },
   }),
@@ -249,7 +258,8 @@ export function buildExecArgs(cmd: string, args: string[], guard?: PrismGuardCon
   let   subIdx  = 0;
   while (subIdx < args.length && leading.includes(args[subIdx]!)) subIdx++;
 
-  const extra = GIT_SUBCOMMAND_OVERRIDES[args[subIdx] ?? ""];
+  const sub   = args[subIdx] ?? "";
+  const extra = Object.hasOwn(GIT_SUBCOMMAND_OVERRIDES, sub) ? GIT_SUBCOMMAND_OVERRIDES[sub] : undefined;
   if (!extra) return [...GIT_CONFIG_OVERRIDES, ...args];
   return [
     ...GIT_CONFIG_OVERRIDES,
