@@ -128,6 +128,52 @@ describe("parseDig()", () => {
     expect(result.query_time_ms).toBe(0);
   });
 
+  it("쿼리가 여럿이면 응답마다 query, query_type, answers, query_time_ms를 queries에 나누고 맨 위는 첫 응답이다", () => {
+    const raw = [
+      "; <<>> DiG 9.18.39 <<>> example.com example.org MX",
+      ";; global options: +cmd",
+      ";; Got answer:",
+      ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 10749",
+      ";; QUESTION SECTION:",
+      ";example.com.\t\t\tIN\tA",
+      "",
+      ";; ANSWER SECTION:",
+      "example.com.\t\t300\tIN\tA\t172.66.147.243",
+      "example.com.\t\t300\tIN\tA\t104.20.23.154",
+      "",
+      ";; Query time: 41 msec",
+      ";; SERVER: 127.0.0.53#53(127.0.0.53) (UDP)",
+      "",
+      ";; Got answer:",
+      ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 5167",
+      ";; QUESTION SECTION:",
+      ";example.org.\t\t\tIN\tMX",
+      "",
+      ";; ANSWER SECTION:",
+      "example.org.\t\t300\tIN\tMX\t0 .",
+      "",
+      ";; Query time: 43 msec",
+      ";; SERVER: 127.0.0.1#53(127.0.0.1) (UDP)",
+      "",
+    ].join("\n");
+    const r = parseDig("dig", ["example.com", "example.org", "MX"], raw);
+    expect(r).toMatchObject({ query: "example.com", query_type: "A", query_time_ms: 41, server: "127.0.0.53#53(127.0.0.53)" });
+    expect(r.answers).toHaveLength(2);
+    expect(r.queries).toHaveLength(2);
+    expect(r.queries![1]).toEqual({
+      query: "example.org", query_type: "MX", query_time_ms: 43, server: "127.0.0.1#53(127.0.0.1)",
+      answers: [{ name: "example.org", ttl: 300, class: "IN", type: "MX", value: "0 ." }],
+    });
+    expect(parseDig("dig", ["example.com"], raw.split("\n\n;; Got answer:")[0]!).queries).toBeUndefined();
+  });
+
+  it("루트 이름(.)과 루트를 가리키는 값은 점을 지킨다", () => {
+    const raw = [";; QUESTION SECTION:", ";.\t\t\t\tIN\tNS", "", ";; ANSWER SECTION:", ".\t\t\t518400\tIN\tNS\ta.root-servers.net.", "example.org.\t300\tIN\tMX\t0 ."].join("\n");
+    const r   = parseDig("dig", [".", "NS"], raw);
+    expect(r.query).toBe(".");
+    expect(r.answers.map(a => [a.name, a.value])).toEqual([[".", "a.root-servers.net"], ["example.org", "0 ."]]);
+  });
+
   it("TXT 값의 연속 공백을 보존한다", () => {
     const raw = [";; ANSWER SECTION:", "example.com.\t60\tIN\tTXT\t\"v=spf1  -all\""].join("\n");
     expect(parseDig("dig", ["example.com", "TXT"], raw).answers[0]!.value).toBe("\"v=spf1  -all\"");

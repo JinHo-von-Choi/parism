@@ -246,12 +246,18 @@ describe("parseDf()", () => {
     expect(r.filesystems[0]).toEqual({ filesystem: "tmpfs", size: "12876", used: "46", available: "12830", use_percent: "1%", mounted_on: "/run" });
   });
 
-  it("1K 블록과 단위 붙은 크기는 blocks_1k에 담고 block_size를 두지 않는다", () => {
+  it("1K 블록은 blocks_1k에, 단위 붙은 크기(-h, -H)는 size에 담고 block_size를 두지 않는다", () => {
     const k = parseDf("df", [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n") as Rows;
     expect(k.block_size).toBeUndefined();
     expect(k.filesystems[0]!.blocks_1k).toBe("100");
     const h = parseDf("df", ["-h"], "Filesystem Size Used Avail Use% Mounted on\nefivarfs 181k 90k 86k 51% /sys/firmware/efi/efivars\n") as Rows;
-    expect(h.filesystems[0]).toMatchObject({ blocks_1k: "181k", used: "90k", available: "86k", mounted_on: "/sys/firmware/efi/efivars" });
+    expect(h.block_size).toBeUndefined();
+    expect(h.filesystems[0]).toEqual({ filesystem: "efivarfs", size: "181k", used: "90k", available: "86k", use_percent: "51%", mounted_on: "/sys/firmware/efi/efivars" });
+    const p = parseDf("df", ["-hP"], "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  915G  547G  322G  63% /\n") as Rows;
+    expect(p.filesystems[0]).toMatchObject({ size: "915G", used: "547G" });
+    expect(p.filesystems[0]!.blocks_1k).toBeUndefined();
+    const portable = parseDf("df", ["-P"], "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/sda1 100 40 60 40% /\n") as Rows;
+    expect(portable.filesystems[0]!.blocks_1k).toBe("100");
   });
 
   it("마운트 위치와 파일 시스템 이름의 공백을 지킨다", () => {

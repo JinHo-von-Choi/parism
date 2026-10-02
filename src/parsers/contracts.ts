@@ -173,9 +173,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   wc: {
     acceptedFlags:  { ...bools(...WC_COUNTERS), "--total": "attached" },
+    acceptedValues: { "--total": /^(auto|always|only|never)$/ },
     requiredFlags:  WC_COUNTERS,
     exclusiveFlags: WC_COUNTERS,
-    rowsKey: "entries", rowFields: ["count", "file"],
+    rowsKey: "entries", rowFields: ["count", "file"], outputFlags: { "--total=only": { rowsKey: undefined, rowFields: undefined } },
   },
   env:   { acceptedFlags: bools("-0", "--null"), acceptedPositionals: { max: 0 } },
   pwd:   { acceptedFlags: bools("-L", "-P"), acceptedPositionals: { max: 0 } },
@@ -280,6 +281,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     },
   },
   git: {
+    /**
+     * 전역 옵션 가운데 -c(설정 덮어쓰기: status.short, color.ui, log.decorate)는 파서가 처리하지 못하는 출력을 낼 수 있다.
+     * 기본 guard 정책(readonly, build)은 --no-pager만 허용해 -c, -C, --git-dir 등을 막으므로 기본 설정에서는 닿지 않는다.
+     * 선언은 정책을 넓힌 사용자 설정에서 서브커맨드 위치를 찾기 위한 것이다.
+     */
     leadingFlags: { ...bools("--no-pager"), ...values("-C", "-c", "--git-dir", "--work-tree", "--namespace") },
     subcommands:  {
       status: {

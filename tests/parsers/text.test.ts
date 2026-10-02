@@ -6,11 +6,23 @@ import { parseHead } from "../../src/parsers/text/head.js";
 import { parseTail } from "../../src/parsers/text/tail.js";
 import { createRegistry } from "../../src/parsers/index.js";
 import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
+import { checkInvariants }         from "../../src/parsers/invariants.js";
 
 describe("parseWc()", () => {
   it("wc 출력을 파싱한다", () => {
     const result = parseWc("wc", ["-l"], "  42 src/index.ts\n") as { entries: Array<{ count: number; file: string }> };
     expect(result.entries[0]).toEqual({ count: 42, file: "src/index.ts" });
+  });
+
+  it("--total=only는 이름 없는 항목이 아니라 total 하나다", () => {
+    expect(parseWc("wc", ["-l", "--total=only", "a", "b"], "6\n")).toEqual({ total: 6 });
+    const reg = createRegistry();
+    for (const raw of ["6\n", "0\n"]) {
+      const r = reg.parse("wc", ["-l", "--total=only", "a", "b"], raw);
+      expect(r.parse_error).toBeUndefined();
+      expect(r.parsed).toEqual({ total: Number(raw.trim()) });
+      expect(checkInvariants(r.parsed, raw, reg.contractFor("wc", ["-l", "--total=only", "a", "b"]))).toEqual([]);
+    }
   });
 });
 

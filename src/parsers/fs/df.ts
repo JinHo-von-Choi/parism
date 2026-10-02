@@ -2,9 +2,9 @@ export interface DfEntry {
   filesystem:  string;
   /** -T로 표시한 파일 시스템 종류 */
   type?:       string;
-  /** 1K 블록 수, 또는 -h/-H의 단위 붙은 크기("547G") */
+  /** 1K 블록 수 */
   blocks_1k?:  string;
-  /** 1K가 아닌 블록 단위(-m, -B1M)의 크기. 단위는 결과의 block_size다. */
+  /** 1K가 아닌 크기. -m, -B1M이면 블록 수이고 단위는 결과의 block_size이며, -h/-H면 단위가 붙은 값("547G")이다. */
   size?:       string;
   used:        string;
   available:   string;
@@ -66,7 +66,7 @@ export function parseDf(cmd: string, args: string[], raw: string): DfResult {
     filesystems.push({
       filesystem:  row.fs.join(" "),
       ...(row.type !== undefined && { type: row.type }),
-      ...(fixed ? { size: amount } : { blocks_1k: amount }),
+      ...(unit === "1K" ? { blocks_1k: amount } : { size: amount }),
       used,
       available,
       use_percent: percent,
