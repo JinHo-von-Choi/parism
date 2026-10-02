@@ -137,14 +137,18 @@ export class ParismEngine {
     }
 
     const final = finalFormat === "compact" ? toCompact(parsed) : parsed;
-    const stdout       = format === "json-no-raw"
-      ? { raw: "", parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) }
-      : { ...envelope.stdout, parsed: final, ...(parseResult.parse_error && { parse_error: parseResult.parse_error }) };
+    /** native JSON 폴백이 성공하면 unsupported_format은 실패로 노출하지 않는다. */
+    const parseError   = parseResult.parse_error?.reason === "unsupported_format" && nativeParsed !== null
+      ? undefined
+      : parseResult.parse_error;
+    const stdout       = format === "json-no-raw" && final !== null
+      ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
+      : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
 
     // parse failure 정규화: parser_exception은 failure로 승격, parser_not_found는 ok=true인 정보성 실패
     let parseFailure = envelope.failure;
-    if (parseResult.parse_error) {
-      parseFailure = { kind: "parse", reason: parseResult.parse_error.reason, message: parseResult.parse_error.message };
+    if (parseError) {
+      parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message };
     } else if (parseResult.parsed === null && !parseResult.parse_error && nativeParsed === null && envelope.ok) {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };

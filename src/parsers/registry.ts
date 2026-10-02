@@ -1,5 +1,6 @@
 import { z }             from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { tryParseNativeJson } from "./json-passthrough.js";
 
 /**
  * 출력 형식.
@@ -24,6 +25,41 @@ export interface ParseContext {
 export type ParserFn = (cmd: string, args: string[], raw: string, ctx?: ParseContext) => unknown;
 
 /**
+ * 파서가 처리할 수 있는 입력 범위 선언.
+ * supports -- args 기준으로 출력 형식을 처리할 수 있는지 판정. false면 파서를 실행하지 않는다.
+ */
+export interface ParserContract {
+  supports?:    (args: string[]) => boolean;
+  /** 데이터가 아닌 머리 줄 수(공백 줄 제외). 머리만 있는 출력은 정상적인 빈 결과로 본다. */
+  headerLines?: number;
+  /** 데이터가 아닌 줄(합계, 범례, 안내 문구) 패턴. */
+  noise?:       RegExp;
+}
+
+/** 출력에서 온 값이 아닌 메타 키. 빈 결과 판정에서 제외한다. */
+const META_KEYS = new Set(["raw", "resource", "unit"]);
+
+/**
+ * 파싱 결과가 출력에서 아무 값도 인식하지 못했는지 판정한다.
+ * 배열은 길이 0, 문자열은 "", 숫자는 0, 불리언은 false, null/undefined, 하위 객체는 재귀적으로 빈 경우를 기본값으로 본다.
+ */
+function isDefaultValue(value: unknown, top = false): boolean {
+  if (value == null || value === "" || value === 0 || value === false) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .every(([k, v]) => (top && (META_KEYS.has(k) || k.startsWith("_"))) || isDefaultValue(v));
+  }
+  return false;
+}
+
+/** 머리 줄과 noise 패턴을 제외하고 남는 비공백 줄 수. */
+function countDataLines(raw: string, contract: ParserContract | undefined): number {
+  const lines = raw.split(/\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
+  return contract?.noise ? lines.filter(l => !contract.noise!.test(l)).length : lines.length;
+}
+
+/**
  * Fixture: 파서 검증용 입출력 쌍.
  */
 export interface Fixture {
@@ -46,6 +82,9 @@ export interface ParserPack {
   schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
+  supports?:    (args: string[]) => boolean;
+  headerLines?: number;
+  noise?:       RegExp;
 }
 
 /**
@@ -63,10 +102,17 @@ function formatZodError(error: z.ZodError): string {
 export interface ParseResult {
   parsed:      unknown | null;
   parse_error?: {
-    reason:  "parser_exception" | "schema_violation";
+    reason:  ParseErrorReason;
     message: string;
   };
 }
+
+/**
+ * parse_error.reason 값 목록.
+ * unsupported_format  -- 파서가 supports()로 해당 args의 출력 형식을 거부함.
+ * unrecognized_output -- 데이터 줄이 있는데 파서가 아무 값도 인식하지 못함.
+ */
+export type ParseErrorReason = "parser_exception" | "schema_violation" | "unsupported_format" | "unrecognized_output";
 
 /**
  * 명령어 → 파서 함수의 매핑 테이블.
@@ -74,10 +120,13 @@ export interface ParseResult {
  */
 export class ParserRegistry {
   private readonly parsers = new Map<string, ParserFn>();
-  private readonly packs   = new Map<string, ParserPack>();
+  private readonly packs     = new Map<string, ParserPack>();
+  private readonly contracts = new Map<string, ParserContract>();
 
-  register(cmd: string, fn: ParserFn): void {
+  register(cmd: string, fn: ParserFn, contract?: ParserContract): void {
     this.parsers.set(cmd, fn);
+    if (contract) this.contracts.set(cmd, contract);
+    else this.contracts.delete(cmd);
   }
 
   /**
@@ -86,6 +135,7 @@ export class ParserRegistry {
   registerPack(pack: ParserPack): void {
     this.packs.set(pack.name, pack);
     this.parsers.set(pack.name, (_cmd, args, raw, ctx) => pack.parse(raw, args, ctx));
+    this.contracts.set(pack.name, { supports: pack.supports, headerLines: pack.headerLines, noise: pack.noise });
   }
 
   /**
@@ -120,6 +170,14 @@ export class ParserRegistry {
     const fn = this.parsers.get(cmd);
     if (!fn) return { parsed: null };
 
+    const contract = this.contracts.get(cmd);
+    if (contract?.supports && !contract.supports(args)) {
+      return {
+        parsed:      null,
+        parse_error: { reason: "unsupported_format", message: `Output format of '${[cmd, ...args].join(" ")}' is not supported by the '${cmd}' parser` },
+      };
+    }
+
     let parsed: unknown;
     try {
       parsed = fn(cmd, args, raw, ctx);
@@ -129,6 +187,14 @@ export class ParserRegistry {
     }
 
     if (parsed == null) return { parsed: null };
+
+    const dataLines = countDataLines(raw, contract);
+    if (dataLines > 0 && isDefaultValue(parsed, true) && tryParseNativeJson(raw) === null) {
+      return {
+        parsed:      null,
+        parse_error: { reason: "unrecognized_output", message: `The '${cmd}' parser recognized nothing in ${dataLines} output line(s)` },
+      };
+    }
 
     // strict_schemas 활성화 시 ParserPack이 있는 경우에만 검증
     if (strictSchemas) {

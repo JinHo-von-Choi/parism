@@ -235,6 +235,8 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `parse` | `parser_exception` | 파서 함수가 예외 던짐 | false |
 | `parse` | `parser_not_found` | 등록된 파서 없고 native JSON도 아님 | **true** (정보성) |
 | `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 | false |
+| `parse` | `unsupported_format` | 파서의 `supports(args)`가 해당 출력 형식을 거부함 | false |
+| `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 | false |
 | `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
 
 `kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다.
@@ -298,8 +300,13 @@ export interface ParserPack {
   schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
+  supports?:    (args: string[]) => boolean;
+  headerLines?: number;
+  noise?:       RegExp;
 }
 ```
+
+`supports`, `headerLines`, `noise`는 선택 필드이며 파서 실패 계약을 구성한다. `supports(args)`가 `false`를 반환하면 파서를 실행하지 않고 `parse_error.reason="unsupported_format"`을 반환한다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 실패가 아니다.
 
 `schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
 
@@ -309,7 +316,7 @@ export interface ParserPack {
 
 `ParserRegistry`에는 두 등록 경로가 있다.
 
-`register(cmd, fn)`: `ParserFn` 함수를 직접 등록한다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
+`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 `{ supports?, headerLines?, noise? }` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
 
 `registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 커스텀 파서 및 외부 파서가 사용하는 경로다.
 

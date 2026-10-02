@@ -3,7 +3,7 @@
  * schema_violation은 strict_schemas=true 시 Zod 검증 실패를 나타낸다.
  */
 export interface ParseErrorField {
-  reason:  "parser_exception" | "schema_violation";
+  reason:  "parser_exception" | "schema_violation" | "unsupported_format" | "unrecognized_output";
   message: string;
 }
 

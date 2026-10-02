@@ -217,7 +217,7 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
-> `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"` 두 값만 가진다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
+> `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"`, `"unsupported_format"`, `"unrecognized_output"` 네 값을 가진다. `unsupported_format` 은 파서가 해당 인자의 출력 형식을 지원하지 않을 때, `unrecognized_output` 은 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못했을 때 반환된다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
 
 ### 네이티브 JSON 패스스루
 
@@ -500,6 +500,9 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* 구조화된 결과 반환 */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+  supports: (args) => !args.includes("--json"), // 선택: false면 unsupported_format
+  headerLines: 1,                                // 선택: 데이터가 아닌 머리 줄 수
+  noise: /^Total /,                              // 선택: 데이터가 아닌 줄 패턴
 };
 
 export default pack;

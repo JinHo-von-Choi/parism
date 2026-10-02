@@ -64,6 +64,11 @@ describe("ParismEngine.run()", () => {
     expect(result.failure?.kind).toBe("parse");
     expect(result.failure?.reason).toBe("parser_not_found");
   });
+
+  it("json-no-raw에서 파싱 실패 시 raw를 유지한다", async () => {
+    const r = await engine.run("echo", { args: ["not parseable by any parser"], format: "json-no-raw" });
+    if (r.stdout.parsed === null) expect(r.stdout.raw.length).toBeGreaterThan(0);
+  });
 });
 
 describe("ParismEngine.runPaged()", () => {

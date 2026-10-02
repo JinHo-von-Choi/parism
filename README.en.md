@@ -200,7 +200,7 @@ Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json.
 
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
-> `stdout.parse_error.reason` only takes two values: `"parser_exception"` and `"schema_violation"`. "No parser found" is not a `parse_error` — it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+> `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error` — it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
 
 ### Native JSON Passthrough
 
@@ -430,6 +430,9 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* return structured result */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
+  supports: (args) => !args.includes("--json"), // optional: false yields unsupported_format
+  headerLines: 1,                                // optional: number of non-data header lines
+  noise: /^Total /,                              // optional: pattern for non-data lines
 };
 
 export default pack;

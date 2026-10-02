@@ -36,32 +36,28 @@ export function parseSystemctl(
   const lines = raw.split("\n").filter(Boolean);
   if (lines.length === 0) return { units: [] };
 
-  const headerIdx = lines.findIndex(l => HEADER_PATTERN.test(l));
-  if (headerIdx < 0) return { lines: raw.split("\n").filter(Boolean) };
-  const dataLines = lines.slice(headerIdx + 1);
+  const allLines  = raw.split("\n");
+  const headerIdx = allLines.findIndex(l => HEADER_PATTERN.test(l));
+  if (headerIdx < 0) return { lines };
 
+  /** 유닛 이름은 공백을 이스케이프하므로 앞 4열은 공백 1개 이상으로 구분된다. 첫 빈 줄 뒤는 범례다. */
   const units: SystemctlUnit[] = [];
-  for (const line of dataLines) {
+  for (const line of allLines.slice(headerIdx + 1)) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) break;
 
-    const failed = trimmed.startsWith("●");
+    const failed  = /^[●*]\s/.test(trimmed);
     const content = (failed ? trimmed.slice(1) : trimmed).trim();
 
-    const parts = content.split(/\s{2,}/);
-    if (parts.length < 4) continue;
-
-    const [name, load, active, rest] = parts;
-    const restWords = (rest ?? "").trim().split(/\s+/);
-    const sub         = restWords[0] ?? "";
-    const description = restWords.slice(1).join(" ").trim();
+    const m = content.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/);
+    if (!m) continue;
 
     units.push({
-      name:        name?.trim() ?? "",
-      load:        load?.trim() ?? "",
-      active:      active?.trim() ?? "",
-      sub:         sub?.trim() ?? "",
-      description,
+      name:        m[1]!,
+      load:        m[2]!,
+      active:      m[3]!,
+      sub:         m[4]!,
+      description: (m[5] ?? "").trim(),
       failed:      failed || undefined,
     });
   }
