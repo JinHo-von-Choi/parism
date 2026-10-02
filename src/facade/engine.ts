@@ -170,10 +170,17 @@ export class ParismEngine {
       ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
       : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
 
-    // parse failure 정규화: parser_exception은 failure로 승격, parser_not_found는 ok=true인 정보성 실패
+    /**
+     * parse failure 정규화: 파싱 오류는 failure로 승격, parser_not_found는 ok=true인 정보성 실패.
+     * 실행이 실패했거나(종료 코드, 시간 초과, 스폰 실패) stdout 없이 stderr만 있으면 파싱 오류는 stdout.parse_error에만 남기고
+     * failure는 실행 결과의 것을 유지한다. 원인은 실행 쪽에 있고 그 메시지가 stderr에 있기 때문이다.
+     */
+    const stderrOnly = envelope.stdout.raw.trim() === "" && envelope.stderr.raw.trim() !== "";
     let parseFailure = envelope.failure;
     if (parseError) {
-      parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message, ...(parseError.hint && { hint: parseError.hint }) };
+      if (envelope.failure === undefined && !stderrOnly) {
+        parseFailure = { kind: "parse", reason: parseError.reason, message: parseError.message, ...(parseError.hint && { hint: parseError.hint }) };
+      }
     } else if (parsed === null && envelope.ok) {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };

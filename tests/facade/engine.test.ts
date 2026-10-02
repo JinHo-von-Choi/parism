@@ -74,6 +74,15 @@ describe("ParismEngine.run()", () => {
     expect(retry.stdout.parsed).not.toBeNull();
   });
 
+  it.skipIf(process.platform === "win32")("없는 사용자의 id 실행은 실행 실패와 stderr 메시지를 유지한다", async () => {
+    const result = await engine.run("id", { args: ["parism-no-such-user"] });
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatchObject({ kind: "exec", reason: "non_zero_exit" });
+    expect(result.failure?.message).toContain(result.stderr.raw.trim());
+    expect(result.stderr.raw).toContain("parism-no-such-user");
+  });
+
   it("파서 미등록 명령은 ok=true이고 failure.reason=parser_not_found를 반환한다", async () => {
     const result = await engine.run("echo", { args: ["plain text"] });
 
