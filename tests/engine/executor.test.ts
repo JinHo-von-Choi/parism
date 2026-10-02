@@ -96,3 +96,47 @@ describe("출력 상한", () => {
     expect(truncateUtf8Lines("abc", 0)).toEqual({ text: "abc", truncated: false });
   });
 });
+
+describe("타임아웃 시 프로세스 그룹 종료", () => {
+  /** pid가 살아 있는지 확인한다. 신호 0은 존재 여부만 검사한다. */
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  }
+
+  it.skipIf(process.platform === "win32")("자식이 띄운 손자 프로세스도 타임아웃 뒤 남지 않는다", async () => {
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      "process.stdout.write(String(g.pid) + '\\n');",
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const r   = await execute(process.execPath, ["-e", script], process.cwd(), [], 1500, 0, false);
+    const pid = Number(r.stdout.raw.trim());
+    try {
+      expect(r.failure?.reason).toBe("timeout");
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
+      const deadline = Date.now() + 3000;
+      while (alive(pid) && Date.now() < deadline) await new Promise(res => setTimeout(res, 50));
+      expect(alive(pid)).toBe(false);
+    } finally {
+      if (pid > 0 && alive(pid)) process.kill(pid, "SIGKILL");
+    }
+  }, 15000);
+
+  it("timeoutMs가 0이면 시간 제한 없이 끝까지 실행한다", async () => {
+    const r = await execute(process.execPath, ["-e", "setTimeout(() => process.stdout.write('done'), 100)"], process.cwd(), [], 0, 0, false);
+    expect(r.ok).toBe(true);
+    expect(r.stdout.raw).toBe("done");
+  });
+
+  it("종료 코드가 0이 아니면 그 코드를 돌려준다", async () => {
+    const r = await execute(process.execPath, ["-e", "process.exit(3)"], process.cwd(), [], 5000, 0, false);
+    expect(r.exitCode).toBe(3);
+    expect(r.failure?.reason).toBe("non_zero_exit");
+  });
+});

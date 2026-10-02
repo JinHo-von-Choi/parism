@@ -22,6 +22,8 @@ export interface PrismGuardConfig {
   max_output_bytes:         number;   // stdout 최대 크기(bytes). 0=무제한
   max_items:                number;   // 리스트 파서 최대 항목 수. 0=무제한
   default_page_size:        number;   // run_paged 기본 줄 수, 0=비활성
+  max_page_size:            number;   // run_paged page_size 상한(줄 수). 넘는 요청은 이 값으로 줄인다
+  max_concurrency:          number;   // 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다
   block_patterns:           string[];
   command_arg_restrictions: Record<string, CommandArgRestriction>;
   command_policies?:        Record<string, CommandPolicy>;
@@ -88,6 +90,8 @@ export const DEFAULT_CONFIG: PrismConfig = {
     max_output_bytes:  102400,   // 100 KB
     max_items:         500,
     default_page_size: 100,
+    max_page_size:     1000,
+    max_concurrency:   4,
     block_patterns: [";", "$(", "`", "&&", "||", ">", ">>", "<", "|"],
     command_arg_restrictions: {
       node: { blocked_flags: ["-e", "--eval", "-r", "--require", "-p", "--print", "--input-type"] },

@@ -13,6 +13,9 @@ import type { PrismConfig } from "./loader.js";
 /** 수치 상한: 유한한 0 이상 정수 */
 export const LIMIT_SCHEMA = z.number().int().nonnegative();
 
+/** 0을 무제한으로 쓰지 않는 상한: 1 이상 정수 */
+const POSITIVE_LIMIT_SCHEMA = z.number().int().positive();
+
 const STRING_LIST    = z.array(z.string());
 const FLAG_KIND      = z.enum(["bool", "value", "path", "attached", "count"]);
 const SUB_POSITIONAL = z.enum(["path", "any", "none"]);
@@ -54,6 +57,8 @@ const GUARD_FIELDS: Record<string, FieldSpec> = {
   max_output_bytes:         LIMIT_SCHEMA,
   max_items:                LIMIT_SCHEMA,
   default_page_size:        LIMIT_SCHEMA,
+  max_page_size:            POSITIVE_LIMIT_SCHEMA,
+  max_concurrency:          POSITIVE_LIMIT_SCHEMA,
   block_patterns:           STRING_LIST,
   command_arg_restrictions: { entries: ARG_RESTRICTION_SCHEMA },
   command_policies:         { entries: COMMAND_POLICY_SCHEMA },

@@ -14,11 +14,12 @@ import { createRegistry }                                                       
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
 import type { OutputFormat }                                                        from "../parsers/registry.js";
 import type { ResponseEnvelope }                                                    from "../types/envelope.js";
-import { execute }                                                                  from "../engine/executor.js";
+import { execute, truncateUtf8Lines }                                               from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
 import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
 import { PageCache }                                                                from "../engine/page-cache.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
+import { Semaphore }                                                                from "../engine/semaphore.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
 import { tryParseNativeJson }                                                       from "../parsers/json-passthrough.js";
@@ -78,13 +79,23 @@ const PAGE_CACHE_TTL_MS      = 30_000;
 const PAGE_CACHE_MAX_ENTRIES = 16;
 const PAGE_CACHE_MAX_BYTES   = 32 * 1024 * 1024;
 
+/** 설정에 동시 실행 상한이 없을 때(이전 형식의 설정 객체) 쓰는 값 */
+const DEFAULT_MAX_CONCURRENCY = 4;
+
+/** 설정에 page_size 상한이 없을 때(이전 형식의 설정 객체) 쓰는 값 */
+const DEFAULT_MAX_PAGE_SIZE = 1000;
+
 export class ParismEngine {
   private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
+  /** 자식 프로세스 동시 실행 상한. 넘는 요청은 자리가 날 때까지 대기한다. */
+  private readonly execSlots: Semaphore;
 
   constructor(
     private readonly config:   PrismConfig,
     private readonly registry: ParserRegistry,
-  ) {}
+  ) {
+    this.execSlots = new Semaphore(config.guard.max_concurrency ?? DEFAULT_MAX_CONCURRENCY);
+  }
 
   /**
    * Guard 검사 → 실행 → JSON 파싱 파이프라인.
@@ -110,13 +121,13 @@ export class ParismEngine {
     timer?.markEnd("guard");
 
     timer?.markStart("exec");
-    const executed = await execute(
+    const executed = await this.execSlots.run(() => execute(
       cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
       this.config.guard.secrets?.env_patterns ?? [],
       this.config.guard.timeout_ms,
       this.config.guard.max_output_bytes,
       includeDiff,
-    );
+    ));
     const envelope = { ...executed, args };
     timer?.markEnd("exec");
     timer?.setRawBytes(Buffer.byteLength(envelope.stdout.raw, "utf8"));
@@ -249,7 +260,9 @@ export class ParismEngine {
     const cwd         = opts?.cwd         ?? process.cwd();
     const includeDiff = opts?.includeDiff ?? false;
     const page        = opts?.page        ?? 0;
-    const pageSize    = opts?.page_size   ?? this.config.guard.default_page_size;
+    const requested   = opts?.page_size   ?? this.config.guard.default_page_size;
+    const maxPageSize = this.config.guard.max_page_size ?? DEFAULT_MAX_PAGE_SIZE;
+    const pageSize    = Math.min(requested, maxPageSize);
 
     try {
       checkGuard(cmd, args, cwd, this.config);
@@ -260,9 +273,10 @@ export class ParismEngine {
       throw err;
     }
 
-    // 전체 stdout이 필요하므로 max_output_bytes 비활성 (0).
-    // 단, 실질 상한은 execute()가 위임하는 child_process execFile의 maxBuffer(10MB, executor.ts)가 결정한다.
-    // 0은 "이 계층에서 별도 상한을 두지 않는다"는 의미일 뿐 무제한을 보장하지 않는다.
+    /**
+     * 페이지를 나누려면 전체 stdout이 필요하므로 실행 단계에서는 max_output_bytes를 적용하지 않는다(0).
+     * 실행 단계의 상한은 실행기의 버퍼 상한(10MB, executor.ts)이고, max_output_bytes는 잘라낸 페이지에 적용한다.
+     */
     const cacheKey = JSON.stringify([cmd, args, resolveRealCwd(cwd), includeDiff]);
     const cached   = page > 0 ? this.pageCache.get(cacheKey) : undefined;
     let envelope: ResponseEnvelope;
@@ -271,24 +285,30 @@ export class ParismEngine {
       envelope  = cached.envelope;
       cacheInfo = { hit: true, age_ms: Date.now() - cached.createdAt };
     } else {
-      const executed = await execute(
+      const executed = await this.execSlots.run(() => execute(
         cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
         this.config.guard.secrets?.env_patterns ?? [],
         this.config.guard.timeout_ms,
         0,
         includeDiff,
-      );
+      ));
       envelope  = { ...executed, args };
       if (envelope.ok) this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
       cacheInfo = { hit: false, age_ms: 0 };
     }
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
     page_info.cache              = cacheInfo;
-    const pagedRaw               = lines.join("\n") + (lines.length > 0 ? "\n" : "");
+    if (pageSize < requested) page_info.requested_page_size = requested;
+    const maxBytes               = this.config.guard.max_output_bytes;
+    const pagedOut               = truncateUtf8Lines(lines.join("\n") + (lines.length > 0 ? "\n" : ""), maxBytes);
+    const pagedErr               = truncateUtf8Lines(envelope.stderr.raw, maxBytes);
+    const truncated              = envelope.truncated || pagedOut.truncated || pagedErr.truncated ? true : undefined;
     let   enriched               = {
       ...envelope,
-      stdout:    { raw: pagedRaw, parsed: null as null },
+      stdout:    { raw: pagedOut.text, parsed: null as null },
+      stderr:    { ...envelope.stderr, raw: pagedErr.text },
       page_info,
+      ...(truncated && { truncated }),
     };
 
     if (this.config.guard.secrets?.output_redaction_enabled === true) {

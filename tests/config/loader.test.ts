@@ -755,3 +755,31 @@ describe("설정 값 검증", () => {
     expect(result.guard.timeout_ms).toBe(3000);
   });
 });
+
+describe("실행 자원 설정", () => {
+  it("max_page_size와 max_concurrency 기본값은 1000과 4다", () => {
+    expect(DEFAULT_CONFIG.guard.max_page_size).toBe(1000);
+    expect(DEFAULT_CONFIG.guard.max_concurrency).toBe(4);
+  });
+
+  it("전역 설정의 max_concurrency와 max_page_size를 반영한다", async () => {
+    const globalPath = tmpConfig({ guard: { max_concurrency: 2, max_page_size: 50 } });
+    const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+    expect(cfg.guard.max_concurrency).toBe(2);
+    expect(cfg.guard.max_page_size).toBe(50);
+  });
+
+  it("1 이상 정수가 아닌 max_concurrency와 max_page_size는 경고 후 무시한다", async () => {
+    for (const bad of [0, -1, 1.5, "4", null]) {
+      const globalPath = tmpConfig({ guard: { max_concurrency: bad, max_page_size: bad } });
+      const spy        = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+      const warnings   = spy.mock.calls.map(c => String(c[0]));
+      spy.mockRestore();
+      expect(cfg.guard.max_concurrency).toBe(4);
+      expect(cfg.guard.max_page_size).toBe(1000);
+      expect(warnings.filter(w => w.includes("guard.max_concurrency"))).toHaveLength(1);
+      expect(warnings.filter(w => w.includes("guard.max_page_size"))).toHaveLength(1);
+    }
+  });
+});
