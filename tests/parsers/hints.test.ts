@@ -32,7 +32,7 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["free", ["-h"], ["-b"], "               total        used        free      shared  buff/cache   available\nMem:      1024 512 512 0 0 512\n"],
   ["uname", ["-r"], ["-a"], "Linux host 6.8.0-1-generic #1 SMP x86_64 x86_64 x86_64 GNU/Linux\n"],
   ["id", ["-un"], [], "uid=1000(u) gid=1000(u) groups=1000(u)\n"],
-  ["journalctl", ["-n", "5"], ["-n", "5", "-o", "short-iso"], "2026-10-03T06:00:00+0900 host cron[12]: started\n"],
+  ["journalctl", ["-o", "json", "-n", "5"], ["-n", "5", "-o", "short-iso"], "2026-10-03T06:00:00+0900 host cron[12]: started\n"],
   ["git", ["status", "-s"], ["status"], "On branch main\nChanges not staged for commit:\n\tmodified:   a.txt\n"],
   ["git", ["--no-pager", "status", "--porcelain"], ["--no-pager", "status"], "On branch main\nnothing to commit, working tree clean\n"],
   ["git", ["log", "--oneline", "--graph"], ["log", "--format=%h %s"], "abc1234 first\n"],

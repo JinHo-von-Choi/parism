@@ -33,6 +33,9 @@ const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "
 /** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
 
+/** journalctl 출력 형식 가운데 한 줄에 시각, 호스트, 유닛, 메시지가 있는 short 계열 */
+const JOURNAL_FORMATS = /^(short|short-precise|short-iso|short-iso-precise|short-full|short-unix|short-monotonic|with-unit)$/;
+
 /** 명령별 내장 계약 */
 export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   ls: {
@@ -175,11 +178,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   journalctl: {
     acceptedFlags: {
-      ...bools("--no-pager", "-b", "--boot", "-k", "--dmesg", "-r", "--reverse", "-q", "--quiet", "--user"),
+      ...bools("--no-pager", "--no-hostname", "-b", "--boot", "-k", "--dmesg", "-r", "--reverse", "-q", "--quiet", "--user"),
       ...values("-o", "--output", "-u", "--unit", "-n", "--lines", "--since", "--until", "-p", "--priority", "-g", "--grep"),
     },
-    acceptedValues:      { "-o": /^short-iso(-precise)?$/, "--output": /^short-iso(-precise)?$/ },
-    requiredFlags:       ["-o", "--output"],
+    acceptedValues:      { "-o": JOURNAL_FORMATS, "--output": JOURNAL_FORMATS },
     acceptedPositionals: { max: 0 },
     hint:                journalctlHint,
     noise: /^-- No entries --$/, rowsKey: "entries", rowFields: ["timestamp", "hostname", "unit", "pid", "message"],
@@ -275,19 +277,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
 };
 
-/** systemctl 상태 필터 가운데 not-found 유닛을 포함하지 않는 값 */
-const SYSTEMCTL_SAFE_STATE = /^(running|active|failed|exited)(,(running|active|failed|exited))*$/;
-
-/**
- * systemctl list-units. --all과 그 밖의 상태 필터는 not-found 유닛에도 표시 기호를 붙여 failed로 오인되므로
- * 표시 기호를 없애는 --plain과 함께일 때만 받는다.
- */
+/** systemctl list-units. 행 앞 기호는 실패 판정에 쓰지 않으므로 --all과 상태 필터도 받는다. */
 function systemctlListUnits(): ParserContract {
   return {
-    acceptedFlags: { ...bools("--failed", "--plain", "--no-pager", "-l", "--full", "--user", "--all", "-a"), ...values("--type", "-t", "--state") },
-    supports:      args => args.includes("--plain") || !args.some((a, i) => a === "--all" || a === "-a"
-      || (a.startsWith("--state=") && !SYSTEMCTL_SAFE_STATE.test(a.slice(8)))
-      || (a === "--state" && !SYSTEMCTL_SAFE_STATE.test(args[i + 1] ?? ""))),
+    acceptedFlags: { ...bools("--failed", "--plain", "--no-pager", "--no-legend", "-l", "--full", "--user", "--all", "-a"), ...values("--type", "-t", "--state") },
   };
 }
 

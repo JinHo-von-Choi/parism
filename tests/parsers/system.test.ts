@@ -214,6 +214,40 @@ describe("parseSystemctl()", () => {
   });
 });
 
+describe("parseSystemctl() 실패 판정", () => {
+  type Units = { units: Array<{ name: string; load: string; active: string; failed?: boolean; description: string }> };
+
+  it("not-found 유닛의 기호는 실패 표시가 아니다", () => {
+    const raw = [
+      "  UNIT             LOAD      ACTIVE   SUB    DESCRIPTION",
+      "* boot.automount   not-found inactive dead   boot.automount",
+      "  cron.service     loaded    active   running Regular background program",
+      "● bad.service      loaded    failed   failed  Broken",
+    ].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--all"], raw) as Units).units;
+    expect(units.map(u => u.failed)).toEqual([undefined, undefined, true]);
+    expect(units[0]).toMatchObject({ name: "boot.automount", load: "not-found", description: "boot.automount" });
+  });
+
+  it("--plain 출력(기호 없음)도 ACTIVE 열로 실패를 판정한다", () => {
+    const raw = ["UNIT LOAD ACTIVE SUB DESCRIPTION", "bad.service loaded failed failed Broken", "ok.service loaded active running Fine"].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--plain"], raw) as Units).units;
+    expect(units.map(u => u.failed)).toEqual([true, undefined]);
+  });
+
+  it("--no-legend 출력은 머리 줄 없이 모든 줄을 행으로 읽는다", () => {
+    const raw = ["home-nirna.automount loaded active running home-nirna.automount", "  dev-sda1.device loaded active plugged LOGICAL_VOLUME 1"].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--no-legend"], raw) as Units).units;
+    expect(units).toHaveLength(2);
+    expect(units[1]).toMatchObject({ name: "dev-sda1.device", description: "LOGICAL_VOLUME 1" });
+  });
+
+  it("범례 앞의 빈 줄에서 행 읽기를 멈춘다", () => {
+    const raw = ["UNIT LOAD ACTIVE SUB DESCRIPTION", "a.service loaded active running A", "", "Legend: LOAD -> x", "1 loaded units listed."].join("\n");
+    expect((parseSystemctl("systemctl", [], raw) as Units).units).toHaveLength(1);
+  });
+});
+
 describe("parseJournalctl()", () => {
   const raw = [
     "2026-03-07T21:18:08+09:00 nerdvana node[2032810]: [12:18:08.468] WARN: Redis client connection closed",
@@ -233,6 +267,37 @@ describe("parseJournalctl()", () => {
     expect(result.entries[0].unit).toBe("node");
     expect(result.entries[0].pid).toBe(2032810);
     expect(result.entries[0].message).toContain("WARN");
+  });
+
+  type Entries = { entries: Array<{ timestamp: string; hostname: string; unit: string; pid?: number; message: string }> };
+
+  it("--no-hostname 출력은 호스트를 비우고 유닛을 첫 낱말로 읽는다", () => {
+    const line = "2026-10-03T06:52:05+09:00 java[1009611]:         at org.x.Y.doFilter(Y.java:107)";
+    const r = parseJournalctl("journalctl", ["-o", "short-iso", "--no-hostname"], line) as Entries;
+    expect(r.entries[0]).toMatchObject({ timestamp: "2026-10-03T06:52:05+09:00", hostname: "", unit: "java", pid: 1009611 });
+  });
+
+  it("기본 short 형식의 시각 세 낱말을 timestamp로 읽는다", () => {
+    const r = parseJournalctl("journalctl", ["-n", "2"], "Oct 03 06:50:01 nerdvana CRON[3572000]: (nirna) CMD (run)\nOct  3 06:50:02 nerdvana kernel: eth0 up") as Entries;
+    expect(r.entries[0]).toMatchObject({ timestamp: "Oct 03 06:50:01", hostname: "nerdvana", unit: "CRON", pid: 3572000, message: "(nirna) CMD (run)" });
+    expect(r.entries[1]).toMatchObject({ timestamp: "Oct  3 06:50:02", unit: "kernel", message: "eth0 up" });
+    expect(r.entries[1]!.pid).toBeUndefined();
+  });
+
+  it("-o 값에 따라 시각의 모양을 정한다", () => {
+    const full = parseJournalctl("journalctl", ["-o", "short-full"], "Sat 2026-10-03 06:52:05 KST nerdvana app.service[7]: hi") as Entries;
+    expect(full.entries[0]).toMatchObject({ timestamp: "Sat 2026-10-03 06:52:05 KST", hostname: "nerdvana", unit: "app.service", pid: 7 });
+    const unix = parseJournalctl("journalctl", ["-o", "short-unix"], "1790977925.086882 nerdvana app[7]: hi") as Entries;
+    expect(unix.entries[0]!.timestamp).toBe("1790977925.086882");
+    const mono = parseJournalctl("journalctl", ["-o", "short-monotonic"], "[ 1234.567890] nerdvana app[7]: hi") as Entries;
+    expect(mono.entries[0]).toMatchObject({ timestamp: "[ 1234.567890]", unit: "app" });
+  });
+
+  it("시각으로 시작하지 않는 줄은 직전 항목의 message에 이어 붙인다", () => {
+    const raw = "Oct 03 06:50:01 h app[1]: first\nsecond line\nOct 03 06:50:02 h app[1]: next";
+    const r = parseJournalctl("journalctl", [], raw) as Entries;
+    expect(r.entries).toHaveLength(2);
+    expect(r.entries[0]!.message).toBe("first\nsecond line");
   });
 
   it("ISO 타임스탬프 없으면 { lines } 폴백", () => {
