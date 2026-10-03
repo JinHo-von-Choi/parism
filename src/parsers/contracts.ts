@@ -211,7 +211,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       "list-units": systemctlListUnits(),
       "":           systemctlListUnits(),
     },
-    noise: /^\s*UNIT\s+LOAD\s|^Legend:|^\s*(LOAD|ACTIVE|SUB)\s+(=|->)|loaded units listed|^To show all/,
+    noise: /^\s*UNIT\s+LOAD\s|^Legend:|^\s*(LOAD|ACTIVE|SUB|JOB)\s+(=|->|\u2192)|loaded units listed|^To show all/,
     rowsKey: "units", rowFields: SYSTEMCTL_ROWS,
   },
   journalctl: {

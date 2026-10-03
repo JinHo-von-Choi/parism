@@ -8,6 +8,7 @@ import { parseJournalctl } from "../../src/parsers/system/journalctl.js";
 import { parseApt }         from "../../src/parsers/system/apt.js";
 import { parseBrew }       from "../../src/parsers/system/brew.js";
 import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
+import { checkInvariants }      from "../../src/parsers/invariants.js";
 
 describe("free 단위 처리 범위", () => {
   it("테라 이상 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
@@ -209,6 +210,30 @@ describe("parseSystemctl()", () => {
     expect(result.units[0].sub).toBe("running");
     expect(result.units[0].description).toBe("Accounts Service");
     expect(result.units[2].failed).toBe(true);
+  });
+
+  it("대기 작업이 있을 때 붙는 JOB 범례 줄과 UTF-8 화살표 범례는 불변식 검사에서 행으로 세지 않는다", () => {
+    const registry = createRegistry();
+    const args     = ["--no-pager", "list-units"];
+    const arrows   = ["->", "→"];
+    for (const arrow of arrows) {
+      const raw = [
+        "  UNIT             LOAD   ACTIVE   SUB     JOB   DESCRIPTION",
+        "  cron.service     loaded active   running       Regular background program",
+        "  apt-daily.timer  loaded inactive dead    start Daily apt download activities",
+        "",
+        `LOAD   ${arrow} Reflects whether the unit definition was properly loaded.`,
+        `ACTIVE ${arrow} The high-level unit activation state.`,
+        `SUB    ${arrow} The low-level unit activation state.`,
+        "JOB    = Pending job for the unit.",
+        "",
+        "2 loaded units listed. Pass --all to see loaded but inactive units, too.",
+        "To show all installed unit files use 'systemctl list-unit-files'.",
+      ].join("\n");
+      const result = registry.parse("systemctl", args, raw, { maxItems: 0, format: "json" });
+      expect(result.parse_error).toBeUndefined();
+      expect(checkInvariants(result.parsed, raw, registry.contractFor("systemctl", args))).toEqual([]);
+    }
   });
 
   it("JOB 열이 있으면 job과 description을 열 위치로 분리한다", () => {
