@@ -157,6 +157,11 @@ export function gitLogHint(rest: string[]): HintDraft | null {
   const drop    = { ...table("bool", "--oneline", "--graph"), ...table("attached", "--format", "--pretty", "--decorate", "--color") };
   const known   = table("value", "-n", "--max-count", "--since", "--until", "--author");
   const oneline = hasFlag(rest, "--oneline") || rest.some(a => /^--(format|pretty)=oneline$/.test(a));
+  const deco    = rest.filter(a => a === "--decorate" || a.startsWith("--decorate=") || a === "--no-decorate").pop();
+  if (oneline && deco !== undefined && deco !== "--no-decorate") {
+    const args = dropFlags(rest, { ...table("bool", "--graph", "--no-decorate"), ...table("attached", "--decorate", "--color") }, known);
+    return { args: [...args, "--decorate=full"], reason: "git log --oneline with full ref names (--decorate=full) is parsed; short ref names cannot be told apart from a parenthesized subject" };
+  }
   return oneline
     ? { args: [...dropFlags(rest, drop, known), GIT_LOG_SUBJECT], reason: "git log with the fixed format '%h %s' (hash and subject) is parsed" }
     : { args: [...dropFlags(rest, drop, known), GIT_LOG_AUTHORED], reason: "git log with hash, author, ISO author date and subject separated by tabs is parsed" };

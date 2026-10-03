@@ -276,11 +276,45 @@ describe("parseGitLog() 작성자와 날짜", () => {
 });
 
 describe("parseGitLog() 참조", () => {
-  it("--decorate 꼬리표를 refs로 가르고 message는 제목만 둔다", () => {
-    const raw = ["3166aa7 (HEAD -> main, tag: v1.0) third: colon subject (with parens)", "fd44bc8 add later file"].join("\n");
-    const r = parseGitLog("git", ["log", "--oneline", "--decorate"], raw);
-    expect(r.commits[0]).toEqual({ hash: "3166aa7", message: "third: colon subject (with parens)", refs: ["HEAD -> main", "tag: v1.0"] });
+  it("--decorate=full 꼬리표를 refs로 가르고 message는 제목만 둔다", () => {
+    const raw = ["3166aa7 (HEAD -> refs/heads/main, tag: refs/tags/v1.0) third: colon subject (with parens)", "fd44bc8 add later file"].join("\n");
+    const r = parseGitLog("git", ["log", "--oneline", "--decorate=full"], raw);
+    expect(r.commits[0]).toEqual({ hash: "3166aa7", message: "third: colon subject (with parens)", refs: ["HEAD -> refs/heads/main", "tag: refs/tags/v1.0"] });
     expect(r.commits[1]).toEqual({ hash: "fd44bc8", message: "add later file" });
+  });
+
+  it("--decorate=full에서 꼬리표 없는 커밋의 괄호 제목은 제목으로 둔다", () => {
+    const raw = [
+      "7434367 (HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, refs/heads/gone-branch) fourth",
+      "3a7ab88 (tag: refs/tags/v0.1, refs/heads/feature) plain third",
+      "603547c (docs, fix) second",
+      "a36b3b5 (wip) first",
+    ].join("\n") + "\n";
+    const r = parseGitLog("git", ["log", "--oneline", "--decorate=full"], raw);
+    expect(r.commits[0]!.refs).toEqual(["HEAD -> refs/heads/main", "refs/remotes/origin/main", "refs/remotes/origin/HEAD", "refs/heads/gone-branch"]);
+    expect(r.commits[1]).toEqual({ hash: "3a7ab88", message: "plain third", refs: ["tag: refs/tags/v0.1", "refs/heads/feature"] });
+    expect(r.commits[2]).toEqual({ hash: "603547c", message: "(docs, fix) second" });
+    expect(r.commits[3]).toEqual({ hash: "a36b3b5", message: "(wip) first" });
+  });
+
+  it("detached HEAD 꼬리표(HEAD)와 꼬리표 뒤의 괄호 제목을 가른다", () => {
+    const r = parseGitLog("git", ["log", "--oneline", "--decorate=full"], "a36b3b5 (HEAD, refs/heads/side) (wip) first\n");
+    expect(r.commits[0]).toEqual({ hash: "a36b3b5", message: "(wip) first", refs: ["HEAD", "refs/heads/side"] });
+  });
+
+  it("마지막 --no-decorate가 꼬리표 해석을 끈다", () => {
+    const r = parseGitLog("git", ["log", "--oneline", "--decorate=full", "--no-decorate"], "a36b3b5 (refs/heads/x) first\n");
+    expect(r.commits[0]).toEqual({ hash: "a36b3b5", message: "(refs/heads/x) first" });
+  });
+
+  it("짧은 꼬리표(--decorate, --decorate=short)는 브랜치 이름과 괄호 제목을 가를 수 없어 받지 않고 --decorate=full을 안내한다", () => {
+    const reg = createRegistry();
+    for (const d of ["--decorate", "--decorate=short"]) {
+      const r = reg.parse("git", ["log", "--oneline", d], "a36b3b5 (wip) first\n");
+      expect(r.parse_error?.reason).toBe("unsupported_format");
+      expect(r.parse_error?.hint?.args).toEqual(["log", "--oneline", "--decorate=full"]);
+    }
+    expect(reg.parse("git", ["log", "--oneline", "--decorate=full"], "a36b3b5 (wip) first\n").parse_error).toBeUndefined();
   });
 
   it("--decorate가 없으면 괄호로 시작하는 제목을 건드리지 않는다", () => {

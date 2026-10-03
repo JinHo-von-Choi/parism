@@ -148,7 +148,7 @@ describe("내장 파서 허용 형식", () => {
     ["journalctl", ["-o", "short-iso", "-n", "20"]], ["apt", ["list", "--installed"]], ["apt", ["list"]], ["apt", ["list", "-a", "bash"]], ["apt", ["search", "--names-only", "x"]], ["apt", ["search", "x"]], ["npm", ["ls"]], ["npm", ["ls", "--depth=0"]], ["npm", ["ls", "--all"]], ["npm", ["ls", "--depth=2", "--omit=dev"]], ["npm", ["ls", "zod"]],
     ["docker", ["ps", "-a"]], ["docker", ["stats", "--no-stream"]], ["docker", ["stats", "--no-stream", "--no-trunc"]], ["gh", ["pr", "list", "--json", "number,title"]], ["kubectl", ["get", "pods", "-o", "wide"]], ["helm", ["list"]], ["cargo", ["tree", "--offline", "--prefix", "none"]], ["cargo", ["tree", "-p", "dep-a", "--depth", "1"]],
     ["git", ["status"]], ["git", ["--no-pager", "log", "--oneline", "-5"]], ["git", ["log", "--format=%h %s"]], ["git", ["branch", "-vv"]],
-    ["git", ["diff", "--cached"]], ["git", ["status", "--ignored"]], ["git", ["log", "--oneline", "--decorate"]], ["git", ["branch", "-av"]],
+    ["git", ["diff", "--cached"]], ["git", ["status", "--ignored"]], ["git", ["log", "--oneline", "--decorate=full"]], ["git", ["branch", "-av"]],
     ["git", ["diff", "--diff-filter=A"]], ["git", ["diff", "-M"]], ["head", ["-n", "5", "f"]], ["cat", ["-A", "f"]],
   ])("%s %j 는 허용한다", (cmd, args) => {
     expect(unsupported(cmd, args)).toBe(false);
@@ -172,6 +172,7 @@ describe("내장 파서 허용 형식", () => {
     ["gh", ["issue", "list"]], ["kubectl", ["get", "pods", "-o", "json"]], ["kubectl", ["get", "pods", "-A"]], ["cargo", ["--version"]], ["cargo", ["tree", "--prefix", "depth"]],
     ["git", ["status", "-s"]], ["git", ["log"]],
     ["git", ["log", "--oneline", "--graph"]], ["git", ["branch"]], ["git", ["diff", "--stat"]], ["git", ["show"]],
+    ["git", ["log", "--oneline", "--decorate"]], ["git", ["log", "--oneline", "--decorate=short"]],
   ])("%s %j 는 unsupported_format", (cmd, args) => {
     expect(unsupported(cmd, args)).toBe(true);
   });

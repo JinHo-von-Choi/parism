@@ -146,8 +146,8 @@ describe("인자와 출력 모양에 따른 불변식", () => {
     return checkInvariants(parsed, raw, reg.contractFor(cmd, args)).map(v => `${v.rule}: ${v.message}`);
   };
 
-  it("git log --decorate의 refs", () => {
-    expect(violations("git", ["log", "--oneline", "--decorate"], "abc1234 (HEAD -> main, tag: v1.0) first\ndef5678 second\n")).toEqual([]);
+  it("git log --decorate=full의 refs", () => {
+    expect(violations("git", ["log", "--oneline", "--decorate=full"], "abc1234 (HEAD -> refs/heads/main, tag: refs/tags/v1.0) first\ndef5678 second\n")).toEqual([]);
   });
 
   it("git branch의 detached, points_to, worktree", () => {

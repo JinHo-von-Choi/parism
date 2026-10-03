@@ -300,7 +300,8 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
           ...values("-n", "--max-count", "--since", "--until", "--author"),
           ...flags("attached", "--format", "--pretty", "--decorate"),
         },
-        acceptedValues: { "--format": GIT_LOG_FORMAT, "--pretty": GIT_LOG_PRETTY, "--decorate": /^(short|full|)$/ },
+        /** 짧은 꼬리표(--decorate, =short)의 브랜치 이름은 괄호로 시작하는 제목과 모양이 같아 전체 이름(full)만 받는다. */
+        acceptedValues: { "--format": GIT_LOG_FORMAT, "--pretty": GIT_LOG_PRETTY, "--decorate": /^full$/ },
         requiredFlags:  ["--oneline", "--format", "--pretty"],
         hint:           gitLogHint,
         rowsKey: "commits", rowFields: ["hash", "message", "refs", "author", "date"],
