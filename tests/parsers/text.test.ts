@@ -176,6 +176,33 @@ describe("parseGrep() 문맥 줄과 파일 판정", () => {
   });
 });
 
+describe("parseGrep() 빈 줄 일치", () => {
+  type Rows = { matches: Array<{ file: string; line: number; text: string }> };
+  const run = (args: string[], raw: string): Rows["matches"] => (parseGrep("grep", args, raw) as Rows).matches;
+
+  it("-v로 나온 빈 줄도 일치 줄이다", () => {
+    expect(run(["-v", "x", "f.txt"], "\ny\n")).toEqual([{ file: "", line: 0, text: "" }, { file: "", line: 0, text: "y" }]);
+  });
+
+  it("빈 줄 패턴과 빈 패턴은 빈 줄과 공백만 있는 줄을 그대로 낸다", () => {
+    expect(run(["^$", "f.txt"], "\n\n")).toEqual([{ file: "", line: 0, text: "" }, { file: "", line: 0, text: "" }]);
+    expect(run(["", "f.txt"], "a\n\n   \n\t\n").map(r => r.text)).toEqual(["a", "", "   ", "\t"]);
+  });
+
+  it("-h로 이름을 숨긴 여러 파일의 빈 줄도 남는다", () => {
+    expect(run(["-vh", "x", "a.txt", "b.txt"], "a\n\n\nb\n").map(r => r.text)).toEqual(["a", "", "", "b"]);
+  });
+
+  it("레지스트리 결과와 불변식이 빈 줄 일치를 행으로 센다", () => {
+    const reg = createRegistry();
+    const raw = "\n   \n";
+    const r   = reg.parse("grep", ["-v", "x", "f.txt"], raw);
+    expect(r.parse_error).toBeUndefined();
+    expect((r.parsed as Rows).matches.map(m => m.text)).toEqual(["", "   "]);
+    expect(checkInvariants(r.parsed, raw, reg.contractFor("grep", ["-v", "x", "f.txt"]))).toEqual([]);
+  });
+});
+
 describe("grep 계약 문맥 판정", () => {
   const unsupported = (args: string[]): boolean => createRegistry().parse("grep", args, "").parse_error?.reason === "unsupported_format";
 
@@ -203,6 +230,30 @@ describe("grep 계약 문맥 판정", () => {
     expect(unsupported(["-n", "--directories=other", "x", "f"])).toBe(true);
     expect(unsupported(["-n", "-D", "other", "x", "f"])).toBe(true);
     expect(unsupported(["-n", "-D", "skip", "x", "f"])).toBe(false);
+  });
+
+  it("-r의 이름 열은 -n이나 -b가 있어야 받는다(이름의 콜론과 구분자를 가를 수 없다)", () => {
+    expect(unsupported(["-r", "x", "."])).toBe(true);
+    expect(unsupported(["-rv", "x", "."])).toBe(true);
+    expect(unsupported(["-R", "-o", "x", "src"])).toBe(true);
+    expect(unsupported(["-d", "recurse", "x", "src"])).toBe(true);
+    expect(unsupported(["-rn", "x", "."])).toBe(false);
+    expect(unsupported(["-rb", "x", "."])).toBe(false);
+    expect(unsupported(["-rh", "x", "."])).toBe(false);
+    expect(unsupported(["-rl", "x", "."])).toBe(false);
+    expect(unsupported(["-rc", "x", "."])).toBe(false);
+    expect(unsupported(["x", "a.txt", "b.txt"])).toBe(false);
+  });
+
+  it("-r 안내는 -n을 더하고 다시 파싱하면 이름을 가른다", () => {
+    const reg  = createRegistry();
+    const hint = reg.parse("grep", ["-r", "colon", "."], "").parse_error?.hint;
+    expect(hint?.args).toEqual(["-n", "-r", "colon", "."]);
+    const again = reg.parse("grep", hint!.args, "./odd:name.txt:1:colon\n./a.txt:4:root:x:0:0\n");
+    expect((again.parsed as { matches: unknown[] }).matches).toEqual([
+      { file: "./odd:name.txt", line: 1, text: "colon" },
+      { file: "./a.txt", line: 4, text: "root:x:0:0" },
+    ]);
   });
 
   it("문맥 옵션 안내는 -n을 더한다", () => {

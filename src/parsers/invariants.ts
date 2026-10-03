@@ -20,7 +20,7 @@ export interface InvariantViolation {
 }
 
 /** 불변식 판정에 쓰는 계약 필드 */
-export type OutputContract = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords">;
+export type OutputContract = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords" | "blankRecords">;
 
 /** 출력에서 온 값이 아닌 메타 키. 빈 결과 판정에서 제외한다. */
 const META_KEYS = new Set(["raw", "resource", "unit"]);
@@ -50,9 +50,14 @@ function isNumericRecord(value: unknown): boolean {
   return fields.length > 0 && fields.every(([, v]) => typeof v === "number" && Number.isFinite(v));
 }
 
-/** 머리 줄과 noise 패턴을 제외한 비공백 줄. nulRecords면 NUL로 끝나는 레코드를 줄로 본다. */
+/**
+ * 머리 줄과 noise 패턴을 제외한 비공백 줄. nulRecords면 NUL로 끝나는 레코드를 줄로 본다.
+ * blankRecords면 빈 줄도 데이터 줄이며 마지막 종결 문자 뒤의 빈 조각만 뺀다.
+ */
 function dataLines(raw: string, contract: OutputContract | undefined): string[] {
-  const lines = raw.split(contract?.nulRecords ? "\0" : /\r?\n/).filter(l => l.trim()).slice(contract?.headerLines ?? 0);
+  const records = raw.split(contract?.nulRecords ? "\0" : /\r?\n/);
+  if (contract?.blankRecords && records[records.length - 1] === "") records.pop();
+  const lines = (contract?.blankRecords ? records : records.filter(l => l.trim())).slice(contract?.headerLines ?? 0);
   return contract?.noise ? lines.filter(l => !contract.noise!.test(l)) : lines;
 }
 

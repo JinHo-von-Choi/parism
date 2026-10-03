@@ -67,6 +67,8 @@ export interface ParserContract {
   rowFields?:   readonly string[];
   /** 데이터 줄이 줄바꿈 대신 NUL로 끝난다(find -print0). 보통 outputFlags로 켠다. */
   nulRecords?:  boolean;
+  /** 빈 줄과 공백만 있는 줄도 데이터 줄이다(grep -v나 빈 패턴의 일치 줄). 마지막 종결 문자 뒤의 빈 조각만 뺀다. */
+  blankRecords?: boolean;
   /**
    * 출력 모양을 바꾸는 플래그. 키는 플래그 이름이나 "이름=값"이며, 인자에 그 플래그가 있으면
    * 형식 검사가 값의 필드를 유효 계약에 덧씌운다(find -print0의 NUL 구분, wc --total=only의 합계만 있는 출력).
@@ -79,7 +81,7 @@ export interface ParserContract {
 }
 
 /** 계약의 출력 모양 필드 */
-export type OutputShape = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords">;
+export type OutputShape = Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords" | "blankRecords">;
 
 /**
  * Fixture: 파서 검증용 입출력 쌍.

@@ -168,7 +168,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     },
     supports:       supportsGrep,
     hint:           grepHint,
-    noise: /^--$/, rowsKey: "matches", rowFields: ["file", "line", "text", "byte_offset", "context"],
+    noise: /^--$/, blankRecords: true, rowsKey: "matches", rowFields: ["file", "line", "text", "byte_offset", "context"],
     outputFlags: { "-Z": NUL_RECORDS, "--null": NUL_RECORDS },
   },
   wc: {

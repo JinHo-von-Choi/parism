@@ -119,7 +119,32 @@ export function supportsGrep(args: string[]): boolean {
   const plan = analyze(args);
   if (plan.context && (!plan.lineNumbers || plan.onlyMatch || plan.quiet || plan.kind !== "lines")) return false;
   if (plan.nullSep && plan.kind !== "list") return false;
+  if (unnumberedRecursiveNames(plan)) return false;
   return true;
+}
+
+/**
+ * 재귀 검색의 일치 줄에 이름 열이 있는데 번호 열(-n, -b)이 없는지.
+ * 이때 이름과 본문의 경계는 첫 콜론뿐이라 이름에 콜론이 있으면 가를 수 없다. 번호 열이 있으면 "이름:번호:"로 가른다.
+ */
+function unnumberedRecursiveNames(plan: GrepPlan): boolean {
+  return plan.recursive && plan.showName !== false && plan.kind === "lines" && !plan.lineNumbers && !plan.byteOffset;
+}
+
+/** 해석할 수 있는 형식이 되려면 줄 번호(-n)가 더 있어야 하는지(문맥 줄, 번호 없는 재귀 검색의 이름 열) */
+export function grepNeedsLineNumbers(args: string[]): boolean {
+  const plan = analyze(args);
+  return !plan.lineNumbers && (plan.context || unnumberedRecursiveNames(plan));
+}
+
+/**
+ * 출력을 레코드로 나눈다. 빈 줄과 공백만 있는 줄도 일치 줄(grep -v, 빈 패턴)이므로 남기고,
+ * 마지막 종결 문자 뒤의 빈 조각과 문맥 출력의 묶음 구분 줄("--")만 뺀다.
+ */
+function splitRecords(raw: string, plan: GrepPlan): string[] {
+  const records = raw.split(plan.nullSep ? "\0" : "\n");
+  if (records[records.length - 1] === "") records.pop();
+  return plan.context ? records.filter(l => l !== "--") : records;
 }
 
 /** 번호 열(앞 공백이 붙을 수 있다)을 정규식 조각으로 만든다. */
@@ -220,9 +245,8 @@ function operandIsDirectory(operand: string, lines: string[]): boolean {
 export function parseGrep(
   cmd: string, args: string[], raw: string, ctx?: ParseContext,
 ): { matches: GrepMatch[]; _summary?: GrepSummary } {
-  const plan    = analyze(args);
-  const sepChar = plan.nullSep ? "\0" : "\n";
-  const lines   = raw.split(sepChar).filter(l => l.trim() && !(plan.context && l === "--"));
+  const plan  = analyze(args);
+  const lines = splitRecords(raw, plan);
 
   let matches: GrepMatch[];
   if (plan.kind === "list") {

@@ -9,6 +9,7 @@
  */
 
 import type { FlagArity, HintDraft } from "./format.js";
+import { grepNeedsLineNumbers }       from "./text/grep.js";
 
 type FlagTable = Readonly<Record<string, FlagArity>>;
 
@@ -97,10 +98,9 @@ export function grepHint(rest: string[]): HintDraft | null {
   const known = table("value", "-e", "--regexp", "-f", "--file", "-m", "--max-count", "--include", "--exclude", "--exclude-dir",
     "--exclude-from", "--binary-files", "--label", "-d", "--directories", "-D", "--devices", "-A", "-B", "-C",
     "--after-context", "--before-context", "--context");
-  const args    = dropFlags(rest, table("bool", "-Z", "--null"), known);
-  const context = hasFlag(args, "-A", "-B", "-C", "--after-context", "--before-context", "--context") || args.some(a => /^-\d+$/.test(a));
-  if (context && !hasFlag(args, "-n", "--line-number")) args.unshift("-n");
-  return { args, reason: "grep output with line numbers (-n) and without NUL separators is parsed" };
+  const args = dropFlags(rest, table("bool", "-Z", "--null"), known);
+  if (grepNeedsLineNumbers(args)) args.unshift("-n");
+  return { args, reason: "grep output with line numbers (-n) and without NUL separators is parsed; the line number column separates file names that contain ':'" };
 }
 
 /* ---------------- df, free, uname, id ---------------- */
