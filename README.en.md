@@ -418,6 +418,8 @@ Place `prism.config.json` in the project root to control Guard behavior.
 
 `guard.secrets.env_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them. The legacy `env_secret_patterns` key was removed in 2.0.0; if present it is ignored with a warning on stderr.
 
+`parsers.external_isolation` (`"worker"` by default, or `"none"`), `parsers.external_time_limit_ms` (default 500) and `parsers.external_memory_limit_mb` (default 128) control how external parser packs run (see "External Parser Isolation" below). Set them in the global config; an untrusted project config cannot disable isolation or raise the limits.
+
 `guard.profile` defaults to `"readonly"`, which allows read-only subcommands only. `"build"` additionally allows build and test subcommands such as `npm run`, `npm test`, `cargo build`, `terraform plan` and `docker compose ps`. These run project code, so enable it only for repositories you trust. `cargo` query subcommands (`tree`, `metadata`, `search`, `pkgid`) also require the `build` profile, since they can run a rustc wrapper configured by the repository. `node`, `npx` and `yarn` must be added to `allowed_commands` explicitly and work only under the `build` profile; `npx` runs with `--no`, so only locally installed binaries run. Override per-command rules with `guard.command_policies`. A project `prism.config.json` cannot widen the guard; to allow that, set `"trust_project_config": true` in the global `~/.parism/prism.config.json`.
 
 The `prism.config.json` in the repository is an example and is not included in the npm package.
@@ -508,6 +510,18 @@ const pack: ParserPack = {
 
 export default pack;
 ```
+
+### External Parser Isolation
+
+Registered packs run, by default, in one worker thread per pack (`parsers.external_isolation: "worker"`). The server thread never executes the pack module; it receives only the declared contract, and function-valued declarations such as `supports` and `hint` are evaluated in the worker on each call. When a single `parse()` exceeds `external_time_limit_ms` (default 500 ms), the worker exits abnormally, or its heap exceeds `external_memory_limit_mb` (default 128 MB), the call reports `parse_error.reason = "parser_exception"` and the worker is restarted on the next call. The server keeps responding. With `strict_schemas`, the worker validates the result against the pack schema.
+
+- `parse()` must return structured-clone-able data. Values containing functions, Promises or Symbols yield `parser_exception`.
+- `parse()` cannot see server-thread global state. `console` output inside a pack goes to stderr.
+- Each call copies the input and the result: about 0.1 ms extra per call for a 20-line input and about 1.6 ms for 500 lines (`npm run benchmark:external`).
+- To run packs on the server thread as before, set `"parsers": { "external_isolation": "none" }` in the global `~/.parism/prism.config.json`.
+- `parism add` also reads the pack name in a worker. The fixture replay helper (`runFixtureTests`) is an author tool and runs the pack on the calling thread.
+
+Worker isolation is fault isolation, not a security sandbox. A worker has the same permissions as the server process (files, network, child processes, environment variables). Register only packs you wrote or reviewed, and run Parism inside a container or VM when you need third-party packs you do not trust. See [SECURITY.md](SECURITY.md).
 
 Running `parism` without arguments starts the MCP server as before.
 

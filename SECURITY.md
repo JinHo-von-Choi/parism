@@ -110,7 +110,11 @@ allowed_paths 명시: 비워 두면 경로 제한이 없다. 작업 범위가 �
 
 ### 커스텀 파서 격리
 
-`~/.parism/parsers/`에 등록된 외부 ParserPack은 현재 Node.js 프로세스에서 직접 로드된다. `node:vm`은 보안 메커니즘이 아니므로 `vm` 기반 격리는 채택하지 않는다. 격리 방향은 `worker_threads` 또는 `child_process.fork` 기반이며 근거와 대안은 `docs/adr/2026-07-21-external-parser-sandbox.md`에 있다. 신뢰할 수 없는 제3자 파서를 로드할 계획이라면 Parism 자체를 컨테이너 또는 VM 안에서 실행한다.
+`~/.parism/parsers/`에 등록된 외부 ParserPack은 기본적으로 팩마다 하나의 워커 스레드(`node:worker_threads`)에서 읽고 실행한다(`parsers.external_isolation: "worker"`). 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받는다. 호출 한 번의 시간 상한(`parsers.external_time_limit_ms`, 기본 500ms)과 워커 힙 상한(`parsers.external_memory_limit_mb`, 기본 128MB)을 넘기거나 워커가 비정상 종료하면 `parser_exception`으로 보고하고 워커를 다시 띄운다. 신뢰하지 않는 프로젝트 설정은 격리를 끄거나 상한을 올리지 못한다.
+
+이것은 결함 격리(끝나지 않는 실행, 비정상 종료, 메모리 과다)이며 보안 샌드박스가 아니다. 워커는 서버 프로세스와 같은 권한을 가지므로 팩 코드는 파일 시스템, 네트워크, 자식 프로세스, 환경 변수에 그대로 접근할 수 있다. `node:vm`은 보안 메커니즘이 아니므로 채택하지 않았다. 직접 작성했거나 검토한 팩만 등록한다. 신뢰할 수 없는 제3자 파서를 써야 한다면 Parism 전체를 컨테이너 또는 VM 안에서 실행한다. 근거와 대안은 `docs/adr/2026-07-21-external-parser-sandbox.md`에 있다.
+
+팩 작성자 도구인 fixture replay 도우미(`runFixtureTests`)는 팩 객체를 같은 스레드에서 실행한다.
 
 ### 출력 리댁션 (Output Redaction)
 

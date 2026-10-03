@@ -3,34 +3,49 @@
 - **작성자**: 최진호
 - **작성일**: 2026-07-21
 - **수정일**: 2026-10-03
-- **상태**: 제안 (Phase 2 구현 전 선결 조건)
+- **상태**: 채택, 구현 완료 (v2.2.0)
 
 ## 맥락
 
-`~/.parism/parsers/`에 등록된 외부 ParserPack은 `parism add`로 영구 등록된 뒤, MCP 서버 시작 시 현재 Node.js 프로세스 컨텍스트에서 직접 `import`되어 로드된다(`src/cli/auto-loader.ts`). 이 로드 경로는 프로세스 격리, `vm` 기반 컨텍스트 분리, 모듈 접근 제한 중 어느 것도 적용하지 않는다.
+`parism add`로 `~/.parism/parsers/`에 등록한 외부 ParserPack은 MCP 서버와 라이브러리 모드(`createEngine`) 시작 시 `loadExternalParsers`(`src/cli/auto-loader.ts`)가 읽는다. 이전에는 서버와 같은 스레드에서 `import`했으므로 팩의 결함이 서버 전체를 멈추거나 죽였다.
 
-외부 ParserPack의 `parse()` 함수는 임의의 Node.js 모듈(`child_process`, `fs`, 네이티브 애드온 포함)에 제약 없이 접근할 수 있다. 파서가 로컬에서 사용자 본인이 작성한 것이라면 위험 반경이 제한적이나, Phase 2에서 계획된 원격/공유 파서 배포 또는 다중 사용자 환경으로 확장될 경우 신뢰할 수 없는 코드가 동일 프로세스 권한으로 실행되는 구조가 된다.
+- `parse()`가 끝나지 않으면(무한 루프, 파국적 역추적 정규식) 이벤트 루프가 멈추고 모든 요청이 응답을 잃는다.
+- 메모리를 과다하게 잡으면 서버 프로세스가 힙 상한으로 종료된다.
+- 모듈 최상위 코드와 `console.log`가 서버 스레드에서 돌아 stdio 프로토콜(stdout)을 오염시킬 수 있다.
 
-TODOS.md는 이미 이 항목을 "Phase 2 Pre-requisite: Sandbox Security ADR"로 등재하고 있다: `vm.runInContext`의 `require` 제한, 허용 모듈 화이트리스트, `child_process`/네이티브 애드온 차단 전략의 설계가 Phase 2 구현 전 필요하다.
+레지스트리의 `parse()`는 동기 API이고 엔진, CLI, 라이브러리 소비자가 그 계약에 의존한다.
 
 ## 결정
 
-Phase 2(원격/공유 ParserPack 실행)에 착수하기 전, 다음 세 가지를 설계·문서화한다.
+외부 팩은 기본적으로 팩마다 하나의 `node:worker_threads` 워커에서 읽고 실행한다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 기존 경로 그대로 서버 스레드에서 실행한다.
 
-1. **`worker_threads` 또는 `child_process.fork` 기반 격리**: 외부 ParserPack의 `parse()`는 메인 이벤트 루프와 분리된 실행 단위에서 수행한다. 메인 프로세스와는 메시지 전달(구조화 복제 또는 IPC)로만 `raw` 문자열과 결과를 주고받는다. 실행 단위마다 호출 시간 제한을 두고 초과하면 종료한다. 더 강한 메모리 격리가 필요하면 `fork`를, 호출 지연이 우선이면 워커 풀을 선택한다.
-2. **허용 모듈 제한**: ParserPack이 사용할 수 있는 모듈을 순수 파싱에 필요한 범위로 한정한다. 워커 또는 자식 프로세스는 최소 권한 환경(정제된 `env`, 작업 디렉터리 고정, 리소스 한도)으로 기동하며, `child_process`와 네이티브 애드온으로 이어지는 로드 경로는 허용 목록에서 제외한다. Node.js 권한 모델(`--permission`)을 지원하는 버전에서는 파일 시스템과 자식 프로세스 권한을 거부한 채 기동한다.
-3. **순수 함수 계약 유지**: 파서는 `raw` 문자열 입력을 받아 구조화된 값을 반환하는 순수 함수 계약을 유지하며, 그 외 I/O나 프로세스 생성 권한을 가지지 않는다.
+1. **모듈 로드와 메타데이터**: 워커가 `parser.js`를 `import`하고 계약 선언(`headerLines`, `noise`, `acceptedFlags`, `rowsKey` 등)을 구조화 복제 가능한 값으로 바꿔 보낸다. 함수 값(`supports`, `hint`, 서브커맨드 안의 함수)은 위치 표식으로 바뀌고, 메인 스레드는 표식을 호출 때마다 워커에서 평가하는 대리 함수로 바꾼다. 메인 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다. `parism add`도 팩 이름을 워커에서 읽는다.
+2. **동기 호출**: 메인 스레드는 요청을 `MessagePort`로 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. 레지스트리의 공개 parse API는 동기로 남는다.
+3. **상한**: 호출 한 번의 시간 상한(기본 500ms)과 워커 힙 상한(`resourceLimits.maxOldGenerationSizeMb`, 기본 128MB)을 둔다. 워커 기동과 모듈 로드에는 별도 상한 5초를 둔다.
+4. **실패 처리**: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`과 원인을 밝힌 메시지로 보고한다. 워커를 끝내고 다음 호출 때 새로 띄운다. 워커가 스스로 끝나면 종료 신호로 즉시 깨어나고, 메모리 상한으로 멈춘 워커는 신호를 남길 수 없어 시간 상한에서 끝난다. 워커의 `error` 이벤트(`ERR_WORKER_OUT_OF_MEMORY` 등)는 stderr 경고로 남긴다.
+5. **반환값**: 구조화 복제 가능한 값만 받는다. 함수, Promise, Symbol이 든 반환값은 `parser_exception`이다. 이름이 `UnrecognizedOutputError`인 예외는 기존과 같이 `unrecognized_output`이다.
+6. **strict 스키마 검사**: `parsers.strict_schemas`가 켜져 있으면 워커가 팩의 `schema.safeParse`로 검사하고 위반 메시지를 결과와 함께 돌려준다. 레지스트리는 조용한 빈 결과 판정 뒤에 그 메시지를 `schema_violation`으로 쓴다(서버 스레드 실행과 같은 순서).
+7. **출력**: 워커 안의 `console`은 모두 stderr로 보낸다.
+8. **설정**: `parsers.external_isolation`(`"worker"` 기본, `"none"`), `parsers.external_time_limit_ms`(기본 500), `parsers.external_memory_limit_mb`(기본 128). 전역 설정에서 정한다. 신뢰하지 않는 프로젝트 설정(전역 `trust_project_config`가 참이 아님)은 격리를 켜거나 상한을 낮추는 방향만 반영하고, 격리를 끄거나 상한을 올리는 값은 경고 후 버린다.
+9. **작성자 도구**: fixture replay 도우미(`runFixtureTests`, 예정된 `parism test`가 쓸 경로)는 팩 작성자가 자기 팩을 검사하는 도구이므로 팩 객체를 받아 같은 스레드에서 실행한다. `parism inspect`는 내장 파서만 쓴다.
 
-`node:vm` 모듈은 보안 메커니즘이 아니다. Node.js 공식 문서는 "The node:vm module is not a security mechanism. Do not use it to run untrusted code."라고 명시한다. 따라서 `vm.runInContext`는 격리 수단으로 채택하지 않는다.
+## 이 결정이 주는 것과 주지 않는 것
+
+워커 격리는 결함 격리다. 끝나지 않는 실행, 비정상 종료, 메모리 과다가 서버를 멈추거나 죽이지 않게 한다.
+
+보안 샌드박스가 아니다. 워커는 같은 프로세스의 권한을 그대로 가진다. 팩 코드는 워커 안에서도 파일을 읽고 쓰며, 네트워크에 접속하고, `child_process`로 프로그램을 실행하고, 환경 변수를 읽을 수 있다. 악의적인 팩을 막지 못한다. 신뢰할 수 없는 제3자 팩은 Parism 전체를 컨테이너나 VM 안에서 실행해야 한다.
 
 ## 대안
 
-- **`vm.runInContext` 기반 컨텍스트 분리 (기각)**: 컨텍스트에 주입하는 전역 객체에서 `require`, `process.binding`, `process.mainModule` 등을 제거해 상위 프로세스 접근 경로를 끊는 안이다. 같은 V8 힙과 같은 프로세스 권한을 공유하므로 생성자 체인(`this.constructor.constructor`) 등을 통한 탈출이 알려져 있고, Node.js 문서가 보안 용도로 쓰지 말 것을 명시한다. 허용 모듈 화이트리스트 `require` 셔틀을 더해도 탈출 경로 전체를 막는다고 보장할 수 없어 기각한다.
-- **정적 분석만으로 사후 검증**: ParserPack 코드를 로드 전 AST 스캔하여 위험 API 호출을 탐지하는 방식. 동적 `eval`/문자열 조합 호출 등 정적 분석을 우회하는 패턴에 취약하여 단독 방어로는 불충분하다. 보조 수단으로만 쓴다.
-- **현행 유지(격리 없음)**: 단일 사용자·로컬 신뢰 환경에서는 즉시 위험이 낮으나, Phase 2의 원격/공유 배포 전제와 충돌한다. Phase 2 착수 전 최소한 설계 결정을 문서화해 두어야 구현 시점에 재작업을 피할 수 있다.
+- **`node:vm` 컨텍스트 분리 (기각)**: Node.js 문서가 "The node:vm module is not a security mechanism. Do not use it to run untrusted code."라고 명시한다. 같은 힙과 이벤트 루프를 공유하므로 끝나지 않는 비동기 코드와 메모리 과다를 막지 못하고(`timeout`은 동기 실행에만 적용된다), 생성자 체인(`this.constructor.constructor`)을 통한 탈출이 알려져 있다. 결함 격리와 보안 격리 어느 쪽도 주지 못한다.
+- **`child_process.fork` 격리 (보류)**: 프로세스 단위라 메모리와 비정상 종료를 더 강하게 격리하고 OS 수준 제한(권한 모델, 사용자 분리)을 덧붙일 여지가 있다. 그러나 동기 parse API를 유지하려면 자식 프로세스 응답을 동기로 기다리는 수단이 따로 필요하고, 호출당 IPC 직렬화 비용과 기동 비용이 워커보다 크다. 권한 분리 없이 fork만으로는 보안 경계가 되지 않는다는 점은 워커와 같다.
+- **Node.js 권한 모델(`--permission`) (보류)**: 프로세스 전체에 적용되는 플래그라 워커 하나에만 걸 수 없다. 서버 자체가 파일 시스템과 자식 프로세스 권한을 필요로 하므로 서버 프로세스에 걸 수도 없다. 권한 분리는 fork 기반 격리와 함께 다시 검토한다.
+- **비동기 parse API로 전환 (기각)**: 워커 기다림을 이벤트 루프에 맡길 수 있지만 레지스트리, 엔진, CLI, 라이브러리 소비자의 동기 계약을 깨는 변경이다.
+- **정적 분석으로 사전 검증 (보조로만)**: 동적 `import`, 문자열 조합 호출 등으로 우회할 수 있어 단독 방어가 되지 않는다.
 
 ## 결과
 
-- `worker_threads` 또는 `child_process.fork` 격리, 모듈 제한, 순수 함수 계약 세 가지를 Phase 2 구현의 선결 설계로 확정한다.
-- 호출당 메시지 전달과 기동 비용은 `benchmarks/`에 파서 실행 시나리오를 추가하여 Phase 2 구현과 함께 측정한다. `describe → dry_run → run` 온보딩 루프의 지연이 늘지 않도록 워커 재사용 여부를 그 결과로 정한다.
-- 허용 모듈 목록과 실행 단위 기동 옵션의 세부 사양은 Phase 2 구현 착수 시 별도 설계 문서로 확정한다.
+- 외부 팩이 서버를 멈추거나 죽이는 경로가 시간 상한 안으로 줄어든다. 상한을 기다리는 동안 서버 스레드는 막힌다.
+- 호출마다 입력과 결과를 구조화 복제하는 비용이 든다. 측정(`npm run benchmark:external`, Node 24, tsx 실행): 20줄 입력에서 호출당 평균 34.5µs(서버 스레드)와 142.1µs(워커), 500줄 입력에서 365.8µs와 2000.3µs. 워커 기동과 모듈 로드는 중앙값 약 158ms이고, 상한 초과 뒤 첫 호출(재기동과 파싱)은 약 165ms다.
+- Breaking notes: 외부 팩의 `parse()`는 서버 스레드의 전역 상태를 볼 수 없고, 구조화 복제할 수 없는 값을 돌려주면 `parser_exception`이다. 이전 동작이 필요하면 전역 설정에서 `parsers.external_isolation: "none"`으로 되돌린다.
+- 원격 파서 저장소나 자동 설치는 여전히 하지 않는다. 그 전에 권한 분리가 있는 격리(fork와 OS 수준 제한, 컨테이너)가 필요하다.

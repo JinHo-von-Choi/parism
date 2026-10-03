@@ -415,6 +415,8 @@ export interface ParserContract {
 
 `src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 출력 전체가 JSON 배열 문서이면(`gh pr list --json`) 행 수는 배열 원소 수다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드와 `outputFlags`를 반영한 유효 계약을 돌려준다.
 
+플랫폼 시험(`tests/platform/`)은 현재 OS에서 쓸 수 있는 명령(Linux와 macOS의 `ls`, `ps`, `df`, `du`, `stat`, `find`, `uname`, `id`, `ping -c 1 127.0.0.1`, 시험 안에서 띄운 로컬 HTTP 서버에 대한 `curl -I`, `netstat`, `lsof`, `wc`, `grep`, `which`, `git`, Linux의 `ss`, `free`, `systemctl`, Windows의 `cmd /d /c dir`, `tasklist`, `ipconfig`, `systeminfo`, `curl`, `git`)을 시험 시점에 실행해 출력을 받고, 그 출력에 위 불변식과 기본 필드 검사를 적용한다. 출력은 저장하지 않는다. 자식 환경은 실행기와 같이 `LC_ALL=C`, `LANG=C`이고, 다른 OS의 명령과 설치되지 않았거나 실패한 명령은 건너뛴다. CI는 Linux 시험 작업(`tests/**` 전체)과 macOS, Windows 작업(`npx vitest run tests/platform`)에서 이 시험을 돌린다.
+
 내장 파서의 계약은 `src/parsers/contracts.ts`에 있다. 허용 플래그는 실측으로 처리를 확인한 것만 둔다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)에는 형식 선언이 없다.
 
 파서는 출력에서 값을 얻을 수 없거나 줄 해석이 모호하면 `UnrecognizedOutputError`(`src/parsers/registry.ts`)를 던진다. 레지스트리는 이 예외를 `parser_exception`이 아닌 `unrecognized_output`으로 보고한다. 기본값을 채운 결과 객체를 돌려주지 않기 위한 장치로, `ping`(통계 줄 없음), `id`(uid, gid 없음), `curl -I`(상태 줄 없음), `lsof`(머리 줄 없음), `env`(NAME=value가 아닌 줄), `grep`(-r 단일 피연산자의 파일 여부를 가릴 수 없음), `wc`(개수 열 수가 인자와 맞지 않는 줄)가 쓴다.
@@ -452,7 +454,26 @@ export interface ParserContract {
 
 `register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 5.1의 `ParserContract` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
 
-`registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 커스텀 파서 및 외부 파서가 사용하는 경로다.
+`registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 서버 스레드에서 실행하는 커스텀 파서와 `parsers.external_isolation: "none"`인 외부 파서가 사용하는 경로다.
+
+`registerIsolated(parser)`: 다른 실행 단위에서 도는 파서(`IsolatedParser`: `name`, `contract`, `parse(args, raw, ctx, strictSchemas)`, `close()`)를 등록한다. 계약 선언은 `parser.contract`를 쓰고, strict 검사는 실행 단위가 수행해 위반 메시지를 결과와 함께 돌려준다. `listPacks()`에는 나타나고 `getPack()`으로는 조회되지 않는다. 같은 이름을 다시 등록하면 이전 실행 단위를 닫는다. `ParserRegistry.close()`는 모든 실행 단위를 끝낸다.
+
+계약 함수(`supports`, `hint`)가 예외를 던지면 `parse()`는 예외를 전파하지 않고 `parser_exception`으로 보고한다.
+
+### 5.2.1 외부 ParserPack 격리 실행
+
+`loadExternalParsers`는 기본적으로 외부 팩마다 워커 스레드(`node:worker_threads`) 하나를 띄워 `parser.js`를 그 워커에서만 읽는다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 서버 스레드에서 실행한다.
+
+- 메타데이터: 워커가 계약 선언을 구조화 복제 가능한 값으로 보낸다. `RegExp`는 그대로 전달되고, 함수(`supports`, `hint`, 서브커맨드 계약 안의 함수)는 호출할 때마다 워커에서 평가하는 대리 함수가 된다. 서버 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다.
+- 동기 호출: 서버 스레드는 요청을 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. `parse()`는 동기 API 그대로다. 기다리는 동안 서버 스레드는 막히며 그 길이는 시간 상한을 넘지 않는다.
+- 상한: 호출 한 번(`parse`, 계약 함수) `parsers.external_time_limit_ms`(기본 500ms), 워커 힙 `parsers.external_memory_limit_mb`(기본 128MB, `resourceLimits.maxOldGenerationSizeMb`), 워커 기동과 모듈 로드 5초.
+- 실패: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`이며 메시지가 원인을 밝힌다(`External parser 'x' did not answer within 500 ms; its worker was stopped and restarts on the next call`). 워커를 끝내고 다음 호출 때 다시 띄운다. 스스로 끝난 워커는 종료 신호로 바로 알리고, 메모리 상한으로 멈춘 워커는 시간 상한에서 끝난다. 워커 `error` 이벤트는 stderr 경고(`ERR_WORKER_OUT_OF_MEMORY` 등)로 남는다. 기동 상한 초과와 로드 실패는 그 팩만 건너뛰고 경고한다.
+- 반환값: 구조화 복제 가능한 값만 받는다. 함수, Promise, Symbol이 든 값은 `parser_exception`(`Parser returned a value that cannot be passed between threads: ...`)이다. 이름이 `UnrecognizedOutputError`인 예외는 `unrecognized_output`이다.
+- strict 검사: `strict_schemas=true`이면 워커가 팩의 `schema.safeParse`로 검사한다. `safeParse`가 없는 스키마는 검사하지 않는다. 조용한 빈 결과 판정이 스키마 위반보다 먼저다.
+- 출력: 워커 안의 `console`은 stderr로 간다.
+- `parism add`도 팩 이름을 워커에서 읽는다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 팩 객체를 같은 스레드에서 실행하고, `parism inspect`는 내장 파서만 쓴다.
+
+워커 격리는 결함 격리이며 보안 경계가 아니다. 워커는 서버 프로세스의 권한을 그대로 가진다. [SECURITY.md](SECURITY.md)와 `docs/adr/2026-07-21-external-parser-sandbox.md` 참조.
 
 ### 5.3 strict_schemas 모드
 
@@ -478,7 +499,7 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `parism add <path>` | 파서 팩을 `~/.parism/parsers/`에 영구 등록 |
 | `parism inspect "<cmd>"` | raw / parsed / compact 비교 출력 + 토큰 수 |
 
-등록된 외부 파서는 MCP 서버 / 라이브러리 모드 시작 시 `loadExternalParsers`가 자동으로 로드한다.
+등록된 외부 파서는 MCP 서버 / 라이브러리 모드 시작 시 `loadExternalParsers`가 자동으로 로드한다. 실행 방식과 상한은 5.2.1과 6.4를 따른다.
 
 ---
 
@@ -557,7 +578,12 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 
 | 필드 | 기본값 | 설명 |
 |---|---|---|
-| `strict_schemas` | `false` | `registerPack` 파서 출력 Zod 검증 활성화 |
+| `strict_schemas` | `false` | `registerPack` 파서 출력 Zod 검증 활성화. 격리 실행 외부 팩은 워커가 검증한다 |
+| `external_isolation` | `"worker"` | 외부 ParserPack 실행 방식. `"worker"`는 팩마다 워커 스레드, `"none"`은 서버 스레드 |
+| `external_time_limit_ms` | `500` | 외부 팩 호출 한 번의 시간 상한. 1 이상 정수 |
+| `external_memory_limit_mb` | `128` | 외부 팩 워커의 힙 상한. 1 이상 정수 |
+
+`external_*` 값은 전역 설정에서 정한다. 신뢰하지 않는 프로젝트 설정(전역 `trust_project_config`가 참이 아님)은 격리를 `"worker"`로 켜거나 상한을 기준값 이하로 낮추는 값만 반영하고, 격리를 끄거나 상한을 올리는 값은 stderr 경고 후 버린다. 환경 변수로는 바꿀 수 없다.
 
 ### 6.5 telemetry
 

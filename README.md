@@ -468,7 +468,10 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
     }
   },
   "parsers": {
-    "strict_schemas": false
+    "strict_schemas": false,
+    "external_isolation": "worker",
+    "external_time_limit_ms": 500,
+    "external_memory_limit_mb": 128
   },
   "telemetry": {
     "enabled": false
@@ -485,6 +488,8 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 `command_arg_restrictions`는 기본값과 병합된다. 일부 명령만 override해도 나머지 기본 제한은 유지된다.
 
 `parsers.strict_schemas`를 `true` 로 설정하면 각 파서의 Zod 스키마로 파싱 결과를 검증한다. 스키마 위반 시 `failure.reason === "schema_violation"` 을 반환한다. 기본 `false` 이며 opt-in 방식이다.
+
+`parsers.external_isolation`, `external_time_limit_ms`, `external_memory_limit_mb`는 외부 파서 팩의 실행 방식과 상한이다(아래 "외부 파서 격리 실행"). 전역 설정에서 정하며, 신뢰하지 않는 프로젝트 설정은 격리를 끄거나 상한을 올리지 못한다.
 
 `telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다. 켜면 프로세스 안에 명령별 결과 횟수(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, 사유별 `guard`, `exec`)도 모아 `describe`의 `stats`로 보여 준다. 외부로 보내거나 저장하지 않는다.
 
@@ -576,6 +581,18 @@ const pack: ParserPack = {
 
 export default pack;
 ```
+
+### 외부 파서 격리 실행
+
+등록한 팩은 기본적으로 팩마다 하나의 워커 스레드에서 읽고 실행한다(`parsers.external_isolation: "worker"`). 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받으며, `supports`와 `hint` 같은 함수 선언은 호출할 때마다 워커에서 평가한다. `parse()` 한 번이 `external_time_limit_ms`(기본 500ms)를 넘기거나, 워커가 비정상 종료하거나, 힙이 `external_memory_limit_mb`(기본 128MB)를 넘으면 `parse_error.reason = "parser_exception"`으로 보고하고 다음 호출 때 워커를 다시 띄운다. 서버는 계속 응답한다. `strict_schemas` 검사는 워커가 팩 스키마로 수행한다.
+
+- `parse()`의 반환값은 구조화 복제가 가능한 값이어야 한다. 함수, Promise, Symbol이 든 값은 `parser_exception`이다.
+- `parse()`는 서버 스레드의 전역 상태를 볼 수 없다. 팩 안의 `console` 출력은 stderr로 간다.
+- 호출마다 입력과 결과를 복제하는 비용이 든다. 20줄 입력에서 호출당 약 0.1ms, 500줄 입력에서 약 1.6ms가 더해진다(`npm run benchmark:external`).
+- 이전처럼 서버 스레드에서 실행하려면 전역 `~/.parism/prism.config.json`에 `"parsers": { "external_isolation": "none" }`을 둔다.
+- `parism add`도 팩 이름을 워커에서 읽는다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 같은 스레드에서 실행한다.
+
+워커 격리는 결함 격리이지 보안 샌드박스가 아니다. 워커는 서버 프로세스의 권한(파일, 네트워크, 자식 프로세스, 환경 변수)을 그대로 가진다. 직접 작성했거나 검토한 팩만 등록하고, 신뢰할 수 없는 제3자 팩은 Parism 전체를 컨테이너나 VM 안에서 실행한다. [SECURITY.md](SECURITY.md) 참조.
 
 인자 없이 `parism`을 실행하면 기존과 동일하게 MCP 서버로 동작한다.
 
