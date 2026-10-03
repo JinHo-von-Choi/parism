@@ -164,16 +164,16 @@ The agent receives the block reason in the same envelope structure as any other 
 | Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
 | Network | `curl -I` | `status_code`, `headers{}`, `header_values{}` (repeated headers), `history[]` (earlier responses of `-L`) | O |
 | Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
-| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state | O |
+| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state (also with `-u` user selection) | O |
 | Network | `ss` | `connections[]`: netid, state, recv/send queue, local/peer address and port | O |
 | Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms`. Several queries add `queries[]`, one per response | O |
-| Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`) | O |
-| Text | `wc` | `entries[]`: count, filename. `--total=only` gives `total` | O |
+| Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`). Blank matching lines (`-v`, empty pattern) are rows. The file name column of `-r` is accepted with `-n` or `-b` | O |
+| Text | `wc` | `entries[]`: count and filename for one counter flag; with no counter flag or several, the chosen columns of `lines`, `words`, `chars`, `bytes`, `max_line_length` and the filename. Filenames keep their spaces. `--total=only` (one counter flag) gives `total` | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
 | Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (`--decorate`), `author`, `date` (`--format=%h%x09%an%x09%aI%x09%s`) | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (full ref names of `--decorate=full`), `author`, `date` (`--format=%h%x09%an%x09%aI%x09%s`) | O |
 | Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
-| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind, `detached`, `points_to` | O |
+| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind (`null` when the upstream is gone), `upstream_gone`, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
 | DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: image, status, ports, names / `stats[]`: CPU, memory, network, block I/O, pids | O |
 | DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
@@ -219,12 +219,18 @@ When other args give the same information in a handled format, `result.failure.h
 | `git status -s --ignored` | `["status", "--ignored"]` |
 | `git log --oneline --graph` | `["log", "--format=%h %s"]` |
 | `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
+| `git log --oneline --decorate` | `["log", "--oneline", "--decorate=full"]` |
+| `git diff --stat HEAD~1` | `["diff", "HEAD~1"]` |
+| `git branch --show-current` | `["branch", "-v"]` |
+| `grep -r TODO src` | `["-n", "-r", "TODO", "src"]` |
+| `ps -e` | `["aux"]` |
+| `systemctl status cron` | `["list-units", "--all", "cron.service"]` |
 | `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
 | `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
 | `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
 | `npm ls --parseable` | `["ls", "--json"]` |
 
-There is no `hint` when no args give the same information (`ls -li`, `git diff --stat`, `grep -z`, and so on).
+There is no `hint` when no args give the same information (`ls -li`, `ps -ef`, `grep -z`, and so on).
 
 ### Native JSON Passthrough
 
