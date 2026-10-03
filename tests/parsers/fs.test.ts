@@ -292,6 +292,28 @@ describe("parseDf()", () => {
     expect(r.filesystems[0]).toEqual({ filesystem: "tmpfs", size: "12876", used: "46", available: "12830", use_percent: "1%", mounted_on: "/run" });
   });
 
+  it("macOS의 inode 열(iused, ifree, %iused)은 마운트 위치에 섞이지 않고 별도 필드에 담긴다", () => {
+    const raw = [
+      "Filesystem       1024-blocks      Used Available Capacity iused      ifree %iused  Mounted on",
+      "/dev/disk3s1s1     488245288  15000000 300000000      5%  355000 3000000000    0%   /",
+      "/dev/disk3s5       488245288 170000000 300000000     37% 1100000 3000000000    0%   /System/Volumes/Data",
+      "map auto_home              0         0         0    100%       0          0  100%   /System/Volumes/Data/home",
+    ].join("\n");
+    const r = parseDf("df", ["-k"], raw) as Rows;
+    expect(r.filesystems).toHaveLength(3);
+    expect(r.filesystems[0]).toMatchObject({ filesystem: "/dev/disk3s1s1", blocks_1k: "488245288", use_percent: "5%", inodes_used: "355000", inodes_free: "3000000000", inodes_use_percent: "0%", mounted_on: "/" });
+    expect(r.filesystems[1]!.mounted_on).toBe("/System/Volumes/Data");
+    expect(r.filesystems[2]).toMatchObject({ filesystem: "map auto_home", mounted_on: "/System/Volumes/Data/home" });
+  });
+
+  it("macOS df -h의 inode 열도 같은 방식으로 읽고, inode 열이 없는 Linux 출력은 바뀌지 않는다", () => {
+    const mac = "Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk3s1s1   466Gi    14Gi   286Gi     5%  355k  2.8G    0%   /\n";
+    expect((parseDf("df", ["-h"], mac) as Rows).filesystems[0]).toMatchObject({ size: "466Gi", use_percent: "5%", inodes_used: "355k", mounted_on: "/" });
+    const linux = (parseDf("df", ["-k"], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /data\n") as Rows).filesystems[0]!;
+    expect(linux.mounted_on).toBe("/data");
+    expect(linux.inodes_used).toBeUndefined();
+  });
+
   it("1K 블록은 blocks_1k에, 단위 붙은 크기(-h, -H)는 size에 담고 block_size를 두지 않는다", () => {
     const k = parseDf("df", [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n") as Rows;
     expect(k.block_size).toBeUndefined();

@@ -103,7 +103,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedValues: { "-B": /^(1K|1024|1M)$/, "--block-size": /^(1K|1024|1M)$/ },
     hint:           dfHint,
     headerLines: 1, rowsKey: "filesystems",
-    rowFields: ["filesystem", "type", "blocks_1k", "size", "used", "available", "use_percent", "mounted_on"],
+    rowFields: ["filesystem", "type", "blocks_1k", "size", "used", "available", "use_percent", "inodes_used", "inodes_free", "inodes_use_percent", "mounted_on"],
   },
   ps: {
     acceptedFlags:       { ...bools("-w", "--cumulative", "--forest", "--no-headers", "--headers"), ...values("--sort", "--width") },
