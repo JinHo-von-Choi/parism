@@ -23,7 +23,8 @@ export interface LsSummary {
 /** 수정 시각 모양: 기본("Oct  3 06:45", "Oct  3  2025"), long-iso, --full-time */
 const MTIME = "\\w+\\s+\\d+\\s+[\\d:]+|\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}(?::\\d{2}\\.\\d+\\s+[+-]\\d{4})?";
 
-const LONG_LINE = new RegExp(`^([bcdlps-])([rwxsStT-]{9})[.+@]?\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\d+(?:,\\s*\\d+)?)\\s+(${MTIME})\\s+(.+)$`);
+/** 시각 열 다음에는 공백 한 칸 뒤 이름이 온다. 이름 앞뒤의 공백은 이름의 일부다. */
+const LONG_LINE = new RegExp(`^([bcdlps-])([rwxsStT-]{9})[.+@]?\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\d+(?:,\\s*\\d+)?)\\s+(${MTIME}) (.+)$`);
 
 /** 구획 머리줄("./sub:", "dir with space:"). 긴 형식에서 항목 줄은 권한 문자열로 시작하므로 그 줄은 머리줄이 아니다. */
 const SECTION_HEADER = /^(?![bcdlps-][rwxsStT-]{9})(\S.*):$/;
@@ -92,7 +93,7 @@ export function parseLs(
       group,
       size_bytes:  isDevice ? 0 : parseInt(size, 10),
       modified_at: mtime.trim(),
-      name:        name.trim(),
+      name,
       type:        typeChar === "d" ? "directory"
                  : typeChar === "l" ? "symlink"
                  : typeChar === "-" ? "file"

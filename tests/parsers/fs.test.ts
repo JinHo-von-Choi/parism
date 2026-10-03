@@ -148,6 +148,52 @@ describe("parseFind() -print0", () => {
   });
 });
 
+describe("parseLs() 이름 보존", () => {
+  it("앞뒤 공백이 있는 이름을 그대로 담는다", () => {
+    const raw = [
+      "total 20",
+      "-rw-rw-r-- 1 nirna nirna  6 Oct  3 09:22  lead.txt",
+      "-rw-rw-r-- 1 nirna nirna  4 Oct  3 09:22 a  b.txt",
+      "-rw-rw-r-- 1 nirna nirna  8 Oct  3 09:22 trail.txt ",
+      "lrwxrwxrwx 1 nirna nirna  9 Oct  3  2025  sp link -> target",
+    ].join("\n") + "\n";
+    const { entries } = parseLs("ls", ["-l"], raw) as { entries: { name: string; target: string | null; modified_at: string }[] };
+    expect(entries.map(e => e.name)).toEqual([" lead.txt", "a  b.txt", "trail.txt ", " sp link"]);
+    expect(entries[3]).toMatchObject({ target: "target", modified_at: "Oct  3  2025" });
+  });
+
+  it("long-iso와 --full-time 시각 뒤의 이름도 그대로 담는다", () => {
+    const iso  = parseLs("ls", ["-l", "--time-style=long-iso"], "-rw-rw-r-- 1 u u 6 2026-10-03 09:22  lead.txt\n") as { entries: { name: string }[] };
+    const full = parseLs("ls", ["-l", "--full-time"], "-rw-rw-r-- 1 u u 6 2026-10-03 09:22:51.123456789 +0900  lead.txt\n") as { entries: { name: string }[] };
+    expect(iso.entries[0]!.name).toBe(" lead.txt");
+    expect(full.entries[0]!.name).toBe(" lead.txt");
+  });
+});
+
+describe("parseStat() 이름 보존", () => {
+  const block = (name: string): string => [
+    `  File: ${name}`,
+    "  Size: 6         \tBlocks: 8          IO Block: 4096   regular file",
+    "Device: 259,2\tInode: 1234       Links: 1",
+    "Access: (0664/-rw-rw-r--)  Uid: ( 1000/   nirna)   Gid: ( 1000/   nirna)",
+    "Access: 2026-10-03 09:22:51.000000000 +0900",
+    "Modify: 2026-10-03 09:22:51.000000000 +0900",
+    "Change: 2026-10-03 09:22:51.000000000 +0900",
+    " Birth: 2026-10-03 09:22:51.000000000 +0900",
+  ].join("\n") + "\n";
+
+  it("File: 뒤 한 칸 다음을 이름으로 그대로 담는다(앞뒤 공백, 탭)", () => {
+    expect((parseStat("stat", [" lead.txt"], block(" lead.txt")) as { file: string }).file).toBe(" lead.txt");
+    expect((parseStat("stat", ["trail.txt "], block("trail.txt ")) as { file: string }).file).toBe("trail.txt ");
+    expect((parseStat("stat", ["tab\there.txt"], block("tab\there.txt")) as { file: string }).file).toBe("tab\there.txt");
+  });
+
+  it("여러 파일에서도 이름을 그대로 담는다", () => {
+    const r = parseStat("stat", [" lead.txt", "plain.txt"], block(" lead.txt") + block("plain.txt")) as { files: { file: string }[] };
+    expect(r.files.map(f => f.file)).toEqual([" lead.txt", "plain.txt"]);
+  });
+});
+
 describe("parseStat()", () => {
   const statLinuxRaw = [
     "  File: /home/user/project/src/index.ts",

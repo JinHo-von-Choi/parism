@@ -14,6 +14,18 @@ describe("parseWc()", () => {
     expect(result.entries[0]).toEqual({ count: 42, file: "src/index.ts" });
   });
 
+  it("개수 열 다음 한 칸 뒤를 이름으로 그대로 담는다(겹친 공백, 탭, 앞뒤 공백)", () => {
+    expect(parseWc("wc", ["-l", "a  b.txt"], "2 a  b.txt\n")).toEqual({ entries: [{ count: 2, file: "a  b.txt" }] });
+    const raw = " 2 a  b.txt\n 3  lead.txt\n 1 tab\there.txt\n 1 trail.txt \n 7 total\n";
+    expect((parseWc("wc", ["-l", "a  b.txt", " lead.txt", "tab\there.txt", "trail.txt "], raw) as { entries: unknown[] }).entries).toEqual([
+      { count: 2, file: "a  b.txt" }, { count: 3, file: " lead.txt" }, { count: 1, file: "tab\there.txt" }, { count: 1, file: "trail.txt " }, { count: 7, file: "total" },
+    ]);
+  });
+
+  it("표준 입력을 센 줄은 이름이 없다", () => {
+    expect(parseWc("wc", ["-l"], "      3\n")).toEqual({ entries: [{ count: 3, file: "" }] });
+  });
+
   it("--total=only는 이름 없는 항목이 아니라 total 하나다", () => {
     expect(parseWc("wc", ["-l", "--total=only", "a", "b"], "6\n")).toEqual({ total: 6 });
     const reg = createRegistry();

@@ -16,8 +16,10 @@ export function parseWc(cmd: string, args: string[], raw: string): WcResult {
     return { total: parseInt(text, 10) };
   }
   const entries = raw.split("\n").filter(Boolean).map(line => {
-    const parts = line.trim().split(/\s+/);
-    return { count: parseInt(parts[0]!, 10), file: parts.slice(1).join(" ") };
+    /** 개수 열은 너비를 맞추느라 앞에 공백이 붙고, 공백 한 칸 뒤부터 줄 끝까지가 이름이다. */
+    const m = /^\s*(\d+)(?: (.*))?$/s.exec(line);
+    if (!m) throw new UnrecognizedOutputError(`wc output line is not 'count name': ${line.slice(0, 80)}`);
+    return { count: parseInt(m[1]!, 10), file: m[2] ?? "" };
   });
   return { entries };
 }

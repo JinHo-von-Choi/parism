@@ -67,7 +67,8 @@ function splitFileLine(text: string): { file: string; link_target?: string } {
 
 /** GNU stat 한 파일 구간(File: 줄부터 Birth: 줄까지) 파싱 */
 function parseStatBlock(raw: string): StatResult | null {
-  const fileMatch    = raw.match(/\s*File:\s*(.+)/);
+  /** "File: " 다음 한 칸 뒤부터 줄 끝까지가 이름이다. 이름 앞뒤의 공백도 이름의 일부다. */
+  const fileMatch    = raw.match(/^\s*File: (.+)$/m);
   const sizeMatch    = raw.match(/\s*Size:\s*(\d+)/);
   const blocksMatch  = raw.match(/Blocks:\s*(\d+)/);
   const ioBlockMatch = raw.match(/IO Block:\s*(\d+)/);
@@ -87,7 +88,7 @@ function parseStatBlock(raw: string): StatResult | null {
   const changeLine  = lines.find(l => /^\s*Change:/.test(l));
   const birthLine   = lines.find(l => /Birth:/.test(l));
 
-  const named = splitFileLine(fileMatch[1]!.trim());
+  const named = splitFileLine(fileMatch[1]!);
   return {
     file:        named.file,
     size_bytes:  parseInt(sizeMatch[1]!,    10),
