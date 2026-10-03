@@ -179,6 +179,23 @@ describe("외부 팩 출력", () => {
     expect(err.some(w => w.includes("pack-noise-1"))).toBe(true);
     expect(out.some(w => w.includes("pack-noise-1"))).toBe(false);
   });
+
+  it("팩이 process.stdout.write로 쓴 출력도 stdout이 아닌 stderr로 간다", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => { out.push(String(chunk)); return true; });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => { err.push(String(chunk)); return true; });
+    const registry = isolatedRegistry(`
+      export default { name: "rawout", parse: (raw) => { process.stdout.write("pack-raw-" + raw + "\\n"); return { ok: true, raw }; }, schema: {}, fixtures: [] };
+    `);
+
+    expect(registry.parse("rawout", [], "1").parsed).toEqual({ ok: true, raw: "1" });
+    for (let i = 0; i < 50 && !err.some(w => w.includes("pack-raw-1")); i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    expect(err.some(w => w.includes("pack-raw-1"))).toBe(true);
+    expect(out.some(w => w.includes("pack-raw-1"))).toBe(false);
+  });
 });
 
 describe("외부 팩 실행 실패", () => {

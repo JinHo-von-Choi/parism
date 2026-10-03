@@ -37,8 +37,12 @@ function wake(value) {
 
 process.on("exit", () => wake(SIGNAL_EXITED));
 
-/** 팩의 console 출력이 stdio 프로토콜(stdout)과 섞이지 않도록 모두 stderr로 보낸다. */
-globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
+/**
+ * 팩의 출력이 stdio 프로토콜(stdout)과 섞이지 않도록 console과 process.stdout.write를 모두 stderr로 보낸다.
+ * process.stderr.write는 그대로 둔다. 파일 기술자 1에 직접 쓰는 출력은 막지 못한다.
+ */
+process.stdout.write = process.stderr.write.bind(process.stderr);
+globalThis.console   = new Console({ stdout: process.stderr, stderr: process.stderr });
 
 /**
  * @param {unknown} err
