@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node
 import { join, resolve } from "node:path";
 import { loadIsolatedPack } from "../parsers/external/host.js";
 import { EXTERNAL_PARSER_DEFAULTS } from "../config/loader.js";
-import { ensureParismDirs } from "./paths.js";
+import { ensureParismDirs, packInstallDir, parismHome as defaultHome } from "./paths.js";
 
 export interface AddResult {
   name:        string;
@@ -23,14 +23,15 @@ async function readPackName(packDir: string): Promise<string> {
 
 /**
  * 파서 팩을 ~/.parism/parsers/에 복사하고 registry.json에 등록한다.
+ * 팩 이름은 디렉터리를 만들기 전에 형식을 검사한다(paths.ts의 isValidPackName).
  */
 export async function addParserPack(
   sourcePath: string,
   parismHome?: string,
 ): Promise<AddResult> {
   const name    = await readPackName(resolve(sourcePath));
+  const destDir = packInstallDir(parismHome ?? defaultHome(), name);
   const home    = ensureParismDirs(parismHome);
-  const destDir = join(home, "parsers", name);
 
   mkdirSync(destDir, { recursive: true });
   cpSync(resolve(sourcePath), destDir, { recursive: true });

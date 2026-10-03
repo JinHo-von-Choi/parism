@@ -5,6 +5,7 @@ import type { PrismParsersConfig }  from "../config/loader.js";
 import { EXTERNAL_PARSER_DEFAULTS } from "../config/loader.js";
 import { loadIsolatedPack }         from "../parsers/external/host.js";
 import { loadParserPack }           from "./loader.js";
+import { isValidPackName, invalidPackNameMessage } from "./paths.js";
 
 /**
  * 외부 파서 로드 옵션. 지정하지 않은 값은 EXTERNAL_PARSER_DEFAULTS를 따른다.
@@ -30,7 +31,7 @@ export function externalParserOptions(parsers: PrismParsersConfig | undefined): 
 /**
  * ~/.parism/registry.json을 읽고 등록된 외부 파서를 레지스트리에 로드한다.
  * 기본은 워커 격리다. 팩 모듈은 워커에서만 실행되고 레지스트리에는 계약 선언과 실행 대리만 등록된다.
- * 로드 실패한 파서는 건너뛰고 경고 출력. 반환값: 성공 로드 수.
+ * 이름 형식이 맞지 않는 항목과 로드 실패한 파서는 건너뛰고 경고 출력. 반환값: 성공 로드 수.
  */
 export async function loadExternalParsers(
   parismHome: string,
@@ -55,6 +56,10 @@ export async function loadExternalParsers(
 
   let loaded = 0;
   for (const [name, entry] of Object.entries(entries)) {
+    if (!isValidPackName(name)) {
+      console.warn(`[parism] Skipped parser entry in registry.json: ${invalidPackNameMessage(name)}`);
+      continue;
+    }
     try {
       if (isolation === "worker") registry.registerIsolated(loadIsolatedPack(entry.path, limits));
       else                        registry.registerPack(await loadParserPack(entry.path));

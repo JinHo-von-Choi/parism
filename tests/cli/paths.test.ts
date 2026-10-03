@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { parismHome, ensureParismDirs } from "../../src/cli/paths.js";
+import { parismHome, ensureParismDirs, isValidPackName } from "../../src/cli/paths.js";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -38,5 +38,19 @@ describe("ensureParismDirs()", () => {
     ensureParismDirs(testDir);
     ensureParismDirs(testDir);
     expect(existsSync(join(testDir, "fixtures"))).toBe(true);
+  });
+});
+
+describe("isValidPackName()", () => {
+  it("영문자나 숫자로 시작하고 영문자, 숫자, '.', '_', '-'로 된 64자 이하 이름을 받는다", () => {
+    for (const name of ["myparser", "my-parser", "a.b_c", "A1", "x", "a".repeat(64)]) {
+      expect(isValidPackName(name), name).toBe(true);
+    }
+  });
+
+  it("빈 이름, 점 이름, 경로 구분자, 앞의 점이나 대시나 밑줄, 64자 초과, 공백을 거부한다", () => {
+    for (const name of ["", ".", "..", "__proto__", "a/b", "a\\b", ".hidden", "-dash", "_under", "a".repeat(65), "a b", "a\n"]) {
+      expect(isValidPackName(name), JSON.stringify(name)).toBe(false);
+    }
   });
 });

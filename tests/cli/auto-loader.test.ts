@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { loadExternalParsers, externalParserOptions } from "../../src/cli/auto-loader.js";
 import { ParserRegistry } from "../../src/parsers/registry.js";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
@@ -34,6 +34,31 @@ describe("loadExternalParsers()", () => {
 
     expect(loaded).toBe(1);
     expect(registry.parse("custom", [], "abc").parsed).toEqual({ custom: true, len: 3 });
+  });
+
+  it("registry.json의 이름이 형식 밖이면 그 항목을 경고와 함께 건너뛴다", async () => {
+    const parsersDir = join(testDir, "parsers", "valid");
+    mkdirSync(parsersDir, { recursive: true });
+    writeFileSync(join(parsersDir, "parser.js"), `
+      export default { name: "valid", parse: (raw) => ({ len: raw.length }), schema: {}, fixtures: [] };
+    `);
+    writeFileSync(join(testDir, "registry.json"), JSON.stringify({
+      "valid":   { path: parsersDir, addedAt: "2026-01-01T00:00:00Z" },
+      "../up":   { path: parsersDir, addedAt: "2026-01-01T00:00:00Z" },
+      ".hidden": { path: parsersDir, addedAt: "2026-01-01T00:00:00Z" },
+    }));
+    const warnings: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((msg: unknown) => { warnings.push(String(msg)); });
+
+    const registry = new ParserRegistry();
+    try {
+      expect(await loadExternalParsers(testDir, registry)).toBe(1);
+    } finally {
+      spy.mockRestore();
+      await registry.close();
+    }
+    expect(warnings.some(w => w.includes("../up") && /Invalid parser pack name/.test(w))).toBe(true);
+    expect(warnings.some(w => w.includes(".hidden") && /Invalid parser pack name/.test(w))).toBe(true);
   });
 
   it("registry.json이 없으면 0을 반환한다", async () => {

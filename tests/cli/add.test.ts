@@ -56,4 +56,15 @@ describe("addParserPack()", () => {
     await expect(addParserPack(join(sourceDir, "broken"), homeDir)).rejects.toThrow(/Invalid default export/);
     expect(existsSync(join(homeDir, "registry.json"))).toBe(false);
   });
+
+  it("이름이 형식 밖인 팩은 디렉터리를 만들기 전에 거부한다", async () => {
+    for (const [dir, name] of [["dots", ".."], ["empty", ""], ["proto", "__proto__"], ["nested", "a/b"], ["leading", ".hidden"], ["long", "a".repeat(65)]]) {
+      mkdirSync(join(sourceDir, dir), { recursive: true });
+      writeFileSync(join(sourceDir, dir, "parser.js"), `
+        export default { name: ${JSON.stringify(name)}, parse: (raw) => ({ data: raw }), schema: {}, fixtures: [] };
+      `);
+      await expect(addParserPack(join(sourceDir, dir), homeDir), name).rejects.toThrow(/Invalid parser pack name/);
+    }
+    expect(existsSync(homeDir)).toBe(false);
+  });
 });
