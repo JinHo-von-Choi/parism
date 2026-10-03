@@ -31,6 +31,9 @@ const TREE_LOOSE = /^([│\s]*)[├└]──\s+(.+?)\s*$/;
 /** 이름과 버전 뒤에 붙는 표시들 */
 const TRAILING_NOTE = /\s+(deduped|overridden|extraneous|invalid:?.*|->\s.*|\(.*\))$/;
 
+/** 이름으로 거른 트리에 맞는 패키지가 없을 때 가지 자리에 나오는 표시 */
+const EMPTY_MARKER = "(empty)";
+
 /** 이름 앞에 붙는 문제 표시 */
 const LEADING_PROBLEM = /^(UNMET OPTIONAL DEPENDENCY|UNMET DEPENDENCY|missing:?)\s+/;
 
@@ -70,11 +73,13 @@ export function parseNpm(
 ): NpmResult | { lines: string[] } {
   const lines = raw.split("\n").filter(Boolean);
   const dependencies: NpmDependency[] = [];
-  let unit = 0;
+  let unit  = 0;
+  let empty = false;
 
   for (const line of lines) {
     const m = TREE_UTF8.exec(line) ?? TREE_ASCII.exec(line) ?? TREE_LOOSE.exec(line);
     if (!m) continue;
+    if (m[2]!.trim() === EMPTY_MARKER) { empty = true; continue; }
 
     const guide = m[1]!.length;
     if (unit === 0 && guide > 0) unit = guide;
@@ -84,7 +89,7 @@ export function parseNpm(
     dependencies.push({ ...item, depth: unit > 0 ? Math.round(guide / unit) + 1 : 1 });
   }
 
-  if (dependencies.length === 0 && lines.length > 0) return { lines };
+  if (dependencies.length === 0 && lines.length > 0 && !empty) return { lines };
 
   const maxItems = ctx?.maxItems ?? 0;
   const result = maxItems > 0 && dependencies.length > maxItems

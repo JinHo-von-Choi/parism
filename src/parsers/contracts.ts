@@ -268,6 +268,8 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   npm: {
     subcommands: { ls: npmList(), list: npmList() },
     hint:        npmHint,
+    /** 첫 줄은 프로젝트 줄이다. 이름으로 거른 트리에 맞는 패키지가 없으면 "(empty)" 가지 하나만 남는다. */
+    headerLines: 1, noise: /^(?:[│| ] )*[├└+`][─-][─┬-] \(empty\)\s*$/,
     rowsKey: "dependencies", rowLine: /^(?:[│| ] )*[├└+`][─-][─┬-] /, rowFields: ["name", "version", "depth", "deduped", "problem"],
   },
   cargo: {

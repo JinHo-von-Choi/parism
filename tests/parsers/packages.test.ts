@@ -1,11 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { parseNpm }   from "../../src/parsers/packages/npm.js";
 import { parseCargo } from "../../src/parsers/packages/cargo.js";
+import { createRegistry }  from "../../src/parsers/index.js";
+import { checkInvariants } from "../../src/parsers/invariants.js";
 
 describe("parseNpm() ASCII 트리", () => {
   it("ASCII 트리(+--, `--)를 인식한다", () => {
     const raw = "a@1.0.0 /p\n+-- zod@3.25.76\n`-- commander@14.0.3\n";
     expect((parseNpm("npm", ["ls"], raw) as { dependencies: { name: string }[] }).dependencies.map(d => d.name)).toEqual(["zod", "commander"]);
+  });
+});
+
+describe("parseNpm() 빈 트리", () => {
+  it("설치되지 않은 패키지를 찾은 트리의 (empty) 표시는 의존성이 아니다", () => {
+    expect(parseNpm("npm", ["ls", "left-pad"], "a@1.0.0 /p\n`-- (empty)\n\n")).toEqual({ dependencies: [] });
+    expect(parseNpm("npm", ["ls", "left-pad"], "a@1.0.0 /p\n└── (empty)\n")).toEqual({ dependencies: [] });
+  });
+
+  it("레지스트리는 빈 목록을 인식 실패로 보지 않고 불변식도 지킨다", () => {
+    const reg = createRegistry();
+    const raw = "@nerdvana/parism@2.0.2 /home/u/parism\n`-- (empty)\n\n";
+    const r   = reg.parse("npm", ["ls", "left-pad", "--all"], raw);
+    expect(r.parse_error).toBeUndefined();
+    expect(r.parsed).toEqual({ dependencies: [] });
+    expect(checkInvariants(r.parsed, raw, reg.contractFor("npm", ["ls", "left-pad", "--all"]))).toEqual([]);
   });
 });
 
