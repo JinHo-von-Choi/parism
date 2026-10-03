@@ -1,4 +1,5 @@
-import type { FormatHint } from "../parsers/format.js";
+import type { FormatHint }        from "../parsers/format.js";
+import type { ProjectionSummary } from "../engine/projection.js";
 
 /**
  * 파서 예외 정보. 파서가 예외를 던졌을 때만 존재. "파서 없음"과 "파서 버그"를 구분한다.
@@ -32,6 +33,11 @@ export interface OutputField {
   raw:         string;
   parsed:      unknown | null;
   parse_error?: ParseErrorField;
+  /**
+   * 투영(select, where, sort_by, limit) 요약. 파싱 결과가 최상위 배열일 때만 여기에 둔다.
+   * 결과가 객체이면 요약은 parsed._summary에 있다.
+   */
+  _summary?:   ProjectionSummary;
 }
 
 // 하위 호환 alias

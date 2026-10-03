@@ -5,6 +5,7 @@ import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
 import { PACKAGE_VERSION }     from "./version.js";
+import { PROJECTION_SHAPE }    from "./engine/projection.js";
 
 export { PACKAGE_VERSION };
 
@@ -25,7 +26,7 @@ When NOT to use: Single-line output (pwd, echo) or commands needing pipe/redirec
 Tools:
 - describe: Show allowed commands, available parsers, guard restrictions, version. Call this first.
 - dry_run: Check if a command would pass the guard WITHOUT executing it.
-- run: Execute command, get structured JSON. format: json|compact|json-no-raw.
+- run: Execute command, get structured JSON. format: json|compact|json-no-raw. Optional select/where/sort_by/limit filter the parsed row array on the server; the result then carries _summary {total, matched, shown} and omits stdout.raw.
 - run_paged: Paginated stdout for large output. parsed is always null.
 
 Usage:
@@ -100,7 +101,8 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
     "run",
     "Execute a shell command and receive structured output. " +
     "All commands are filtered through an execution guard (whitelist + injection prevention). " +
-    "Use format='compact' for token-efficient columnar output.",
+    "Use format='compact' for token-efficient columnar output. " +
+    "select/where/sort_by/limit filter the parsed row array on the server (applied in that order: where, sort_by, limit, select).",
     {
       cmd:         z.string().describe("Command name (e.g. 'ls', 'git')"),
       args:        z.array(z.string()).default([]).describe("Command arguments"),
@@ -109,9 +111,19 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
                    .describe("Output format. 'compact'=columnar. 'json-no-raw'=omit raw for token savings."),
       includeDiff: z.boolean().default(false)
                    .describe("Include filesystem diff (created/deleted/modified). false=skip snapshot, lower latency."),
+      select:      PROJECTION_SHAPE.select
+                   .describe("Keep only these fields in each row of the parsed top-level array."),
+      where:       PROJECTION_SHAPE.where
+                   .describe("Row conditions, all must hold. {field, op, value}: op eq|ne (string, number, boolean or null), prefix|contains (string, case-sensitive), gt|gte|lt|lte (number)."),
+      sort_by:     PROJECTION_SHAPE.sort_by
+                   .describe("{field, order: asc|desc}. Stable; rows without the field go last."),
+      limit:       PROJECTION_SHAPE.limit
+                   .describe("Maximum rows to return. 0 returns only _summary."),
+      array:       PROJECTION_SHAPE.array
+                   .describe("Key of the array to project when the result has several. Default: the parser's row array."),
     },
-    async ({ cmd, args, cwd, format, includeDiff }) => {
-      const result = await engine.run(cmd, { args, cwd, format, includeDiff });
+    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array }) => {
+      const result = await engine.run(cmd, { args, cwd, format, includeDiff, select, where, sort_by, limit, array });
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

@@ -13,7 +13,7 @@ import type { PrismConfig }                                                     
 import { createRegistry }                                                           from "../parsers/index.js";
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
 import type { OutputFormat }                                                        from "../parsers/registry.js";
-import type { ResponseEnvelope }                                                    from "../types/envelope.js";
+import type { FailureInfo, ResponseEnvelope }                                       from "../types/envelope.js";
 import { execute, truncateUtf8Lines }                                               from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
 import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
@@ -25,16 +25,21 @@ import { toCompact }                                                            
 import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
 import { PipelineTimer }                                                            from "../engine/telemetry.js";
+import { PROJECTION_SHAPE, applyProjection, hasProjection, parseProjection,
+         type ProjectionOptions, type ProjectionSummary }                          from "../engine/projection.js";
 import { PACKAGE_VERSION }                                                          from "../version.js";
 
-export interface RunOptions {
+export interface ExecOptions {
   args?:        string[];
   cwd?:         string;
   format?:      "json" | "compact" | "json-no-raw";
   includeDiff?: boolean;
 }
 
-export interface RunPagedOptions extends RunOptions {
+/** run 옵션. select, where, sort_by, limit, array는 파싱 결과의 최상위 배열에 적용한다(engine/projection.ts). */
+export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {}
+
+export interface RunPagedOptions extends ExecOptions {
   page?:      number;
   page_size?: number;
 }
@@ -58,7 +63,16 @@ function resolveRedactPatterns(config: PrismConfig): string[] {
 function buildGuardErrorEnvelope(
   cmd: string, args: string[], cwd: string, err: GuardError,
 ): ResponseEnvelope {
-  const envelope: ResponseEnvelope = {
+  return buildRejectedEnvelope(cmd, args, cwd, { kind: "guard", reason: err.reason, message: err.message }, { reason: err.reason, message: err.message });
+}
+
+/**
+ * 실행하지 않고 거부한 요청의 봉투. 메시지는 stderr.raw와 failure에 함께 둔다.
+ */
+function buildRejectedEnvelope(
+  cmd: string, args: string[], cwd: string, failure: FailureInfo, guardError?: { reason: string; message: string },
+): ResponseEnvelope {
+  return {
     ok:          false,
     exitCode:    -1,
     cmd,
@@ -66,12 +80,21 @@ function buildGuardErrorEnvelope(
     cwd,
     duration_ms: 0,
     stdout:      { raw: "", parsed: null },
-    stderr:      { raw: err.message, parsed: null },
+    stderr:      { raw: failure.message, parsed: null },
     diff:        null,
-    guard_error: { reason: err.reason, message: err.message },
-    failure:     { kind: "guard" as const, reason: err.reason, message: err.message },
+    ...(guardError && { guard_error: guardError }),
+    failure,
   };
-  return envelope;
+}
+
+/** RunOptions에서 값이 있는 투영 인자만 모은다. */
+function projectionInput(opts: RunOptions | undefined): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  if (!opts) return input;
+  for (const key of Object.keys(PROJECTION_SHAPE) as (keyof ProjectionOptions)[]) {
+    if (opts[key] !== undefined) input[key] = opts[key];
+  }
+  return input;
 }
 
 const PAGE_CACHE_TTL_MS      = 30_000;
@@ -128,6 +151,12 @@ export class ParismEngine {
     }
     timer?.markEnd("guard");
 
+    const requested  = projectionInput(opts);
+    const projection = hasProjection(requested) ? parseProjection(requested) : undefined;
+    if (projection && !projection.ok) {
+      return buildRejectedEnvelope(cmd, args, cwd, { kind: "config", reason: projection.reason, message: projection.message });
+    }
+
     timer?.markStart("exec");
     const executed = await this.execSlots.run(() => execute(
       cmd, buildExecArgs(cmd, args, this.config.guard), cwd,
@@ -144,15 +173,38 @@ export class ParismEngine {
     const parseFormat   = format === "json-no-raw" ? "json" : format;
     const strictSchemas = this.config.parsers?.strict_schemas ?? false;
 
-    const parseResult = this.registry.parseWithFallback(cmd, args, envelope.stdout.raw, { maxItems: this.config.guard.max_items, format: parseFormat }, strictSchemas);
+    /** 투영은 전체 행에 where와 sort_by를 적용해야 하므로 파서 상한을 끄고, 보이는 행을 max_items로 자른다. */
+    const maxItems    = projection ? 0 : this.config.guard.max_items;
+    const parseResult = this.registry.parseWithFallback(cmd, args, envelope.stdout.raw, { maxItems, format: parseFormat }, strictSchemas);
     const parsed      = parseResult.parsed;
 
-    // adaptive format: 항목 수 기준 자동 포맷 선택
+    /**
+     * 투영: where, sort_by, limit, select. 성공하면 raw를 싣지 않는다(raw는 투영 전 전체 출력이다).
+     * 실패하면 parsed를 비우고 raw를 남기며 failure.kind=config로 알린다.
+     */
+    let projected: unknown                       = parsed;
+    let projectedRows: unknown[] | undefined;
+    let arraySummary: ProjectionSummary | undefined;
+    let projectionFailure: FailureInfo | undefined;
+    if (projection?.ok && parsed != null) {
+      const shape = parseResult.native ? undefined : this.registry.contractFor(cmd, args);
+      const out   = applyProjection(parsed, projection.options, shape, this.config.guard.max_items);
+      if (out.ok) {
+        projected     = out.parsed;
+        projectedRows = out.rows;
+        if (Array.isArray(out.parsed)) arraySummary = out.summary;
+      } else {
+        projected         = null;
+        projectionFailure = { kind: "config", reason: out.reason, message: out.message };
+      }
+    }
+
+    // adaptive format: 항목 수 기준 자동 포맷 선택. 투영했으면 투영한 행 수를 본다.
     let useCompact  = parseFormat === "compact";
-    let dropRaw     = format === "json-no-raw";
+    let dropRaw     = format === "json-no-raw" || projectedRows !== undefined;
     const threshold = this.config.parsers?.adaptive_format_threshold;
-    if (threshold && parsed && typeof parsed === "object") {
-      const arr = Array.isArray(parsed) ? parsed : Object.values(parsed).find(v => Array.isArray(v)) as unknown[] | undefined;
+    if (threshold && projected && typeof projected === "object") {
+      const arr = projectedRows ?? (Array.isArray(projected) ? projected : Object.values(projected).find(v => Array.isArray(v)) as unknown[] | undefined);
       if (arr && arr.length > 0) {
         if (threshold.json_no_raw !== undefined && threshold.json_no_raw > 0 && arr.length >= threshold.json_no_raw) {
           useCompact = true;
@@ -163,12 +215,13 @@ export class ParismEngine {
       }
     }
 
-    const final = useCompact ? toCompact(parsed) : parsed;
+    const final = useCompact ? toCompact(projected) : projected;
     /** native JSON 폴백이 성공하면 parseWithFallback이 unsupported_format을 결과에서 뺀다. */
     const parseError   = parseResult.parse_error;
+    const extra        = { ...(parseError && { parse_error: parseError }), ...(arraySummary && { _summary: arraySummary }) };
     const stdout       = dropRaw && final !== null
-      ? { raw: "", parsed: final, ...(parseError && { parse_error: parseError }) }
-      : { ...envelope.stdout, parsed: final, ...(parseError && { parse_error: parseError }) };
+      ? { raw: "", parsed: final, ...extra }
+      : { ...envelope.stdout, parsed: final, ...extra };
 
     /**
      * parse failure 정규화: 파싱 오류는 failure로 승격, parser_not_found는 ok=true인 정보성 실패.
@@ -185,6 +238,7 @@ export class ParismEngine {
       // 파서도 없고 native JSON도 아닐 때: parser_not_found (ok=true 유지 — 정보성 실패)
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };
     }
+    if (projectionFailure) parseFailure = projectionFailure;
     timer?.markEnd("parse");
 
     let enriched = parseFailure !== undefined
