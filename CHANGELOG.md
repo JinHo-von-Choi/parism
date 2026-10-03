@@ -93,6 +93,7 @@
   - `git log --format=%G?` 같은 서명 상태 표시는 검증 프로그램을 실행하지 않으므로 검증 결과를 보여 주지 않는다.
 
 ### Fixed
+- `df`: macOS가 사용률 뒤에 붙이는 inode 열(`iused`, `ifree`, `%iused`)을 읽는다. 마운트 위치가 `mounted_on`에 정확히 담기고, inode 값은 `inodes_used`, `inodes_free`, `inodes_use_percent` 필드에 담긴다.
 - `parism add`: 팩 이름이 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자가 아니거나 설치 경로가 `~/.parism/parsers/` 바로 아래가 아니면 디렉터리를 만들기 전에 거부한다. 시작 시 로더는 `registry.json`에서 형식 밖 이름의 항목을 경고와 함께 건너뛴다.
 - `git status`: 이름 바꾸기(`renamed: a -> b`)를 경로로 쓰지 않고 `renamed[]`의 `{old, new}`로 가르며 `staged`에는 새 경로를 둔다. 따옴표로 감싼 비ASCII 경로를 푼다. detached HEAD는 `branch: "HEAD"`와 `detached`, `detached_at`로 나타낸다. `--ignored` 대상은 `untracked`와 따로 `ignored[]`에 담는다. 병합 충돌 항목은 `unmerged[]`다.
 - `git diff`: 새 파일, 삭제 파일, 이름 바꾸기, 모드만 바뀐 파일, 바이너리 변경이 `files_changed`에 들어가며 이름을 바꾼 파일의 `path`는 새 경로다. 따옴표 경로와 끝 탭이 붙은 공백 경로를 푼다.

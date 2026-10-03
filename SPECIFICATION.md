@@ -75,7 +75,7 @@ v0.6.0-alpha.1 기준으로 parism은 두 배포 면을 지원한다. FastMCP �
 
 MCP 서버: `src/server.ts` + `src/index.ts`가 `@modelcontextprotocol/sdk` 기반 stdio 서버를 제공한다. 에이전트가 `run` / `run_paged` 도구로 호출한다.
 
-라이브러리 모드 (v1.0.0부터 안정 API): `src/facade/engine.ts`의 `ParismEngine`을 직접 import하여 in-process 사용한다. `import { createEngine } from "@nerdvana/parism/engine"`. `ResponseEnvelope` 계약과 `ParismEngine` API는 Semantic Versioning을 따른다. v2.0.0의 breaking change는 CHANGELOG에 있으며, 다음 breaking change는 v3.0.0에서만 이루어진다.
+라이브러리 모드 (v1.0.0부터 안정 API): `src/facade/engine.ts`의 `ParismEngine`을 직접 import하여 in-process 사용한다. `import { createEngine } from "@nerdvana/parism/engine"`. `ResponseEnvelope` 계약과 `ParismEngine` API는 Semantic Versioning을 따른다.
 
 두 면은 동일한 `ParismEngine`에 위임한다. `server.ts`의 `buildRunResult` / `buildPagedResult`는 `ParismEngine.run` / `runPaged`를 래핑하는 얇은 직렬화 레이어다.
 
@@ -640,7 +640,7 @@ MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일�
 
 2. raw 보존 — `stdout.raw`는 항상 원본을 유지한다. 파서가 실패하거나 없어도 에이전트는 raw로 폴백할 수 있다. 예외: `output_redaction_enabled=true`이면 raw에도 레덕션이 적용된다. 이 예외는 의도된 것이며, 시크릿 보호가 원본 보존보다 우선한다.
 
-3. YAGNI: 사용 사례가 구체화되지 않은 추상화를 추가하지 않는다. 라이브러리 모드는 안정 API이며, 다음 breaking change는 v3.0.0을 통해서만 이루어진다.
+3. YAGNI: 사용 사례가 구체화되지 않은 추상화를 추가하지 않는다. 라이브러리 모드는 안정 API이다.
 
 4. 단방향 임포트 DAG — 모듈 계층은 `types → config → engine → parsers → facade → server` 방향만 허용한다. 역방향 의존은 MCP와 라이브러리 배포 면의 분리를 깨뜨린다.
 

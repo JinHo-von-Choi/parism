@@ -276,7 +276,7 @@ node dist/index.js
 
 ## 라이브러리 모드
 
-MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v1.0.0 부터 정식 API 다. Semantic Versioning 을 따르며, v2.0.0 의 변경 사항은 CHANGELOG 에 있다. 다음 breaking change 는 v3.0.0 에서만 발생한다.
+MCP 서버 없이 Node.js 프로세스 내부에서 Parism 을 직접 호출할 수 있다. v1.0.0 부터 정식 API 다. Semantic Versioning 을 따른다.
 
 최소 예시:
 
