@@ -26,6 +26,34 @@ describe("parseWc()", () => {
     expect(parseWc("wc", ["-l"], "      3\n")).toEqual({ entries: [{ count: 3, file: "" }] });
   });
 
+  it("개수 플래그가 없거나 둘 이상이면 GNU 열 순서(lines, words, chars, bytes, max_line_length)대로 이름 붙인 필드에 담는다", () => {
+    expect(parseWc("wc", ["plain.txt"], " 1  3 17 plain.txt\n")).toEqual({ entries: [{ lines: 1, words: 3, bytes: 17, file: "plain.txt" }] });
+    expect(parseWc("wc", ["-lwc", "a  b.txt"], "2 2 4 a  b.txt\n")).toEqual({ entries: [{ lines: 2, words: 2, bytes: 4, file: "a  b.txt" }] });
+    expect(parseWc("wc", ["-cmwl", "plain.txt"], " 1  3 17 17 plain.txt\n")).toEqual({ entries: [{ lines: 1, words: 3, chars: 17, bytes: 17, file: "plain.txt" }] });
+    expect(parseWc("wc", ["-lL", "plain.txt"], " 1 16 plain.txt\n")).toEqual({ entries: [{ lines: 1, max_line_length: 16, file: "plain.txt" }] });
+    expect(parseWc("wc", ["--lines", "--words"], "      1       3\n")).toEqual({ entries: [{ lines: 1, words: 3, file: "" }] });
+  });
+
+  it("여러 열에서도 개수 뒤 한 칸 다음을 이름으로 그대로 담고, 숫자로 시작하는 이름을 개수로 읽지 않는다", () => {
+    const raw = " 1 17 plain.txt\n 3  6  lead.txt\n 2  9 4 five.txt\n 6 32 total\n";
+    expect((parseWc("wc", ["-lc", "plain.txt", " lead.txt", "4 five.txt"], raw) as { entries: unknown[] }).entries).toEqual([
+      { lines: 1, bytes: 17, file: "plain.txt" }, { lines: 3, bytes: 6, file: " lead.txt" }, { lines: 2, bytes: 9, file: "4 five.txt" }, { lines: 6, bytes: 32, file: "total" },
+    ]);
+  });
+
+  it("여러 열 형식을 받고 불변식을 지키며, --total=only는 개수 플래그 하나와만 받는다", () => {
+    const reg = createRegistry();
+    for (const args of [["a.txt"], ["-lw", "a.txt"], ["--lines", "--words", "a.txt"], ["-l", "-w", "-c", "a.txt", "b.txt"]]) {
+      expect(reg.parse("wc", args, "").parse_error?.reason).not.toBe("unsupported_format");
+    }
+    const raw = " 2  2  4 a  b.txt\n 1  3 17 plain.txt\n 3  5 21 total\n";
+    const r   = reg.parse("wc", ["a  b.txt", "plain.txt"], raw);
+    expect(r.parse_error).toBeUndefined();
+    expect(checkInvariants(r.parsed, raw, reg.contractFor("wc", ["a  b.txt", "plain.txt"]))).toEqual([]);
+    expect(reg.parse("wc", ["-lw", "--total=only", "a", "b"], "").parse_error?.reason).toBe("unsupported_format");
+    expect(reg.parse("wc", ["--total=only", "a", "b"], "").parse_error?.reason).toBe("unsupported_format");
+  });
+
   it("--total=only는 이름 없는 항목이 아니라 total 하나다", () => {
     expect(parseWc("wc", ["-l", "--total=only", "a", "b"], "6\n")).toEqual({ total: 6 });
     const reg = createRegistry();

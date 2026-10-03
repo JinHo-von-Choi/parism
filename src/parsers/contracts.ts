@@ -12,6 +12,7 @@ import type { ParserContract } from "./registry.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
 import { supportsGrep }     from "./text/grep.js";
+import { supportsWc }       from "./text/wc.js";
 import { lsHint, dfHint, digHint, grepHint, freeHint, unameHint, idHint,
          journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
          ghPrListHint, npmListHint, npmHint } from "./hints.js";
@@ -34,8 +35,9 @@ const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "
 /** 행이 NUL로 끝나는 출력(find -print0, du -0, grep -Z -l)의 모양 */
 const NUL_RECORDS = { nulRecords: true } as const;
 
-/** wc 카운터 플래그. 하나만 있어야 출력이 "수 파일" 두 열이다. */
+/** wc 개수 플래그. 하나면 "수 이름" 두 열(count), 없거나 둘 이상이면 열마다 이름 붙인 필드다. */
 const WC_COUNTERS = ["-l", "-w", "-c", "-m", "-L", "--lines", "--words", "--bytes", "--chars", "--max-line-length"];
+const WC_ROWS     = { rowsKey: "entries", rowFields: ["count", "lines", "words", "chars", "bytes", "max_line_length", "file"] } as const;
 
 /** git log 고정 형식: 해시와 제목, 또는 탭으로 나눈 해시, 작성자, 작성 시각(ISO 8601), 제목 */
 const GIT_LOG_FORMAT = /^(oneline|%[hH] %s|%[hH]%x09%an%x09%aI%x09%s)$/;
@@ -174,9 +176,12 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   wc: {
     acceptedFlags:  { ...bools(...WC_COUNTERS), "--total": "attached" },
     acceptedValues: { "--total": /^(auto|always|only|never)$/ },
-    requiredFlags:  WC_COUNTERS,
-    exclusiveFlags: WC_COUNTERS,
-    rowsKey: "entries", rowFields: ["count", "file"], outputFlags: { "--total=only": { rowsKey: undefined, rowFields: undefined } },
+    supports:       supportsWc,
+    ...WC_ROWS,
+    outputFlags: {
+      "--total=only": { rowsKey: undefined, rowFields: undefined },
+      "--total=auto": WC_ROWS, "--total=always": WC_ROWS, "--total=never": WC_ROWS,
+    },
   },
   env:   { acceptedFlags: bools("-0", "--null"), acceptedPositionals: { max: 0 } },
   pwd:   { acceptedFlags: bools("-L", "-P"), acceptedPositionals: { max: 0 } },
