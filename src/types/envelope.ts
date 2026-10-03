@@ -1,10 +1,15 @@
+import type { FormatHint }        from "../parsers/format.js";
+import type { ProjectionSummary } from "../engine/projection.js";
+
 /**
  * 파서 예외 정보. 파서가 예외를 던졌을 때만 존재. "파서 없음"과 "파서 버그"를 구분한다.
  * schema_violation은 strict_schemas=true 시 Zod 검증 실패를 나타낸다.
+ * hint는 unsupported_format일 때 같은 정보를 처리 가능한 형식으로 얻는 인자가 있으면 채워진다.
  */
 export interface ParseErrorField {
   reason:  "parser_exception" | "schema_violation" | "unsupported_format" | "unrecognized_output";
   message: string;
+  hint?:   FormatHint;
 }
 
 /**
@@ -16,6 +21,8 @@ export interface FailureInfo {
   kind:    "guard" | "exec" | "parse" | "config";
   reason:  string;
   message: string;
+  /** reason=unsupported_format일 때 같은 명령에 줄 대체 인자. 결과는 내장 파서나 native JSON 폴백이 처리한다. */
+  hint?:   FormatHint;
 }
 
 /**
@@ -26,6 +33,11 @@ export interface OutputField {
   raw:         string;
   parsed:      unknown | null;
   parse_error?: ParseErrorField;
+  /**
+   * 투영(select, where, sort_by, limit) 요약. 파싱 결과가 최상위 배열일 때만 여기에 둔다.
+   * 결과가 객체이면 요약은 parsed._summary에 있다.
+   */
+  _summary?:   ProjectionSummary;
 }
 
 // 하위 호환 alias
@@ -49,6 +61,8 @@ export interface PageInfo {
   total_lines: number;   // stdout 전체 줄 수
   has_next:    boolean;  // 다음 페이지 존재 여부
   cache?:      { hit: boolean; age_ms: number }; // run_paged 가 저장된 실행 결과를 재사용했는지
+  /** 요청한 page_size가 guard.max_page_size를 넘어 줄였을 때만 있는 원래 요청값 */
+  requested_page_size?: number;
 }
 
 /**

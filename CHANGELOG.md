@@ -5,6 +5,135 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 따르며,
 포맷은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)을 따른다.
 
+## [Unreleased]
+
+### Added
+- 파서 계약의 형식 선언: `acceptedFlags`(출력 형식을 검증한 플래그와 값 방식 `bool`, `value`, `attached`), `acceptedValues`(플래그 값 패턴), `acceptedPositionals`(`min`, `max`, `pattern`), `requiredFlags`(하나 이상 필요), `exclusiveFlags`(하나까지만), `leadingFlags`(서브커맨드 앞 전역 옵션), `subcommands`(서브커맨드별 계약, 빈 문자열 키는 서브커맨드 없는 실행), `plusFlags`, `singleDashLong`. 선언 밖의 인자는 파서를 실행하지 않고 `parse_error.reason = "unsupported_format"`이며 메시지에 원인 인자를 밝힌다. raw와 native JSON 폴백은 그대로다. `supports(args)`는 선언 검사를 통과한 뒤 추가로 적용하는 선택 규칙으로 남는다. `ParserPack`도 같은 필드를 쓴다(`ParserPack`이 `ParserContract`를 확장한다).
+- 출력 계약 필드 `rowsKey`(데이터 줄마다 행 하나를 담는 배열의 키), `rowLine`(행이 되는 데이터 줄 패턴), `rowFields`(행 필드 이름 목록), `nulRecords`(행이 NUL로 끝남), `blankRecords`(빈 줄과 공백만 있는 줄도 행, `grep`), `outputFlags`(인자에 있으면 출력 모양 필드를 덧씌우는 플래그 표, 예: `find -print0`, `du -0`, `grep -Z`, `wc --total=only`). `contractFor(cmd, args)`는 `outputFlags`까지 반영한다.
+- 파서 불변식 모듈 `src/parsers/invariants.ts`: `checkInvariants(parsed, raw, contract)`가 조용한 빈 결과(`silent_empty`), 행 수와 데이터 줄 수 불일치(`row_count`), 유한하지 않은 숫자(`non_finite`), 스키마 밖 필드(`field_names`)를 위반 목록으로 돌려준다. `countDataLines`, `countRowLines`도 내보낸다. 런타임에는 기존 `unrecognized_output` 판정만 이 모듈을 쓴다.
+- `failure.hint = { args, reason }`와 `stdout.parse_error.hint`: `unsupported_format`일 때 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자를 안내한다. 예: `uname -r` → `-a`, `ls -lh` → `-l`, `git status -s` → `status`, `git status -s --ignored` → `status --ignored`, `git log --oneline --graph` → `log --format=%h %s`, `git log -n 3` → `log -n 3 --format=%h%x09%an%x09%aI%x09%s`(작성자와 작성 시각 포함), `git branch` → `branch -v`, `journalctl -o json -n 5` → `-n 5 -o short-iso`, `free --tera` → `-b`, `docker ps -q` → `ps`, `kubectl get pods -o yaml` → `get pods -o json`, `gh issue list` → `--json` 필드 추가, `npm ls --parseable` → `ls --json`, `git log --oneline --decorate` → `log --oneline --decorate=full`, `git diff --stat HEAD~1`(`--name-only`, `--name-status`, `--numstat` 등) → `diff HEAD~1`, `git branch --show-current` → `branch -v`, `grep -r x .` → `-n -r x .`, `ps -e`(`-A`, `ax`, aux에 있는 열만 고른 `-eo`) → `aux`, `systemctl status cron`(`is-active`, `is-failed`) → `list-units --all cron.service`. 같은 정보를 얻을 인자가 없으면 hint가 없다(`ps -ef`, `ps -eo pid,ppid`, `systemctl is-enabled`). 안내 인자는 readonly 기본 정책을 통과한다.
+- `ParserRegistry.contractFor(cmd, args)`(서브커맨드를 반영한 유효 계약)와 `ParserRegistry.parseWithFallback(...)`(native JSON 폴백까지 적용한 결과, 엔진이 쓰는 경로).
+- `UnrecognizedOutputError`(`src/parsers/registry.ts`): 파서가 값을 얻을 수 없거나 줄 해석이 모호할 때 던지면 레지스트리가 `parse_error.reason = "unrecognized_output"`으로 보고한다(`parser_exception`이 아니다).
+- 내장 파서의 선택 출력 필드(해당 형식일 때만 나타난다): `ls`의 `directory`, `stat`의 `link_target`과 `files[]`, `du`의 `modified_at`, `df`의 `type`, `size`, `block_size`, `ps`의 `depth`, `curl -I`의 `header_values`와 `history`, `grep`의 `byte_offset`과 `context`, `git status`의 `renamed`, `ignored`, `unmerged`, `detached`, `detached_at`, `git log`의 `refs`와 `author`, `date`(`--format=%h%x09%an%x09%aI%x09%s`), `dig`의 `queries`(쿼리가 여럿일 때 응답마다의 결과), `wc --total=only`의 `total`, 개수 플래그가 없거나 여럿인 `wc`의 `lines`, `words`, `chars`, `bytes`, `max_line_length`, `git diff`의 `files[].status`, `old_path`, `binary`, `git branch`의 `detached`, `points_to`, `worktree`, `upstream_gone`, `apt search`의 `description`, `npm ls`의 `deduped`, `problem`, `cargo tree`의 `depth`, `deduped`, `proc_macro`, `source`.
+- `run`(MCP 도구와 `ParismEngine.run`)의 서버 측 투영과 필터 인자 `select`, `where`, `sort_by`, `limit`, `array`(`src/engine/projection.ts`). 파싱 결과의 최상위 배열(계약의 `rowsKey`, 배열이 여럿이면 `array`로 지정)에 `where`, `sort_by`, `limit`, `select` 순서로 적용한다. 조건 연산은 `eq`, `ne`, `prefix`, `contains`, `gt`, `gte`, `lt`, `lte`이며 zod 스키마로 검사한다. 결과에 `_summary: { total, matched, shown }`(결과 객체 안이면 `parsed._summary`, 결과가 배열이면 `stdout._summary`)를 남기고 `stdout.raw`는 싣지 않는다. 투영할 때 파서는 `max_items` 없이 전체 행을 내며 보이는 행만 `max_items`로 자른다(`_summary.truncated`). 결과 객체 안의 대상이 아닌 배열도 `max_items`로 자르고 그 키를 `_summary.truncated_arrays`에 남긴다. `select` 결과 행은 프로토타입 없는 객체라 `__proto__` 같은 필드 이름도 일반 필드로 남는다. `compact`, `json-no-raw`와 함께 쓸 수 있고 적응형 형식 임계값은 투영한 행 수를 본다. 문법 오류는 실행 전에 `failure = { kind: "config", reason: "invalid_projection" }`, 알 수 없는 필드와 형 불일치는 실행 뒤 `unknown_field`, `type_mismatch`(`array_not_found`, `array_ambiguous` 포함)이며 raw를 남긴다. 500개 항목의 `ls -l`에서 `select: ["name","size_bytes"], limit: 50`은 응답 토큰을 96% 줄인다.
+- `describe`의 선택 인자 `cmd`(`ParismEngine.describe(cmd)`, `src/facade/capabilities.ts`): 한 명령의 유효 정책(서브커맨드, 플래그, 위치 인자 규칙, 출처 `default`/`build`/`config`/`none`), guard도 허용하는 파서 형식 선언(`requires`, `values`, `flags`, `rows_key`, `row_fields`, 서브커맨드별), 대체 형식 안내(`alternatives`), 현재 guard를 통과하는 예시를 한 응답으로 돌려준다. 기본 명령 40종 모두 2KB 이하이며 MCP 도구는 이 응답을 들여쓰기 없이 직렬화한다. 허용되지 않은 명령은 예외 대신 `failure.reason = "command_not_allowed"`를 담은 결과다. `ParserRegistry.declaredContract`, `hasParser`, `formatHint`를 더했다.
+- 파서 결과 통계(`OutcomeStats`, `src/engine/telemetry.ts`): `telemetry.enabled=true`일 때만 프로세스 안에 명령별 결과 횟수(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, 사유별 `guard`, `exec`)를 모아 `describe`의 `stats`로 보여 준다. 외부 전송과 저장은 없고, 허용 목록 밖 명령은 `(unlisted)` 한 항목으로 모은다. 활성 시 `run` 한 번에 더해지는 비용은 약 0.12µs다.
+- MCP 안내문에 `describe(cmd)`와 투영 인자를 적었다.
+- 외부 ParserPack 격리 실행(`src/parsers/external/`): `~/.parism/parsers/`의 팩을 팩마다 워커 스레드에서 읽고 실행한다. 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받으며, 함수 선언(`supports`, `hint`)은 호출마다 워커에서 평가한다. 레지스트리의 `parse()`는 `SharedArrayBuffer`와 `Atomics.wait`로 응답을 기다려 동기 API를 유지한다. 호출 하나(계약 함수와 `parse` 왕복, 다시 띄운 워커의 기동 대기 전부)의 시간 상한, 워커 V8 힙 상한(`resourceLimits.maxOldGenerationSizeMb`, `Buffer`처럼 힙 밖에 잡는 메모리는 제외)을 넘기거나 워커가 비정상 종료하면 `parse_error.reason = "parser_exception"`이다. 워커 기동과 모듈 로드의 상한은 2초다. `strict_schemas` 검사는 워커가 팩 스키마로 수행한다. 워커의 `console`과 `process.stdout.write` 출력은 stderr로 간다(파일 기술자 1에 직접 쓰는 출력은 막지 못한다). 결함 격리이며 보안 샌드박스가 아니다(SECURITY.md, `docs/adr/2026-07-21-external-parser-sandbox.md`).
+- 외부 ParserPack 장애 뒤 대기: 워커 장애(시간 상한 초과, 비정상 종료, 메모리 상한 초과, 다시 띄울 때의 기동 실패) 뒤에는 대기 시간 동안 워커를 띄우지 않고 바로 `parser_exception`(`... is paused for N ms after its worker stopped`)으로 답한다. 대기 시간은 2초에서 시작해 장애가 이어지면 두 배씩 늘어 30초에서 멈추고, 워커가 답하고 장애가 없었던 호출 뒤에 2초로 돌아간다. 대기 시간이 지난 뒤의 호출이 워커를 다시 띄우며, 기동이 그 호출의 상한 안에 끝나지 않으면 그 호출만 `parser_exception`(`... is still starting ...`)이고 워커는 기동을 이어 간다. 장애 뒤 다시 읽을 때 최상위 코드가 3초 걸리는 팩에서 호출 하나가 서버 스레드를 막는 최장 시간은 3161ms에서 501ms가 됐다(기본 상한). `IsolationLimits`에 `cooldownMs`, `cooldownMaxMs`를 더했다.
+- `ParserRegistry.withCallDeadline(cmd, task)`와 `IsolatedParser.withDeadline(task)`(선택): task 안의 외부 팩 호출이 시간 상한 하나를 함께 쓴다. `parse()`가 스스로 쓰며 엔진의 `run`은 파싱과 투영용 계약 조회를 한 호출로 묶는다.
+- 설정 `parsers.external_isolation`(`"worker"` 기본, `"none"`), `parsers.external_time_limit_ms`(기본 500), `parsers.external_memory_limit_mb`(기본 128). 신뢰하지 않는 프로젝트 설정은 격리를 켜거나 상한을 낮추는 값만 반영하고 격리를 끄거나 상한을 올리는 값은 경고 후 버린다.
+- `ParserRegistry.registerIsolated(parser)`, `ParserRegistry.close()`, `IsolatedParser`, `IsolatedParseResult` 타입. `loadExternalParsers`의 세 번째 인자(`isolation`, `timeLimitMs`, `memoryLimitMb`)와 `externalParserOptions(config.parsers)`.
+- `npm run benchmark:external`(`benchmarks/external-parse.ts`): 서버 스레드 실행과 워커 실행의 호출 지연, 워커 기동, 재기동 비용을 잰다. Node 24(tsx)에서 20줄 입력 호출당 평균 34.5µs와 142.1µs, 500줄 입력 365.8µs와 2000.3µs, 워커 기동 중앙값 157.7ms, 상한 초과 뒤 첫 호출(대기 시간 없이 잰 재기동과 파싱) 164.9ms.
+- 플랫폼 시험(`tests/platform/`): 현재 OS에서 쓸 수 있는 명령을 시험 시점에 실행해 실제 출력에 파서 불변식과 기본 필드 검사를 적용한다. 출력은 저장하지 않으며 없는 명령은 건너뛴다. `CI` 환경 변수가 있으면 현재 OS에서 실제로 실행한 사례가 하나 이상이어야 통과한다. CI에 macOS, Windows(Node 22) 플랫폼 작업을 더했다.
+
+### Changed
+- 내장 파서의 `supports()` 함수(`src/parsers/supports.ts`)를 명령별 선언(`src/parsers/contracts.ts`)으로 바꿨다. 실측에서 처리를 확인한 인자만 허용하고, 조용히 틀린 결과를 내던 인자는 교정 전까지 `unsupported_format`이다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 이 호스트에서 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)은 인자를 제한하지 않는다.
+- `parism init-parser` 템플릿이 `supports` 대신 `acceptedFlags` 예시를 만든다.
+- 계약 함수(`supports`, `hint`)가 던진 예외는 `parse()` 밖으로 전파되지 않고 `parser_exception`이다. `contractFor`와 `formatHint`는 이때 `undefined`를 돌려주므로 엔진의 `run`과 `describe(cmd)`는 예외 대신 응답을 돌려준다.
+- `parism add`는 팩 이름을 워커에서 읽는다(팩 모듈을 CLI 스레드에서 실행하지 않는다).
+- Breaking notes: 외부 ParserPack은 기본적으로 워커 스레드에서 실행한다. `parse()`가 구조화 복제할 수 없는 값(함수, Promise, Symbol이 든 값)을 돌려주거나 서버 스레드의 전역 상태에 기대면 `parser_exception`이거나 결과가 달라진다. 클래스 인스턴스는 프로토타입 없는 일반 객체로 전달된다. 호출 한 번이 500ms를 넘거나 힙이 128MB를 넘으면 `parser_exception`이다. 이전 동작은 전역 설정 `parsers.external_isolation: "none"`으로 되돌린다. `UnrecognizedOutputError`는 클래스가 아니라 예외 이름으로 판정한다. 격리 실행 팩은 `ParserRegistry.getPack()`으로 조회되지 않는다(`listPacks()`에는 있다).
+- 실행이 실패했거나(종료 코드, 시간 초과, 스폰 실패) stdout 없이 stderr만 있으면 파싱 오류는 `stdout.parse_error`에만 남고 `failure`는 실행 결과의 것을 유지한다. 실패한 `ping`, `id`, `curl -I`의 `failure`는 `kind: "exec"`, `reason: "non_zero_exit"`이며 메시지에 stderr가 그대로 있다. 시간 초과(`timeout`)와 출력 상한 초과(`output_overflow`)도 파싱 오류에 가려지지 않는다. 이때 `unsupported_format`의 안내는 `stdout.parse_error.hint`에만 있다.
+- 선언 범위 확대(실측 출력의 필드 값으로 확인): `wc`는 개수 플래그 없이(`wc file`) 또는 여럿(`-lw`, `-lwc`, `--lines --words`)으로도 받는다(`--total=only`는 개수 플래그 하나와만). `lsof`는 `-u`(사용자 선택, `-u x`, `-ux`, `-u ^root`)를 받는다. `dig`는 `+time=N`, `+tries=N`, `+retry=N`을 받는다.
+- readonly, build 기본 정책이 `git`의 `--ignored`(`--ignored=<mode>`)를 받는다. `git status` 계약은 `--ignored`의 `traditional`, `matching`, `no`를 받고, `git log` 계약은 `--format=%h%x09%an%x09%aI%x09%s`(`%H`, `--pretty=format:` 형식 포함)를 받는다.
+- Breaking notes: 다음 인자는 이제 `unsupported_format`이다(raw는 그대로, JSON 출력이면 native JSON 폴백).
+  - `ls`: `-Q`, `-b`, `-g`, `-o`, `-G`, `-i`, `-s`, `-h`, `--si`, `--quoting-style`, `--block-size`, `--time-style`(`long-iso`, `full-iso` 외), `--color=always`, `-l` 없는 호출. `-R`, `-F`, `-p`, `--full-time`, 위치 인자 2개 이상은 `-l`과 함께 받는다.
+  - `find`: `-ls`, `-printf`, `-exec` 등 출력을 바꾸는 식. `stat`: `-c`, `-t`, `-f`, `--printf`. `df`: `-B`(1K, 1M 외), `-i`, `--output`.
+  - `ps`: BSD user 형식(`ps aux` 계열) 외의 대시 형식(`-ef`, `-eo`, `-p` 등). `ss`: `-s`. `lsof`: `-t`, `-F`, `-R`.
+  - `dig`: `+short`, `+trace`, `+nocomments`, 뒤에 `+answer`가 없는 `+noall`, `-u`. `curl -I`: `-i`, `-w`, URL 2개 이상.
+  - `grep`: `-n` 없는 `-A`, `-B`, `-C`, `-NUM`, `-o`나 `-c`와 함께 쓴 문맥 옵션, `-l`/`-L` 없는 `-Z`, `-z`, `-d`/`--directories`의 `read`, `skip`, `recurse` 밖 값, `-D`/`--devices`의 `read`, `skip` 밖 값. `wc`: `--total`의 `auto`, `always`, `only`, `never` 밖 값. `free`: `-w`, `--tera`, `--peta`, `--tebi`, `--pebi`. `id`: `-n`, `-r`, `-z` 조합.
+  - `systemctl`: `list-units` 외의 서브커맨드. `journalctl`: short 계열 외의 `-o`(`json`, `cat`, `verbose`, `export`).
+  - `apt`: `show`, `policy`. `npm`: `ls`/`list`의 `--json`, `--parseable`, 그 밖의 서브커맨드. `cargo`: `tree` 외의 서브커맨드와 `--prefix`(`none`, `indent` 외), `-e`.
+  - `docker`: `ps`의 `-q`, `-s`, `--format`, `ps`와 `stats --no-stream` 외의 서브커맨드. `gh`: `pr list` 외의 서브커맨드, `-q`, `-w`. `kubectl get`: `-o` 값 `wide` 외, `-A`, `-w`, `--show-labels`.
+  - `git`: `status`의 `-s`, `--porcelain`, `-z`. `log`는 `--oneline`, `--format=oneline|%h %s|%H %s`, `--pretty=oneline` 가운데 하나가 있어야 하며 `--graph`, `--stat`, `-p`, 짧은 참조 꼬리표(`--decorate`, `--decorate=short`)는 형식 밖이다(`--decorate=full`은 받는다). `branch`는 `-v`가 있어야 한다. `diff`의 `--stat` 계열, `--name-only`, `--summary`.
+  - `grep -r`(`-R`, `-d recurse`)에서 파일 이름 열이 나오는 실행은 `-n`이나 `-b`가 있어야 한다(`-h`, `-l`, `-L`, `-c`는 그대로 받는다). 번호 열이 없으면 콜론이 든 파일 이름과 구분자를 가를 수 없다. 안내는 `-n`을 더한다.
+  - `git log`의 `--decorate`, `--decorate=short`: 짧은 참조 이름(`feature`)은 괄호로 시작하는 제목(`(wip) first`)과 모양이 같다. `--decorate=full`을 안내한다.
+  - 서브커맨드를 선언한 명령(`git`, `docker`, `gh`, `kubectl`, `helm`, `npm`, `apt`, `systemctl`, `cargo`)의 선언 밖 서브커맨드(`git show`, `docker images`, `gh issue list` 등)는 `failure.reason`이 `parser_not_found` 대신 `unsupported_format`이다. 출력이 JSON이면 이전과 같이 native JSON 폴백이 `parsed`를 채운다.
+  - `dir`은 Windows에서만 파싱한다.
+- Breaking notes: 기존 필드의 값이 다음과 같이 정해진다.
+  - `git status.branch`: detached HEAD는 `HEAD`. `git diff.files_changed`: 새 파일, 삭제 파일, 이름 바꾼 파일(새 경로)을 포함한다. `git branch.upstream`: `-v`의 `[ahead N]`, `[gone]`는 `null`이고 상류 이름은 `-vv`에서만 채운다. `message`가 대괄호로 시작해도 상류로 읽지 않는다.
+  - `dig.query_type`: QUESTION 섹션이 없으면 빈 문자열. `systemctl.units[].failed`: ACTIVE 열이 `failed`인 유닛(행 앞 기호와 무관). `lsof.entries[].state`: TCP 상태 이름일 때만 채우고 `(readlink: ...)` 같은 안내는 `name`에 남는다. `lsof.entries[].device`: 값이 없는 열은 빈 문자열.
+  - `df.filesystems[].blocks_1k`: 1K 블록일 때만 있다. 단위 붙은 크기(`-h`, `-H`, `--si`)는 `size`에 값 그대로("547G") 담고, 다른 블록 단위(`-m`, `-B1M`)는 `size`와 `block_size`다. `stat.file`: 링크 이름만(대상은 `link_target`). `curl -I.headers`: 같은 이름의 헤더는 `, `로 이은 값. `apt.packages[].status`: 설치되지 않은 패키지는 빈 문자열.
+  - `ss.connections[]`: 유닛 소켓은 `local_address`가 경로, `local_port`가 inode, `peer_port`가 상대 inode. Netid 열이 없는 출력은 `netid`가 필터에서 정해지며(`-t`면 `tcp`) 정할 수 없으면 빈 문자열이고, State 열이 없으면 `state`는 빈 문자열.
+  - `ls.entries[].name`, `target`: `-F`, `-p`의 표시 기호는 포함하지 않는다. `ps.processes[].command`: 공백을 그대로 보존한다. `journalctl.entries[].hostname`: `--no-hostname`이면 빈 문자열. `free.unit`: 10진 단위는 `kilo`, `mega`, `giga`.
+  - `ping`, `id`, `curl -I`, `lsof`, `env`는 값을 얻지 못하면 기본값으로 채운 결과 대신 `unrecognized_output`이다.
+  - `dig`: 쿼리가 여럿이면 맨 위 `query`, `query_type`, `answers`, `query_time_ms`, `server`는 첫 응답의 것이고 응답마다의 결과는 `queries[]`에 있다. 루트 이름은 `"."`, 루트를 가리키는 값(MX `0 .`)은 점을 지킨다.
+  - `wc --total=only`: 이름이 빈 항목 대신 `{ total }`이다.
+  - `git log.commits[].refs`: `--decorate=full`이 찍은 전체 이름 그대로다(`HEAD -> refs/heads/main`, `tag: refs/tags/v1.0`, `refs/remotes/origin/main`).
+  - `git branch.branches[].ahead`, `behind`: 상류가 사라졌으면(`[gone]`, `[origin/x: gone]`) `0` 대신 `null`이고 `upstream_gone: true`다.
+  - `wc.entries[]`: 개수 플래그가 없거나 여럿이면 `count` 대신 `lines`, `words`, `chars`, `bytes`, `max_line_length` 가운데 고른 열이다.
+- 실행기가 `execFile` 대신 `spawn`으로 프로세스를 띄운다. stdout, stderr 각각의 버퍼 상한(10MB)과 `failure.reason` 분류는 그대로다.
+- 새 설정 `guard.max_page_size`(기본 1000): `run_paged`의 `page_size`가 이 값을 넘으면 이 값으로 줄이고 `page_info.requested_page_size`에 요청값을 남긴다.
+- 새 설정 `guard.max_concurrency`(기본 4): 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다.
+- `guard.secrets`와 `parsers.adaptive_format_threshold`는 레이어 사이에서 하위 키 단위로 병합한다.
+- `SPECIFICATION.md`의 기본 명령 수와 `describe`·`dry_run`·`failure` 표, `SECURITY.md`의 경로 검사 범위를 실제 동작에 맞췄다.
+- 기본 정책이나 `build` 프로필 정책을 쓰는 기본 명령은 인자가 정확히 `--version` 하나이면 정책 검사 없이 통과한다. `guard.command_policies`로 정책을 덮어쓴 명령은 그 정책을 따른다. `--help`는 허용하지 않는다(일부 명령은 페이저나 매뉴얼 뷰어를 띄운다).
+- 기본 정책에 읽기 용도의 인자를 더했다: `date`의 `+`로 시작하는 출력 형식 위치 인자 하나, `ls`의 `-f`, `-q`, `-T`, `-D`, `--zero`, `--hyperlink`, `ps`의 `--width`, `-q`, `tree`의 `--filesfirst`, `-H`, `which`의 `--all`, `grep`의 `--exclude-from`(값은 경로 검사). `echo`는 `-n`, `-e`, `-E`를 받는다.
+- 명령 정책 필드 `positionalChars`(위치 인자 허용 문자), `positionalPrefix`(위치 인자 접두사), `maxPositionals`(위치 인자 최대 개수), `plusFlags`(`+` 인자를 플래그로 분해), `textPositionals`(위치 인자를 검색어나 출력 문자열로 보고 `key=값`의 `=` 뒤 값을 따로 경로 검사하지 않음)를 추가했다. `guard.command_policies`에서도 쓸 수 있다.
+- Breaking notes:
+  - 새로 정책을 받은 24종은 정책에 없는 플래그와 위치 인자를 `arg_not_allowed`로 거부한다. 필요하면 `guard.command_policies`로 허용한다. 의도적으로 거부하는 정상 사용은 다음과 같다.
+    - 24종 모두: `--help`
+    - 끝나지 않는 추적과 반복 실행: `tail -f`, `tail -F`, `tail --follow`, `free -s`, `netstat -c`, `lsof -r`, `lsof +r`, `ping -f`
+    - 재귀 중 심볼릭 링크를 따라가는 옵션: `grep -R`, `du -L`, `tree -l`, `ls -L`
+    - 출력 파일과 덤프 파일: `tree -o`, `ss -D`
+    - 시스템 상태 변경: `ss -K`, `ss -E`, `date -s`, `date --set`, `hostname`의 위치 인자, `hostname -F`, `hostname -b`
+    - 파일 목록이나 묶음 입력을 읽는 옵션: `wc --files0-from`, `date -f`, `dig -f`
+    - `ps`의 환경 표시 수식어 `e`와 허용 글자 밖의 위치 인자(숫자 pid 목록은 `-p`로 지정한다)
+    - `ps`의 `-x`(BSD식 위치 인자 `x`는 받는다)와 사용자·그룹 선택 옵션 `-u`, `-U`, `-g`, `-G`, `--user`(사용자별 목록은 `-o`로 `user` 열을 출력해 거른다)
+    - `lsof`의 `+`로 시작하는 옵션 전부(`+D`, `+d`, `+c`, `+L` 등)
+    - `echo`의 `-n`, `-e`, `-E` 밖의 대시로 시작하는 인자
+    - `date`의 위치 인자 중 `+`로 시작하지 않는 것과 두 번째 위치 인자
+  - 위치 인자 `key=값`, `+opt=값`의 값이 허용 경로 밖으로 해석되면 `path_not_allowed`가 된다(`curl`, `grep`, `echo`의 위치 인자 제외).
+  - 정책이 있는 명령의 위치 인자와 플래그 값도 위 경로 규칙으로 검사하므로, 허용 경로 밖으로 해석되는 값(중간 `..`, 밖을 가리키는 링크 이름)은 `path_not_allowed`가 된다.
+  - 무효한 설정 필드는 이전처럼 적용되지 않고 무시된다. 정수가 아닌 수치 환경 변수(`1.5` 등)도 무시된다.
+  - `guard.secrets`의 일부 하위 키만 지정하면 나머지 하위 키는 기본값을 유지한다. 이전에는 지정하지 않은 하위 키가 비었다. `adaptive_format_threshold`도 같다.
+  - `run_paged`의 `page_size`는 최대 1000이며, 페이지 출력은 `max_output_bytes`로 잘린다.
+  - `git log --format=%G?` 같은 서명 상태 표시는 검증 프로그램을 실행하지 않으므로 검증 결과를 보여 주지 않는다.
+
+### Fixed
+- `parism add`: 팩 이름이 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자가 아니거나 설치 경로가 `~/.parism/parsers/` 바로 아래가 아니면 디렉터리를 만들기 전에 거부한다. 시작 시 로더는 `registry.json`에서 형식 밖 이름의 항목을 경고와 함께 건너뛴다.
+- `git status`: 이름 바꾸기(`renamed: a -> b`)를 경로로 쓰지 않고 `renamed[]`의 `{old, new}`로 가르며 `staged`에는 새 경로를 둔다. 따옴표로 감싼 비ASCII 경로를 푼다. detached HEAD는 `branch: "HEAD"`와 `detached`, `detached_at`로 나타낸다. `--ignored` 대상은 `untracked`와 따로 `ignored[]`에 담는다. 병합 충돌 항목은 `unmerged[]`다.
+- `git diff`: 새 파일, 삭제 파일, 이름 바꾸기, 모드만 바뀐 파일, 바이너리 변경이 `files_changed`에 들어가며 이름을 바꾼 파일의 `path`는 새 경로다. 따옴표 경로와 끝 탭이 붙은 공백 경로를 푼다.
+- `git branch`: detached HEAD 항목(`* (HEAD detached at abc1234) ...`)과 `-a`의 `origin/HEAD -> origin/main` 줄을 읽는다. `-v`에서 `[ahead 2]`는 상류 이름이 아니라 `ahead`로 읽는다. `git log --decorate=full`의 참조는 `refs[]`로 가른다.
+- `grep`: `-r`에 피연산자가 하나일 때 파일인지 디렉터리인지 출력으로 가린다(가릴 수 없으면 `unrecognized_output`). 문맥 줄(`-A/-B/-C/-NUM`, `-n` 필요)을 `context`로 표시하고 `--` 구분자를 버린다. `-b`, `-L`, `-Z`(파일 목록), `-T`를 읽는다.
+- `stat`: 파일 여러 개는 `files[]`로, 심볼릭 링크는 `file`과 `link_target`으로 가른다. `curl -I`: 리다이렉트를 따라간 응답(`-L`)은 최종 응답을 본문으로 하고 앞선 응답을 `history`에 담으며, 반복 헤더는 `header_values`로 보존한다.
+- `ping`, `id`, `curl -I`: 통계 줄, `uid=`/`gid=`, HTTP 상태 줄이 없으면 0과 빈 값으로 채운 결과 대신 `unrecognized_output`이다. `ping`은 `+N errors` 구획과 소수 손실률을 읽는다. `env`: `NAME=value`가 아닌 줄(여러 줄 값)이 있으면 `unrecognized_output`이며 `-0` 출력을 읽는다.
+- `apt list`/`apt search`: 대괄호가 없는 줄(설치되지 않은 패키지)을 포함한 모든 행을 읽고 `search`의 설명 줄을 `description`으로 담는다.
+- `npm ls`: UTF-8 트리의 부모 행(`├─┬`)을 읽고, `deduped` 표시를 이름과 버전에서 떼며, 마지막 자식 아래 들여쓰기까지 반영해 깊이를 센다.
+- `ss`: Netid, State 열이 없는 출력과 머리 줄이 없는(`-H`) 출력을 읽고, 유닉스 소켓의 경로와 inode를 주소와 포트로 읽으며, `-i`의 이어지는 줄을 행으로 세지 않는다. `lsof`: 머리 줄의 열 위치로 가르므로 DEVICE, SIZE/OFF, NODE가 빈 줄에서도 NAME이 밀리지 않는다. `state`는 TCP 상태 이름(`LISTEN`)일 때만 담고 `(readlink: Permission denied)` 같은 안내는 `name`에 둔다.
+- `systemctl list-units`: `failed`는 ACTIVE 열이 `failed`인 유닛이다. 행 앞 기호는 not-found 같은 로드 상태에도 붙으므로 쓰지 않는다. `--no-legend`와 `--plain` 출력을 읽는다. `journalctl`: short 계열 형식(기본 `short`, `short-precise`, `short-iso`, `short-iso-precise`, `short-full`, `short-unix`, `short-monotonic`, `with-unit`)과 `--no-hostname`을 읽으며 시각으로 시작하지 않는 줄은 직전 항목의 `message`에 붙인다.
+- `dig`: QUESTION 섹션이 없으면 `query_type`은 `A`가 아니라 빈 문자열이다. `+multiline` 괄호 레코드와 `+noall +answer` 출력을 읽는다. `df`: 1K가 아닌 블록 단위(`-m`, `-B1M`)는 `blocks_1k`에 담지 않고 `size`와 `block_size`로 나타내며 공백이 든 마운트 위치를 지킨다. `-T`의 종류 열을 읽는다.
+- `ls -l`: `-R`과 피연산자 둘 이상의 구획을 `directory`로 나누고 `-F`, `-p`의 표시 기호를 이름과 링크 대상에서 뗀다. `--time-style=long-iso`, `--full-time`의 시각을 읽는다.
+- `ps`: `--no-headers`의 첫 줄과 `--headers`가 되풀이하는 머리 줄을 올바르게 처리하고, `f`, `--forest` 트리의 가지를 떼어 `depth`로 나타내며 command의 공백을 보존한다. `du --time`, `du -0`, `find -print0`을 읽는다.
+- `free -h`의 `0B`와 `--si`, `--kilo`, `--mega`, `--giga`를 읽는다. `docker stats --no-stream`의 pids `0`은 `null`이 아니라 `0`이다. `cargo tree`는 `(*)`, `(proc-macro)`를 경로로 읽지 않는다.
+- `compact` 형식은 객체 배열의 모든 행에서 키를 모아 열을 만든다(첫 행에 없는 선택 필드도 열이 된다).
+- `grep -d recurse`(`--directories=recurse`)는 `-r`처럼 파일 이름 열을 읽는다. 재귀 여부는 `-r`, `-R`, `-d`의 마지막 것이 정한다.
+- `du`: 단문자 묶음 안의 `-0`(`-s0`, `-sh0`)도 NUL 구분으로 읽고, 값 옵션 뒤의 `0`(`-d0`)은 값으로 본다.
+- 불변식 검사: `git log`, `git branch`, `git diff`의 `rowFields`에 선택 필드(`refs`, `author`, `date`, `detached`, `points_to`, `worktree`, `status`, `old_path`, `binary`)를 넣었다. NUL로 끝나는 출력(`find -print0`, `du -0`, `grep -Z -l`)은 NUL로, `ps`의 머리 줄은 위치가 아니라 모양으로(`--no-headers`, `--headers`), 출력 전체가 JSON 배열이면 원소 수로 행을 센다.
+- `grep`: 빈 줄과 공백만 있는 일치 줄(`grep -v`, 빈 패턴, `^$`)을 버리지 않고 행으로 담는다(`text: ""`). 불변식도 빈 줄을 행으로 센다(`blankRecords`).
+- `git log --decorate=full`: 꼬리표는 git의 참조 모양(`HEAD`, `HEAD -> refs/...`, `tag: refs/...`, `refs/...`)일 때만 `refs`로 읽는다. 꼬리표 없는 커밋의 `(wip) first` 같은 제목은 제목 그대로다. 마지막 `--no-decorate`는 꼬리표 해석을 끈다.
+- `git branch`: `-a -v`, `-r -v`, `-avv`에서 열을 맞추느라 공백이 여럿 든 `origin/HEAD        -> origin/main` 줄을 버리지 않고 `points_to`로 읽는다. 사라진 상류(`[gone]`)를 앞섬, 뒤짐 0으로 읽지 않는다.
+- `npm ls <패키지>`: 설치되지 않은 패키지를 찾은 트리의 `(empty)` 표시를 의존성으로 담지 않고 빈 `dependencies`로 돌려준다.
+- `wc`, `ls -l`, `stat`: 파일 이름을 공백까지 그대로 담는다(겹친 공백, 탭, 앞뒤 공백). `wc`는 개수 열 다음 한 칸 뒤, `ls -l`은 시각 열 다음 한 칸 뒤, `stat`은 `File: ` 다음부터가 이름이다.
+- 설정 값 검증: 전역·프로젝트 설정 파일, 환경 변수, `loadConfig(configPath)`의 각 필드를 스키마(`src/config/schema.ts`)로 검사한다. 형식이 틀린 필드는 stderr에 한 번 경고하고 무시하며 앞 레이어의 값을 유지한다. 수치 상한은 유한한 0 이상 정수만 받는다. 잘못된 타입의 필드가 있어도 기동은 계속한다.
+- 빈 `PARISM_ALLOWED_PATHS`, `PARISM_ALLOWED_COMMANDS`는 경고 후 무시한다.
+- `loadConfig(configPath)`도 실행 디렉터리가 `/`이면 기본 `allowed_paths`를 홈 디렉터리로 제한한다.
+- 경로 검사 대상 수집을 정책이 있는 명령과 없는 명령에 같은 규칙으로 적용한다. 위치 인자와 플래그 값 중 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(링크 포함)을 가리키는 것을 검사하고, 정책의 `path` 위치 인자와 `path` 플래그 값은 항상 검사한다.
+- 기본 `allowed_commands` 40종 모두에 기본 정책을 둔다. 새로 정책을 받은 명령: `ls`, `stat`, `du`, `df`, `tree`, `ps`, `ping`, `netstat`, `lsof`, `ss`, `dig`, `grep`, `wc`, `head`, `tail`, `cat`, `pwd`, `which`, `echo`, `date`, `uname`, `hostname`, `free`, `id`.
+- `git` 실행 인자에 `-c core.hooksPath=/dev/null`, `-c log.showSignature=false`, `-c gpg.program=false`, `-c gpg.ssh.program=false`, `-c gpg.x509.program=false`를 더하고, `log`, `show`에 `--no-show-signature`를 붙인다.
+- 시간 초과 시 POSIX에서는 프로세스 그룹 전체를 종료한다. 자식이 띄운 프로세스가 남지 않는다.
+- 시간 초과나 버퍼 상한 초과로 종료시킨 실행은 자식이 끝나고 200ms 뒤 stdout, stderr 스트림을 닫고 결과를 확정한다. 프로세스 그룹 밖으로 분리된 자손이 출력 파이프를 갖고 있어도 결과 반환과 동시 실행 자리가 그 자손의 종료를 기다리지 않는다.
+- 실행 중인 프로세스 그룹을 추적하고, 서버가 SIGINT, SIGTERM을 받거나 프로세스가 끝날 때 종료한다. 다른 처리기가 없으면 신호의 기본 종료 동작을 유지한다.
+- `ps`의 위치 인자는 BSD식 옵션 낱말로 보고 `auxfwrljsvhcmnSHTgZ` 글자로만 이루어진 경우에만 받는다. 환경 변수를 함께 출력하는 수식어 `e`, 값을 받는 글자, 숫자 pid 목록 등 그 밖의 위치 인자는 `arg_not_allowed`다.
+- `ps`의 대시 옵션에서 `-x`와 사용자·그룹 선택 옵션 `-u`, `-U`, `-g`, `-G`, `--user`를 뺐다. procps는 대시 옵션 해석이 실패하면 인자 전체를 BSD식으로 다시 읽고, 이때 대시 낱말의 글자도 BSD식 옵션이 된다.
+- `ps`를 실행할 때 대시 옵션 낱말의 전체 선택 글자 `e`를 같은 뜻의 `A`로 바꿔 넘긴다(`-ef`는 `-Af`로 실행). `A`는 BSD식 해석에 없는 글자라 다시 읽기가 실패하므로 대시 옵션의 `e`가 환경 표시 수식어로 쓰이지 않는다. 값 플래그의 값, 긴 옵션, 위치 인자는 바꾸지 않으며 봉투의 `args`는 호출자가 준 값 그대로다.
+- `lsof`의 `+`로 시작하는 인자는 `-` 옵션과 같이 플래그로 보고, 정책에 없으면 `arg_not_allowed`다.
+- `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 경로 검사를 받는다. 정책이 있는 명령과 없는 명령 모두에 적용하며, 위치 인자 규칙이 `url`인 명령(`curl`)과 위치 인자를 검색어나 출력 문자열로 받는 명령(`grep`, `echo`)은 제외한다. 제외한 명령도 인자 전체는 같은 경로 규칙으로 검사한다.
+- 설정을 읽을 때 `default_page_size`가 `max_page_size`보다 크면 `max_page_size`로 줄인다. `page_info.requested_page_size`는 호출자가 상한보다 큰 `page_size`를 준 경우에만 표시된다.
+- 검증하지 않은 설정 객체로 `ParismEngine`을 만들 때 `max_concurrency`가 1 미만이면 1로, 유한한 수가 아니면 기본값 4로 본다. 이전에는 생성자에서 `RangeError`가 났다.
+- `run_paged`의 페이지 출력(stdout, stderr)에 `max_output_bytes`를 적용하고, 넘으면 `truncated: true`를 표시한다.
+- `id -u`, `id -g`가 `0`을 출력할 때 `unrecognized_output`으로 처리하던 문제를 고쳤다. 최상위 값이 모두 숫자인 결과의 `0`은 인식된 값으로 본다.
+
 ## [2.0.1] - 2026-10-03
 
 ### Documentation

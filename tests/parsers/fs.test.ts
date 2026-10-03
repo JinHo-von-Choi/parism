@@ -58,6 +58,142 @@ describe("parseLs() 특수 표기", () => {
   });
 });
 
+describe("parseLs() 구획과 표시 기호", () => {
+  type Rows = { entries: Array<{ name: string; type: string; target: string | null; modified_at: string; directory?: string }> };
+  const row = (name: string): string => `-rw-rw-r-- 1 u g 5 Oct  3 06:45 ${name}`;
+
+  it("-R 구획 머리줄을 directory로 담는다", () => {
+    const raw = [".:", "total 8", row("a.txt"), "drwxrwxr-x 2 u g 4096 Oct  3 06:45 sub", "", "./sub:", "total 4", row("c.txt"), ""].join("\n");
+    const r = parseLs("ls", ["-lR"], raw) as Rows;
+    expect(r.entries.map(e => [e.directory, e.name])).toEqual([[".", "a.txt"], [".", "sub"], ["./sub", "c.txt"]]);
+  });
+
+  it("피연산자가 둘 이상이면 파일 피연산자 항목에는 directory가 없다", () => {
+    const raw = [row("a.txt"), "", "sub:", "total 4", row("c.txt"), ""].join("\n");
+    const r = parseLs("ls", ["-l", "a.txt", "sub", "empty"], raw) as Rows;
+    expect(r.entries.map(e => e.directory)).toEqual([undefined, "sub"]);
+  });
+
+  it("이름이 콜론으로 끝나는 파일은 머리줄이 아니라 항목이다", () => {
+    const r = parseLs("ls", ["-l"], row("weird:")) as Rows;
+    expect(r.entries[0]).toMatchObject({ name: "weird:" });
+    expect(r.entries[0]!.directory).toBeUndefined();
+  });
+
+  it("-F 표시 기호를 파일 종류에 맞게 떼고 링크 대상의 기호도 뗀다", () => {
+    const raw = [
+      "-rwxr-xr-x 1 u g 10 Oct  3 06:45 run.sh*",
+      "-rw-r--r-- 1 u g 10 Oct  3 06:45 star*",
+      "drwxr-xr-x 2 u g 4096 Oct  3 06:45 sub/",
+      "prw-r--r-- 1 u g 0 Oct  3 06:45 pipe|",
+      "srwxr-xr-x 1 u g 0 Oct  3 06:45 sock=",
+      "lrwxrwxrwx 1 u g 7 Oct  3 06:45 py -> python3.12*",
+      "lrwxrwxrwx 1 u g 3 Oct  3 06:45 d -> sub/",
+    ].join("\n");
+    const r = parseLs("ls", ["-lF"], raw) as Rows;
+    expect(r.entries.map(e => e.name)).toEqual(["run.sh", "star*", "sub", "pipe", "sock", "py", "d"]);
+    expect(r.entries[5]!.target).toBe("python3.12");
+    expect(r.entries[6]!.target).toBe("sub");
+  });
+
+  it("-p는 디렉터리 슬래시만 뗀다", () => {
+    const r = parseLs("ls", ["-lp"], ["drwxr-xr-x 2 u g 4096 Oct  3 06:45 sub/", row("a|")].join("\n")) as Rows;
+    expect(r.entries.map(e => e.name)).toEqual(["sub", "a|"]);
+  });
+
+  it("표시 기호를 요청하지 않았으면 이름 끝의 기호를 건드리지 않는다", () => {
+    expect((parseLs("ls", ["-l"], row("run.sh*")) as Rows).entries[0]!.name).toBe("run.sh*");
+  });
+
+  it("long-iso와 --full-time 수정 시각을 읽는다", () => {
+    const iso  = parseLs("ls", ["-l", "--time-style=long-iso"], "-rw-rw-r-- 1 u g 28 2026-10-03 06:45 a.txt") as Rows;
+    const full = parseLs("ls", ["-l", "--full-time"], "-rw-rw-r-- 1 u g 28 2026-10-03 06:45:37.860454615 +0900 a b.txt") as Rows;
+    expect(iso.entries[0]).toMatchObject({ modified_at: "2026-10-03 06:45", name: "a.txt" });
+    expect(full.entries[0]).toMatchObject({ modified_at: "2026-10-03 06:45:37.860454615 +0900", name: "a b.txt" });
+  });
+});
+
+describe("parseDu() 변형", () => {
+  type Rows = { entries: Array<{ size: string; path: string; modified_at?: string }> };
+
+  it("--time의 시각 열을 modified_at으로 담는다", () => {
+    const r = parseDu("du", ["--time"], "4\t2026-10-03 06:45\t./empty\n60\t2026-10-03 06:45\t.\n") as Rows;
+    expect(r.entries).toEqual([
+      { size: "4", modified_at: "2026-10-03 06:45", path: "./empty" },
+      { size: "60", modified_at: "2026-10-03 06:45", path: "." },
+    ]);
+  });
+
+  it("-0은 NUL로 끝나는 레코드를 읽는다", () => {
+    const r = parseDu("du", ["-0"], "4\t./empty\0 8\t./dir with space\0") as Rows;
+    expect(r.entries.map(e => e.path)).toEqual(["./empty", "./dir with space"]);
+  });
+
+  it("묶음 안의 -0(-s0, -sh0)도 NUL 구분이고 값 옵션 뒤의 0(-d0)은 값이다", () => {
+    expect((parseDu("du", ["-s0"], "8\t.\0") as Rows).entries).toEqual([{ size: "8", path: "." }]);
+    expect((parseDu("du", ["-sh0", "a b"], "8.0K\ta b\0") as Rows).entries).toEqual([{ size: "8.0K", path: "a b" }]);
+    expect((parseDu("du", ["-d0", "x"], "8\tx\n") as Rows).entries).toEqual([{ size: "8", path: "x" }]);
+    expect((parseDu("du", ["--max-depth", "0", "x"], "8\tx\n") as Rows).entries).toEqual([{ size: "8", path: "x" }]);
+  });
+
+  it("--time이 없으면 두 번째 탭 뒤도 경로다", () => {
+    expect((parseDu("du", [], "4\ta\tb\n") as Rows).entries[0]).toEqual({ size: "4", path: "a\tb" });
+  });
+});
+
+describe("parseFind() -print0", () => {
+  it("NUL로 나뉜 경로를 읽고 줄바꿈이 든 경로를 지킨다", () => {
+    const r = parseFind("find", [".", "-print0"], "./a\0./odd\nname\0") as { paths: string[] };
+    expect(r.paths).toEqual(["./a", "./odd\nname"]);
+  });
+});
+
+describe("parseLs() 이름 보존", () => {
+  it("앞뒤 공백이 있는 이름을 그대로 담는다", () => {
+    const raw = [
+      "total 20",
+      "-rw-rw-r-- 1 nirna nirna  6 Oct  3 09:22  lead.txt",
+      "-rw-rw-r-- 1 nirna nirna  4 Oct  3 09:22 a  b.txt",
+      "-rw-rw-r-- 1 nirna nirna  8 Oct  3 09:22 trail.txt ",
+      "lrwxrwxrwx 1 nirna nirna  9 Oct  3  2025  sp link -> target",
+    ].join("\n") + "\n";
+    const { entries } = parseLs("ls", ["-l"], raw) as { entries: { name: string; target: string | null; modified_at: string }[] };
+    expect(entries.map(e => e.name)).toEqual([" lead.txt", "a  b.txt", "trail.txt ", " sp link"]);
+    expect(entries[3]).toMatchObject({ target: "target", modified_at: "Oct  3  2025" });
+  });
+
+  it("long-iso와 --full-time 시각 뒤의 이름도 그대로 담는다", () => {
+    const iso  = parseLs("ls", ["-l", "--time-style=long-iso"], "-rw-rw-r-- 1 u u 6 2026-10-03 09:22  lead.txt\n") as { entries: { name: string }[] };
+    const full = parseLs("ls", ["-l", "--full-time"], "-rw-rw-r-- 1 u u 6 2026-10-03 09:22:51.123456789 +0900  lead.txt\n") as { entries: { name: string }[] };
+    expect(iso.entries[0]!.name).toBe(" lead.txt");
+    expect(full.entries[0]!.name).toBe(" lead.txt");
+  });
+});
+
+describe("parseStat() 이름 보존", () => {
+  const block = (name: string): string => [
+    `  File: ${name}`,
+    "  Size: 6         \tBlocks: 8          IO Block: 4096   regular file",
+    "Device: 259,2\tInode: 1234       Links: 1",
+    "Access: (0664/-rw-rw-r--)  Uid: ( 1000/   nirna)   Gid: ( 1000/   nirna)",
+    "Access: 2026-10-03 09:22:51.000000000 +0900",
+    "Modify: 2026-10-03 09:22:51.000000000 +0900",
+    "Change: 2026-10-03 09:22:51.000000000 +0900",
+    " Birth: 2026-10-03 09:22:51.000000000 +0900",
+  ].join("\n") + "\n";
+
+  it("File: 뒤 한 칸 다음을 이름으로 그대로 담는다(앞뒤 공백, 탭)", () => {
+    expect((parseStat("stat", [" lead.txt"], block(" lead.txt")) as { file: string }).file).toBe(" lead.txt");
+    expect((parseStat("stat", ["trail.txt "], block("trail.txt ")) as { file: string }).file).toBe("trail.txt ");
+    expect((parseStat("stat", ["tab\there.txt"], block("tab\there.txt")) as { file: string }).file).toBe("tab\there.txt");
+  });
+
+  it("여러 파일에서도 이름을 그대로 담는다", () => {
+    const r = parseStat("stat", [" lead.txt", "plain.txt"], block(" lead.txt") + block("plain.txt")) as { files: { file: string }[] };
+    expect(r.files.map(f => f.file)).toEqual([" lead.txt", "plain.txt"]);
+  });
+});
+
 describe("parseStat()", () => {
   const statLinuxRaw = [
     "  File: /home/user/project/src/index.ts",
@@ -90,6 +226,22 @@ describe("parseStat()", () => {
     expect(result.file).toBe("/home/user/project/src/index.ts");
     expect(result.size_bytes).toBe(4096);
     expect(result.permissions).toBe("-rw-r--r--");
+  });
+
+  it("심볼릭 링크는 이름과 대상을 나눠 담는다", () => {
+    const raw = statLinuxRaw.replace("File: /home/user/project/src/index.ts", "File: link-to-a -> a.txt");
+    expect(parseStat("stat", [], raw)).toMatchObject({ file: "link-to-a", link_target: "a.txt", size_bytes: 4096 });
+  });
+
+  it("파일 여러 개는 files 배열로 구간마다 담는다", () => {
+    const second = statLinuxRaw.replace("/home/user/project/src/index.ts", "/tmp/b").replace("Size: 4096", "Size: 7");
+    const result = parseStat("stat", [], `${statLinuxRaw}\n${second}\n`) as { files: Array<{ file: string; size_bytes: number }> };
+    expect(result.files.map(f => [f.file, f.size_bytes])).toEqual([["/home/user/project/src/index.ts", 4096], ["/tmp/b", 7]]);
+  });
+
+  it("한 구간이라도 읽지 못하면 { lines } 폴백", () => {
+    const result = parseStat("stat", [], `${statLinuxRaw}\n  File: /tmp/broken\n`) as { lines: string[] };
+    expect(Array.isArray(result.lines)).toBe(true);
   });
 
   it("File/Size만 있고 나머지 필드 없으면 0/빈 문자열", () => {
@@ -131,6 +283,40 @@ describe("parseDu()", () => {
 });
 
 describe("parseDf()", () => {
+  type Rows = { filesystems: Array<{ filesystem: string; type?: string; blocks_1k?: string; size?: string; used: string; available: string; use_percent: string; mounted_on: string }>; block_size?: string };
+
+  it("1M 블록 열은 blocks_1k가 아니라 size에 담고 block_size를 남긴다", () => {
+    const raw = ["Filesystem 1M-blocks Used Available Use% Mounted on", "tmpfs 12876 46 12830 1% /run"].join("\n");
+    const r = parseDf("df", ["-m"], raw) as Rows;
+    expect(r.block_size).toBe("1M");
+    expect(r.filesystems[0]).toEqual({ filesystem: "tmpfs", size: "12876", used: "46", available: "12830", use_percent: "1%", mounted_on: "/run" });
+  });
+
+  it("1K 블록은 blocks_1k에, 단위 붙은 크기(-h, -H)는 size에 담고 block_size를 두지 않는다", () => {
+    const k = parseDf("df", [], "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/sda1 100 40 60 40% /\n") as Rows;
+    expect(k.block_size).toBeUndefined();
+    expect(k.filesystems[0]!.blocks_1k).toBe("100");
+    const h = parseDf("df", ["-h"], "Filesystem Size Used Avail Use% Mounted on\nefivarfs 181k 90k 86k 51% /sys/firmware/efi/efivars\n") as Rows;
+    expect(h.block_size).toBeUndefined();
+    expect(h.filesystems[0]).toEqual({ filesystem: "efivarfs", size: "181k", used: "90k", available: "86k", use_percent: "51%", mounted_on: "/sys/firmware/efi/efivars" });
+    const p = parseDf("df", ["-hP"], "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  915G  547G  322G  63% /\n") as Rows;
+    expect(p.filesystems[0]).toMatchObject({ size: "915G", used: "547G" });
+    expect(p.filesystems[0]!.blocks_1k).toBeUndefined();
+    const portable = parseDf("df", ["-P"], "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/sda1 100 40 60 40% /\n") as Rows;
+    expect(portable.filesystems[0]!.blocks_1k).toBe("100");
+  });
+
+  it("마운트 위치와 파일 시스템 이름의 공백을 지킨다", () => {
+    const raw = ["Filesystem 1K-blocks Used Available Use% Mounted on", "/dev/sdb1 100 40 60 40% /mnt/My Drive", "My Share 200 50 150 25% /srv/share one"].join("\n");
+    const r = parseDf("df", [], raw) as Rows;
+    expect(r.filesystems.map(f => [f.filesystem, f.mounted_on])).toEqual([["/dev/sdb1", "/mnt/My Drive"], ["My Share", "/srv/share one"]]);
+  });
+
+  it("-T는 type 열을 읽는다", () => {
+    const raw = ["Filesystem Type 1K-blocks Used Available Use% Mounted on", "/dev/sda1 ext4 100 40 60 40% /"].join("\n");
+    expect((parseDf("df", ["-T"], raw) as Rows).filesystems[0]).toMatchObject({ filesystem: "/dev/sda1", type: "ext4", blocks_1k: "100", mounted_on: "/" });
+  });
+
   it("6컬럼 미만 행은 스킵", () => {
     const raw = [
       "Filesystem     1K-blocks    Used Available Use% Mounted on",

@@ -1,19 +1,48 @@
 import { describe, it, expect } from "vitest";
 import { parseFree }       from "../../src/parsers/system/free.js";
-import { supportsFree }    from "../../src/parsers/supports.js";
+import { createRegistry }  from "../../src/parsers/index.js";
 import { parseUname }      from "../../src/parsers/system/uname.js";
 import { parseId }         from "../../src/parsers/system/id.js";
 import { parseSystemctl }  from "../../src/parsers/system/systemctl.js";
 import { parseJournalctl } from "../../src/parsers/system/journalctl.js";
 import { parseApt }         from "../../src/parsers/system/apt.js";
 import { parseBrew }       from "../../src/parsers/system/brew.js";
+import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("free 단위 처리 범위", () => {
-  it("10진 단위 옵션은 supportsFree가 거부하고 2진 단위 옵션은 환산한다", () => {
-    for (const flag of ["--kilo", "--mega", "--giga"]) expect(supportsFree([flag])).toBe(false);
+  it("테라 이상 단위 옵션은 허용 형식 밖이고 2진 단위 옵션은 환산한다", () => {
+    const registry = createRegistry();
+    for (const flag of ["--tera", "--peta", "--tebi", "--pebi"]) expect(registry.parse("free", [flag], "").parse_error?.reason).toBe("unsupported_format");
     const raw = "              total        used        free      shared  buff/cache   available\nMem:             10           4           6           0           0           6\n";
     expect(parseFree("free", ["--mebi"], raw)).toMatchObject({ unit: "MB", mem: { total_bytes: 10 * 1024 ** 2 } });
     expect(parseFree("free", [], raw)).toMatchObject({ unit: "KB", mem: { total_bytes: 10 * 1024 } });
+  });
+});
+
+describe("parseFree() 단위 표기", () => {
+  const head = "               total        used        free      shared  buff/cache   available\n";
+
+  it("-h의 0B와 소수 Gi 값을 bytes로 읽고 shared를 null로 만들지 않는다", () => {
+    const raw = `${head}Mem:           125Gi        41Gi       9.5Gi         0B        76Gi        84Gi\nSwap:             0B          0B          0B\n`;
+    const r = parseFree("free", ["-h"], raw);
+    expect(r.mem.shared).toBe(0);
+    expect(r.mem.free_bytes).toBe(Math.round(9.5 * 1024 ** 3));
+    expect(r.swap).toMatchObject({ total: 0, used: 0, free: 0 });
+  });
+
+  it("--si -h의 접미사 G는 1000 단위로 읽는다", () => {
+    const raw = `${head}Mem:            135G         44G         10G        829M         82G         90G\n`;
+    const r = parseFree("free", ["-h", "--si"], raw);
+    expect(r.mem.total_bytes).toBe(135 * 1000 ** 3);
+    expect(r.mem.shared_bytes).toBe(829 * 1000 ** 2);
+  });
+
+  it("--si와 --kilo는 1000 단위, --mega, --giga는 그 배수로 환산한다", () => {
+    const raw = `${head}Mem:             10           4           6           0           0           6\n`;
+    expect(parseFree("free", ["--si"], raw)).toMatchObject({ unit: "kilo", mem: { total_bytes: 10_000 } });
+    expect(parseFree("free", ["--mega"], raw)).toMatchObject({ unit: "mega", mem: { total_bytes: 10_000_000 } });
+    expect(parseFree("free", ["--giga"], raw)).toMatchObject({ unit: "giga", mem: { total_bytes: 10_000_000_000 } });
+    expect(parseFree("free", ["--si", "-m"], raw)).toMatchObject({ unit: "mega", mem: { total_bytes: 10_000_000 } });
   });
 });
 
@@ -131,27 +160,24 @@ describe("parseId()", () => {
   const raw = "uid=1000(nirna) gid=1000(nirna) groups=1000(nirna),4(adm),27(sudo)";
 
   it("사용자 정보를 파싱한다", () => {
-    const result = parseId("id", [], raw);
+    const result = parseId("id", [], raw) as { uid: number; user: string; groups: Array<{ name: string }> };
     expect(result.uid).toBe(1000);
     expect(result.user).toBe("nirna");
     expect(result.groups.map(g => g.name)).toContain("sudo");
   });
 
-  it("uid/gid 형식 불일치 시 0과 빈 문자열", () => {
-    const result = parseId("id", [], "invalid format");
-    expect(result.uid).toBe(0);
-    expect(result.user).toBe("");
-    expect(result.gid).toBe(0);
-    expect(result.group).toBe("");
+  it("uid/gid 형식 불일치 시 값을 만들지 않는다", () => {
+    expect(() => parseId("id", [], "invalid format")).toThrow(UnrecognizedOutputError);
+    expect(() => parseId("id", [], "")).toThrow(UnrecognizedOutputError);
   });
 
   it("groups 없으면 빈 배열", () => {
-    const result = parseId("id", [], "uid=1000(nirna) gid=1000(nirna)");
+    const result = parseId("id", [], "uid=1000(nirna) gid=1000(nirna)") as { groups: unknown[] };
     expect(result.groups).toEqual([]);
   });
 
   it("groups 배열에 uid/gid가 중복 포함되지 않는다", () => {
-    const result = parseId("id", [], raw);
+    const result = parseId("id", [], raw) as { groups: Array<{ name: string }> };
     // uid=1000, gid=1000 은 groups 파싱 대상이 아님 — groups= 섹션만 파싱
     const names = result.groups.map(g => g.name);
     // "nirna"가 groups에 한 번만 등장해야 함
@@ -215,6 +241,40 @@ describe("parseSystemctl()", () => {
   });
 });
 
+describe("parseSystemctl() 실패 판정", () => {
+  type Units = { units: Array<{ name: string; load: string; active: string; failed?: boolean; description: string }> };
+
+  it("not-found 유닛의 기호는 실패 표시가 아니다", () => {
+    const raw = [
+      "  UNIT             LOAD      ACTIVE   SUB    DESCRIPTION",
+      "* boot.automount   not-found inactive dead   boot.automount",
+      "  cron.service     loaded    active   running Regular background program",
+      "● bad.service      loaded    failed   failed  Broken",
+    ].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--all"], raw) as Units).units;
+    expect(units.map(u => u.failed)).toEqual([undefined, undefined, true]);
+    expect(units[0]).toMatchObject({ name: "boot.automount", load: "not-found", description: "boot.automount" });
+  });
+
+  it("--plain 출력(기호 없음)도 ACTIVE 열로 실패를 판정한다", () => {
+    const raw = ["UNIT LOAD ACTIVE SUB DESCRIPTION", "bad.service loaded failed failed Broken", "ok.service loaded active running Fine"].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--plain"], raw) as Units).units;
+    expect(units.map(u => u.failed)).toEqual([true, undefined]);
+  });
+
+  it("--no-legend 출력은 머리 줄 없이 모든 줄을 행으로 읽는다", () => {
+    const raw = ["home-nirna.automount loaded active running home-nirna.automount", "  dev-sda1.device loaded active plugged LOGICAL_VOLUME 1"].join("\n");
+    const units = (parseSystemctl("systemctl", ["list-units", "--no-legend"], raw) as Units).units;
+    expect(units).toHaveLength(2);
+    expect(units[1]).toMatchObject({ name: "dev-sda1.device", description: "LOGICAL_VOLUME 1" });
+  });
+
+  it("범례 앞의 빈 줄에서 행 읽기를 멈춘다", () => {
+    const raw = ["UNIT LOAD ACTIVE SUB DESCRIPTION", "a.service loaded active running A", "", "Legend: LOAD -> x", "1 loaded units listed."].join("\n");
+    expect((parseSystemctl("systemctl", [], raw) as Units).units).toHaveLength(1);
+  });
+});
+
 describe("parseJournalctl()", () => {
   const raw = [
     "2026-03-07T21:18:08+09:00 nerdvana node[2032810]: [12:18:08.468] WARN: Redis client connection closed",
@@ -234,6 +294,37 @@ describe("parseJournalctl()", () => {
     expect(result.entries[0].unit).toBe("node");
     expect(result.entries[0].pid).toBe(2032810);
     expect(result.entries[0].message).toContain("WARN");
+  });
+
+  type Entries = { entries: Array<{ timestamp: string; hostname: string; unit: string; pid?: number; message: string }> };
+
+  it("--no-hostname 출력은 호스트를 비우고 유닛을 첫 낱말로 읽는다", () => {
+    const line = "2026-10-03T06:52:05+09:00 java[1009611]:         at org.x.Y.doFilter(Y.java:107)";
+    const r = parseJournalctl("journalctl", ["-o", "short-iso", "--no-hostname"], line) as Entries;
+    expect(r.entries[0]).toMatchObject({ timestamp: "2026-10-03T06:52:05+09:00", hostname: "", unit: "java", pid: 1009611 });
+  });
+
+  it("기본 short 형식의 시각 세 낱말을 timestamp로 읽는다", () => {
+    const r = parseJournalctl("journalctl", ["-n", "2"], "Oct 03 06:50:01 nerdvana CRON[3572000]: (nirna) CMD (run)\nOct  3 06:50:02 nerdvana kernel: eth0 up") as Entries;
+    expect(r.entries[0]).toMatchObject({ timestamp: "Oct 03 06:50:01", hostname: "nerdvana", unit: "CRON", pid: 3572000, message: "(nirna) CMD (run)" });
+    expect(r.entries[1]).toMatchObject({ timestamp: "Oct  3 06:50:02", unit: "kernel", message: "eth0 up" });
+    expect(r.entries[1]!.pid).toBeUndefined();
+  });
+
+  it("-o 값에 따라 시각의 모양을 정한다", () => {
+    const full = parseJournalctl("journalctl", ["-o", "short-full"], "Sat 2026-10-03 06:52:05 KST nerdvana app.service[7]: hi") as Entries;
+    expect(full.entries[0]).toMatchObject({ timestamp: "Sat 2026-10-03 06:52:05 KST", hostname: "nerdvana", unit: "app.service", pid: 7 });
+    const unix = parseJournalctl("journalctl", ["-o", "short-unix"], "1790977925.086882 nerdvana app[7]: hi") as Entries;
+    expect(unix.entries[0]!.timestamp).toBe("1790977925.086882");
+    const mono = parseJournalctl("journalctl", ["-o", "short-monotonic"], "[ 1234.567890] nerdvana app[7]: hi") as Entries;
+    expect(mono.entries[0]).toMatchObject({ timestamp: "[ 1234.567890]", unit: "app" });
+  });
+
+  it("시각으로 시작하지 않는 줄은 직전 항목의 message에 이어 붙인다", () => {
+    const raw = "Oct 03 06:50:01 h app[1]: first\nsecond line\nOct 03 06:50:02 h app[1]: next";
+    const r = parseJournalctl("journalctl", [], raw) as Entries;
+    expect(r.entries).toHaveLength(2);
+    expect(r.entries[0]!.message).toBe("first\nsecond line");
   });
 
   it("ISO 타임스탬프 없으면 { lines } 폴백", () => {
@@ -274,6 +365,35 @@ describe("parseApt()", () => {
   it("maxItems 초과 시 truncation", () => {
     const result = parseApt("apt", ["list"], raw, { maxItems: 1 }) as { packages: unknown[] };
     expect(result.packages).toHaveLength(1);
+  });
+  type Pkgs = { packages: Array<{ name: string; suite: string; version: string; arch: string; status: string; description?: string }> };
+
+  it("대괄호가 없는 줄(설치되지 않은 패키지)도 행으로 읽는다", () => {
+    const out = parseApt("apt", ["list"], "Listing...\n0ad/noble-updates 0.0.26-6 amd64\n2ping/noble 4.5-1.2 all\n") as Pkgs;
+    expect(out.packages).toEqual([
+      { name: "0ad", suite: "noble-updates", version: "0.0.26-6", arch: "amd64", status: "" },
+      { name: "2ping", suite: "noble", version: "4.5-1.2", arch: "all", status: "" },
+    ]);
+  });
+
+  it("업그레이드 가능 표시와 now만 있는 구획을 읽는다", () => {
+    const out = parseApt("apt", ["list", "--upgradable"], [
+      "alsa-ucm-conf/noble-updates 1.2.10-1ubuntu5.15 all [upgradable from: 1.2.10-1ubuntu5.13]",
+      "alsa-utils/now 1.2.10-1 all [installed,upgradable to: 1.2.10-2]",
+    ].join("\n")) as Pkgs;
+    expect(out.packages[0]).toMatchObject({ name: "alsa-ucm-conf", version: "1.2.10-1ubuntu5.15", status: "upgradable from: 1.2.10-1ubuntu5.13" });
+    expect(out.packages[1]).toMatchObject({ name: "alsa-utils", suite: "", status: "installed,upgradable to: 1.2.10-2" });
+  });
+
+  it("apt search의 설명 줄을 직전 패키지에 붙이고 진행 문구와 빈 줄은 버린다", () => {
+    const out = parseApt("apt", ["search", "zsh"], [
+      "Sorting...", "Full Text Search...",
+      "zsh/noble 5.9-6ubuntu2 amd64", "  shell with lots of features", "",
+      "zsh-antidote/noble 1.9.4-1 all", "  ZSH plugin manager", "",
+    ].join("\n")) as Pkgs;
+    expect(out.packages).toHaveLength(2);
+    expect(out.packages[0]).toMatchObject({ name: "zsh", description: "shell with lots of features" });
+    expect(out.packages[1]).toMatchObject({ name: "zsh-antidote", description: "ZSH plugin manager" });
   });
 });
 

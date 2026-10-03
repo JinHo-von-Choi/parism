@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseEnv }  from "../../src/parsers/env/env.js";
 import { parsePwd }  from "../../src/parsers/env/pwd.js";
 import { parseWhich } from "../../src/parsers/env/which.js";
+import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("parseEnv()", () => {
   const envOutput = "HOME=/home/user\nSHELL=/bin/bash\nPATH=/usr/local/bin:/usr/bin\n";
@@ -10,6 +11,23 @@ describe("parseEnv()", () => {
     const result = parseEnv("env", [], envOutput) as { vars: Record<string, string> };
     expect(result.vars["HOME"]).toBe("/home/user");
     expect(result.vars["SHELL"]).toBe("/bin/bash");
+  });
+});
+
+describe("parseEnv() -0", () => {
+  it("NUL로 끝나는 레코드는 줄바꿈이 든 값도 그대로 읽는다", () => {
+    const r = parseEnv("env", ["-0"], "A=first line\nsecond=line\0B=2\0") as { vars: Record<string, string> };
+    expect(r.vars).toEqual({ A: "first line\nsecond=line", B: "2" });
+  });
+});
+
+describe("parseEnv() 여러 줄 값", () => {
+  it("NAME=value가 아닌 줄이 있으면 예외로 알린다", () => {
+    expect(() => parseEnv("env", [], "BASH_FUNC_f%%=() {  echo hi\n}\nHOME=/home/u\n")).toThrow(UnrecognizedOutputError);
+  });
+
+  it("빈 줄은 건너뛴다", () => {
+    expect((parseEnv("env", [], "A=1\n\nB=2=3\n") as { vars: Record<string, string> }).vars).toEqual({ A: "1", B: "2=3" });
   });
 });
 

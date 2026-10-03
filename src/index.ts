@@ -17,9 +17,9 @@ async function startMcpServer(): Promise<void> {
   const config     = await loadConfigMultiLayer();
   const registry   = createRegistry();
 
-  const { loadExternalParsers } = await import("./cli/auto-loader.js");
-  const { parismHome }          = await import("./cli/paths.js");
-  const loaded = await loadExternalParsers(parismHome(), registry);
+  const { loadExternalParsers, externalParserOptions } = await import("./cli/auto-loader.js");
+  const { parismHome }                                 = await import("./cli/paths.js");
+  const loaded = await loadExternalParsers(parismHome(), registry, externalParserOptions(config.parsers));
   if (loaded > 0) {
     console.error(`[parism] Loaded ${loaded} external parser(s)`);
   }

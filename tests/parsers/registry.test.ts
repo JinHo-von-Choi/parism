@@ -2,11 +2,22 @@ import { describe, it, expect } from "vitest";
 import { z }                    from "zod";
 import {
   ParserRegistry,
+  UnrecognizedOutputError,
   exportJsonSchema,
   type ParseContext,
 } from "../../src/parsers/registry.js";
-import type { ParserPack } from "../../src/parsers/registry.js";
+import type { ParserPack, ParserContract, IsolatedParser } from "../../src/parsers/registry.js";
 import { createRegistry }    from "../../src/parsers/index.js";
+
+describe("UnrecognizedOutputError", () => {
+  it("파서가 던지면 parser_exception이 아니라 unrecognized_output이다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => { throw new UnrecognizedOutputError("no fields"); });
+    registry.register("y", () => { throw new Error("boom"); });
+    expect(registry.parse("x", [], "data").parse_error).toEqual({ reason: "unrecognized_output", message: "no fields" });
+    expect(registry.parse("y", [], "data").parse_error?.reason).toBe("parser_exception");
+  });
+});
 
 describe("ParserRegistry", () => {
   it("등록된 파서가 없으면 parsed=null을 반환한다", () => {
@@ -132,6 +143,31 @@ describe("ParserRegistry.registerPack()", () => {
 
     expect(registry.parse("old", [], "x").parsed).toEqual({ old: true, len: 1 });
     expect(registry.parse("new", [], "x").parsed).toEqual({ new: true, len: 1 });
+  });
+
+  it("registerPack은 정의 필드를 뺀 계약 선언을 등록한다", () => {
+    const registry = new ParserRegistry();
+    registry.registerPack({
+      name: "rows", parse: () => ({ items: [] }), schema: z.unknown(), fixtures: [],
+      headerLines: 1, rowsKey: "items", rowFields: ["id"],
+    });
+    expect(registry.contractFor("rows", [])).toEqual({ headerLines: 1, rowsKey: "items", rowFields: ["id"] });
+  });
+
+  it("contractFor()는 앞쪽 전역 옵션을 건너뛰고 서브커맨드 계약을 상위 계약에 덧씌운다", () => {
+    const registry = new ParserRegistry();
+    registry.register("tool", () => null, {
+      headerLines:  1,
+      leadingFlags: { "--quiet": "bool", "-C": "value" },
+      subcommands:  { "pr list": { rowsKey: "prs" }, pr: { rowsKey: "pr" }, "": { rowsKey: "default" } },
+    });
+    expect(registry.contractFor("tool", ["-C", "dir", "--quiet", "pr", "list", "-L", "3"])).toEqual({
+      headerLines: 1, leadingFlags: { "--quiet": "bool", "-C": "value" }, rowsKey: "prs",
+    });
+    expect(registry.contractFor("tool", ["pr", "view"])?.rowsKey).toBe("pr");
+    expect(registry.contractFor("tool", ["--json"])?.rowsKey).toBe("default");
+    expect(registry.contractFor("tool", ["other"])?.rowsKey).toBeUndefined();
+    expect(registry.contractFor("missing", [])).toBeUndefined();
   });
 
   it("getPack()으로 등록된 ParserPack을 조회할 수 있다", () => {
@@ -294,5 +330,86 @@ describe("createRegistry()", () => {
     expect(commands.length).toBeGreaterThan(0);
     expect(commands).toContain("ls");
     expect(commands).toContain("git");
+  });
+});
+
+describe("ParserRegistry 계약 조회", () => {
+  const reg = createRegistry();
+
+  it("formatHint는 형식 밖 인자에만 대체 인자를 돌려준다", () => {
+    expect(reg.formatHint("ls", ["-l"])).toBeUndefined();
+    expect(reg.formatHint("ls", [])?.args).toEqual(["-l"]);
+    expect(reg.formatHint("cat", ["-A"])).toBeUndefined();
+  });
+
+  it("declaredContract와 hasParser는 등록 상태를 그대로 알린다", () => {
+    expect(reg.declaredContract("git")?.subcommands).toHaveProperty("log");
+    expect(reg.declaredContract("cat")).toBeUndefined();
+    expect(reg.hasParser("cat")).toBe(true);
+    expect(reg.hasParser("echo")).toBe(false);
+  });
+});
+
+describe("격리 실행 파서 등록", () => {
+  /** 실행 단위 없이 호출만 기록하는 격리 실행 파서 */
+  function fakeIsolated(name: string, contract: ParserContract = {}) {
+    const calls: { strict: boolean }[] = [];
+    let closed = 0;
+    const parser: IsolatedParser = {
+      name,
+      contract,
+      parse: (_args, raw, _ctx, strict) => {
+        calls.push({ strict });
+        return raw === "bad" ? { parsed: { value: raw }, schemaViolation: "value: Invalid" } : { parsed: { value: raw } };
+      },
+      close: async () => { closed++; },
+    };
+    return { parser, calls, closedCount: () => closed };
+  }
+
+  it("등록하면 명령과 팩 목록에 나타나고 계약 선언을 쓴다", () => {
+    const registry = new ParserRegistry();
+    const { parser } = fakeIsolated("ext", { headerLines: 1 });
+    registry.registerIsolated(parser);
+    expect(registry.hasParser("ext")).toBe(true);
+    expect(registry.listPacks()).toContain("ext");
+    expect(registry.declaredContract("ext")).toEqual({ headerLines: 1 });
+    expect(registry.getPack("ext")).toBeUndefined();
+  });
+
+  it("strict 검사 결과는 실행 단위가 돌려준 위반 메시지를 쓴다", () => {
+    const registry = new ParserRegistry();
+    const { parser, calls } = fakeIsolated("ext");
+    registry.registerIsolated(parser);
+    expect(registry.parse("ext", [], "bad", undefined, true).parse_error).toEqual({ reason: "schema_violation", message: "value: Invalid" });
+    expect(registry.parse("ext", [], "bad", undefined, false).parsed).toEqual({ value: "bad" });
+    expect(calls.map(c => c.strict)).toEqual([true, false]);
+  });
+
+  it("같은 이름을 다시 등록하면 이전 격리 실행 파서를 닫는다", async () => {
+    const registry = new ParserRegistry();
+    const first    = fakeIsolated("ext");
+    registry.registerIsolated(first.parser);
+    registry.register("ext", () => ({ builtin: true }));
+    expect(first.closedCount()).toBe(1);
+    expect(registry.parse("ext", [], "x").parsed).toEqual({ builtin: true });
+
+    const second = fakeIsolated("ext");
+    registry.registerIsolated(second.parser);
+    await registry.close();
+    expect(second.closedCount()).toBe(1);
+  });
+
+  it("계약 함수가 예외를 던지면 parse는 parser_exception으로 알린다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => ({ ok: true }), { supports: () => { throw new Error("supports failed"); } });
+    expect(registry.parse("x", [], "data").parse_error).toEqual({ reason: "parser_exception", message: "supports failed" });
+  });
+
+  it("계약 함수가 예외를 던지면 contractFor와 formatHint는 계약과 안내 없이 undefined를 돌려준다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => ({ ok: true }), { supports: () => { throw new Error("supports failed"); }, rowsKey: "rows" });
+    expect(registry.contractFor("x", [])).toBeUndefined();
+    expect(registry.formatHint("x", ["--any"])).toBeUndefined();
   });
 });

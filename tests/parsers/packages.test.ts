@@ -1,11 +1,67 @@
 import { describe, it, expect } from "vitest";
 import { parseNpm }   from "../../src/parsers/packages/npm.js";
 import { parseCargo } from "../../src/parsers/packages/cargo.js";
+import { createRegistry }  from "../../src/parsers/index.js";
+import { checkInvariants } from "../../src/parsers/invariants.js";
 
 describe("parseNpm() ASCII 트리", () => {
   it("ASCII 트리(+--, `--)를 인식한다", () => {
     const raw = "a@1.0.0 /p\n+-- zod@3.25.76\n`-- commander@14.0.3\n";
     expect((parseNpm("npm", ["ls"], raw) as { dependencies: { name: string }[] }).dependencies.map(d => d.name)).toEqual(["zod", "commander"]);
+  });
+});
+
+describe("parseNpm() 빈 트리", () => {
+  it("설치되지 않은 패키지를 찾은 트리의 (empty) 표시는 의존성이 아니다", () => {
+    expect(parseNpm("npm", ["ls", "left-pad"], "a@1.0.0 /p\n`-- (empty)\n\n")).toEqual({ dependencies: [] });
+    expect(parseNpm("npm", ["ls", "left-pad"], "a@1.0.0 /p\n└── (empty)\n")).toEqual({ dependencies: [] });
+  });
+
+  it("레지스트리는 빈 목록을 인식 실패로 보지 않고 불변식도 지킨다", () => {
+    const reg = createRegistry();
+    const raw = "@nerdvana/parism@2.0.2 /home/u/parism\n`-- (empty)\n\n";
+    const r   = reg.parse("npm", ["ls", "left-pad", "--all"], raw);
+    expect(r.parse_error).toBeUndefined();
+    expect(r.parsed).toEqual({ dependencies: [] });
+    expect(checkInvariants(r.parsed, raw, reg.contractFor("npm", ["ls", "left-pad", "--all"]))).toEqual([]);
+  });
+});
+
+describe("parseNpm() 트리 해석", () => {
+  type Deps = { dependencies: Array<{ name: string; version: string; depth: number; deduped?: true; problem?: string }> };
+  const parse = (raw: string): Deps["dependencies"] => (parseNpm("npm", ["ls", "--all"], raw) as Deps).dependencies;
+
+  it("UTF-8 트리의 부모 행(├─┬)과 마지막 자식 아래 들여쓰기를 깊이로 센다", () => {
+    const rows = parse([
+      "a@1.0.0 /p",
+      "├─┬ cross-spawn@7.0.6",
+      "│ ├── path-key@3.1.1",
+      "│ └─┬ which@2.0.2",
+      "│   └── isexe@2.0.0",
+      "└── zod@3.25.76",
+    ].join("\n"));
+    expect(rows.map(r => [r.name, r.depth])).toEqual([["cross-spawn", 1], ["path-key", 2], ["which", 2], ["isexe", 3], ["zod", 1]]);
+  });
+
+  it("ASCII 트리도 같은 깊이 규칙을 따른다", () => {
+    const rows = parse(["a@1 /p", "+-- cross-spawn@7.0.6", "| `-- which@2.0.2", "|   `-- isexe@2.0.0", "`-- zod@3.25.76"].join("\n"));
+    expect(rows.map(r => [r.name, r.depth])).toEqual([["cross-spawn", 1], ["which", 2], ["isexe", 3], ["zod", 1]]);
+  });
+
+  it("deduped 표시를 이름과 버전에서 떼어 deduped 필드로 담는다", () => {
+    const rows = parse("a@1 /p\n+-- ajv-formats@3.0.1\n| `-- ajv@8.18.0 deduped\n");
+    expect(rows[1]).toEqual({ name: "ajv", version: "8.18.0", depth: 2, deduped: true });
+  });
+
+  it("UNMET 표시는 problem으로 담고 범위를 버전 자리에 둔다", () => {
+    const rows = parse("a@1 /p\n+-- UNMET OPTIONAL DEPENDENCY @cfworker/json-schema@^4.1.1\n+-- left-pad@1.0.0 extraneous\n");
+    expect(rows[0]).toEqual({ name: "@cfworker/json-schema", version: "^4.1.1", depth: 1, problem: "UNMET OPTIONAL DEPENDENCY" });
+    expect(rows[1]).toMatchObject({ name: "left-pad", version: "1.0.0", problem: "extraneous" });
+  });
+
+  it("들여쓰기 한 칸이 4칸인 트리(pnpm 형식)는 첫 중첩 줄 너비로 깊이를 센다", () => {
+    const rows = parse(["root", "├── a@1", "│   ├── b@2", "│   └── c@3", "└── d@4"].join("\n"));
+    expect(rows.map(r => r.depth)).toEqual([1, 2, 2, 1]);
   });
 });
 
@@ -41,6 +97,43 @@ describe("parseNpm()", () => {
     const result = parseNpm("npm", [], noVer) as { dependencies: Array<{ name: string; version: string }> };
     expect(result.dependencies[0]?.name).toBe("lodash");
     expect(result.dependencies[0]?.version).toBe("");
+  });
+});
+
+describe("parseCargo() 표시와 깊이", () => {
+  type Crates = { crates: Array<{ name: string; version: string; depth?: number; path?: string; source?: string; deduped?: true; proc_macro?: true }> };
+
+  it("(*)는 deduped, (proc-macro)는 proc_macro, 경로는 path로 담고 깊이를 센다", () => {
+    const raw = [
+      "root-crate v0.2.0 (/w/root-crate)",
+      "├── dep-a v1.2.3 (/w/dep-a)",
+      "│   └── dep-macro v0.1.0 (proc-macro) (/w/dep-macro)",
+      "└── dep-b v0.0.9 (/w/dep-b)",
+      "    └── dep-a v1.2.3 (/w/dep-a) (*)",
+    ].join("\n");
+    const r = parseCargo("cargo", ["tree", "--offline"], raw) as Crates;
+    expect(r.crates.map(c => [c.name, c.depth])).toEqual([["root-crate", 0], ["dep-a", 1], ["dep-macro", 2], ["dep-b", 1], ["dep-a", 2]]);
+    expect(r.crates[2]).toMatchObject({ proc_macro: true, path: "/w/dep-macro" });
+    expect(r.crates[4]).toMatchObject({ deduped: true, path: "/w/dep-a" });
+    expect(r.crates[1]!.proc_macro).toBeUndefined();
+  });
+
+  it("레지스트리 크레이트의 (*)를 경로로 읽지 않는다", () => {
+    const r = parseCargo("cargo", ["tree"], "app v1.0.0 (/w/app)\n├── serde v1.0.0\n└── syn v2.0.1 (*)\n") as Crates;
+    expect(r.crates[2]).toEqual({ name: "syn", version: "v2.0.1", depth: 1, deduped: true });
+  });
+
+  it("git 소스는 source로 담는다", () => {
+    const r = parseCargo("cargo", ["tree"], "app v1.0.0 (/w/app)\n└── dep v0.1.0 (https://github.com/o/dep?branch=main#abc123)\n") as Crates;
+    expect(r.crates[1]).toMatchObject({ source: "https://github.com/o/dep?branch=main#abc123" });
+    expect(r.crates[1]!.path).toBeUndefined();
+  });
+
+  it("--prefix none은 깊이를 담지 않고 ASCII 트리도 읽는다", () => {
+    const flat = parseCargo("cargo", ["tree", "--prefix", "none"], "root v1.0.0 (/w)\ndep-a v1.2.3 (/d)\n") as Crates;
+    expect(flat.crates.map(c => c.depth)).toEqual([undefined, undefined]);
+    const ascii = parseCargo("cargo", ["tree", "--charset", "ascii"], "root v1.0.0 (/w)\n|-- a v1.0.0\n|   `-- b v1.0.0\n`-- c v1.0.0\n") as Crates;
+    expect(ascii.crates.map(c => [c.name, c.depth])).toEqual([["root", 0], ["a", 1], ["b", 2], ["c", 1]]);
   });
 });
 

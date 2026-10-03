@@ -10,7 +10,7 @@
 
 1969년 Ken Thompson이 Unix를 설계할 때 출력 대상은 사람이었다. 커널은 파일시스템 메타데이터를 구조체(`inode`, `mode`, `uid`, `gid`)로 관리하지만 `ls`는 그 구조를 인간이 읽기 좋은 텍스트로 평탄화한다. AI 에이전트는 그 텍스트를 다시 구조로 되돌리려 한다. 한 번 버려진 구조를 재구성하는 데 추론 단계와 토큰이 소모된다.
 
-parism은 두 번째와 세 번째 번역 사이에 개입한다. `execFile`로 명령을 직접 실행하고, 결과를 결정론적 파서로 구조화하여 `ResponseEnvelope`로 반환한다. 에이전트는 `stdout.parsed`를 읽기만 하면 된다. 파서가 없거나 실패해도 `stdout.raw`가 항상 보존된다.
+parism은 두 번째와 세 번째 번역 사이에 개입한다. 셸 없이 명령을 직접 실행하고, 결과를 결정론적 파서로 구조화하여 `ResponseEnvelope`로 반환한다. 에이전트는 `stdout.parsed`를 읽기만 하면 된다. 파서가 없거나 실패해도 `stdout.raw`가 항상 보존된다.
 
 v0.6.0-alpha.1 기준으로 parism은 두 배포 면을 지원한다. FastMCP 기반 stdio 서버로 에이전트와 MCP 프로토콜로 통신하는 방식과, `@nerdvana/parism/engine` 서브패스 export로 Node.js 소비자가 in-process로 직접 사용하는 라이브러리 모드. 두 면 모두 동일한 `ParismEngine` 인스턴스에 위임하므로 비즈니스 로직 drift가 없다.
 
@@ -64,7 +64,7 @@ v0.6.0-alpha.1 기준으로 parism은 두 배포 면을 지원한다. FastMCP �
           │            │            │
     ┌─────▼────┐ ┌─────▼────┐ ┌────▼──────┐
     │  guard   │ │ executor │ │ parsers   │
-    │  4겹 검사 │ │execFile  │ │ registry  │
+    │  4겹 검사 │ │spawn     │ │ registry  │
     └──────────┘ └──────────┘ └───────────┘
                                     │
                               ┌─────▼──────┐
@@ -111,9 +111,37 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 | `cwd` | string | `process.cwd()` | 작업 디렉토리 |
 | `format` | `json`\|`compact`\|`json-no-raw` | `json` | 출력 형식 |
 | `includeDiff` | boolean | `false` | 파일시스템 diff 포함 여부. `false`이면 스냅샷 생략으로 지연 감소 |
+| `select` | string[]? | 없음 | 행마다 남길 필드 이름(1~64개, 지정한 순서) |
+| `where` | Condition[]? | 없음 | 행 조건(1~16개). 모두 맞는 행만 남긴다 |
+| `sort_by` | `{ field, order? }`? | 없음 | 정렬 필드와 방향(`asc` 기본, `desc`) |
+| `limit` | int (≥0)? | 없음 | 남길 행 수. `0`이면 행 없이 `_summary`만 남는다 |
+| `array` | string? | 없음 | 대상 배열의 키. 결과에 배열이 여럿일 때 고른다 |
 
 `format=compact`: 파서 결과의 객체 배열 필드를 `{ schema: string[], rows: unknown[][] }` 컬럼 형식으로 압축한다.
 `format=json-no-raw`: `stdout.raw`를 빈 문자열로 치환한다. 파서를 신뢰하는 경우 토큰을 절감한다. 파서 부재 시 디버깅이 불가능하므로 기본값으로 사용하지 말 것.
+
+#### 투영과 필터 (`select`, `where`, `sort_by`, `limit`, `array`)
+
+파싱 결과의 최상위 배열 하나에만 적용하고 `stdout.raw`에는 적용하지 않는다. 구현은 `src/engine/projection.ts`다.
+
+- 대상 배열: `array`를 주면 그 키의 배열, 아니면 파서 계약의 `rowsKey`(5.1), 그것도 없으면 결과의 유일한 배열이다. 결과 자체가 배열(native JSON 배열)이면 그 배열이다.
+- 순서: `where` → `sort_by` → `limit` → `select`. 정렬 필드는 `select`에 없어도 된다.
+- `Condition`은 `{ field, op, value }`이며 알 수 없는 키가 있으면 거부한다.
+
+| op | value | 필드 값 |
+|---|---|---|
+| `eq`, `ne` | 문자열, 유한한 수, 불리언, `null` | `null`이 아닌 value와 같은 형. `eq null`은 값이 없는(null 또는 누락) 행, `ne null`은 값이 있는 행 |
+| `prefix`, `contains` | 문자열 | 문자열. 대소문자를 구분한다 |
+| `gt`, `gte`, `lt`, `lte` | 유한한 수 | 수 |
+
+  필드 값이 없는 행은 `prefix`, `contains`, 수 비교에 맞지 않고, `null`이 아닌 value의 `ne`에는 맞는다.
+- `sort_by`는 안정 정렬이다. 같은 값의 행은 원래 순서를 지키고, 값이 없는 행은 방향과 관계없이 뒤에 둔다. 값이 있는 행은 수, 문자열(코드 단위 순서), 불리언 가운데 한 형이어야 한다.
+- `select`는 행에 없는 필드를 만들지 않는다. 결과 행은 프로토타입 없는 객체라 `__proto__` 같은 이름도 일반 필드로 남는다.
+- 투영을 요청하면 파서는 `guard.max_items` 없이 전체 행을 내고, `where`와 `sort_by`는 전체 행에 적용한다. 보이는 행은 `limit`과 `guard.max_items` 가운데 작은 값까지이며 `max_items`로 잘렸으면 `_summary.truncated: true`다. 결과 객체 안의 대상이 아닌 배열도 `max_items`로 자르고 자른 배열의 키를 `_summary.truncated_arrays`에 남긴다.
+- 결과 요약 `_summary = { total, matched, shown, truncated?, truncated_arrays? }`(`total`은 대상 배열의 행 수, `matched`는 `where`를 통과한 행 수, `shown`은 남긴 행 수). 대상 배열이 결과 객체 안에 있으면 같은 객체의 `parsed._summary`, 결과가 최상위 배열이면 `stdout._summary`에 둔다.
+- 투영에 성공하면 `stdout.raw`를 싣지 않는다(raw는 투영 전 전체 출력이다). `format`의 `compact`와 함께 쓰면 투영한 행을 압축하고, 적응형 형식 임계값(`parsers.adaptive_format_threshold`)은 투영한 행 수로 판정한다.
+- 문법에 맞지 않는 인자는 실행하지 않고 `failure = { kind: "config", reason: "invalid_projection" }`, `exitCode: -1`이다(guard 검사 뒤). MCP 도구는 같은 문법을 입력 스키마로 검사한다.
+- 실행 뒤 투영할 수 없으면 `failure.kind = "config"`이고 `parsed`는 `null`, `stdout.raw`는 남긴다. 사유: `unknown_field`(알려진 필드는 계약의 `rowFields`와 행에 있는 키이며 메시지에 목록이 있다. 행이 객체가 아니면 필드가 없다), `type_mismatch`(필드 값의 형이 연산과 맞지 않음), `array_not_found`, `array_ambiguous`. 파싱 결과가 없으면 투영하지 않고 기존 실패를 그대로 둔다.
 
 ### 2.2 run_paged
 
@@ -124,15 +152,16 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 | 파라미터 | 타입 | 기본값 | 설명 |
 |---|---|---|---|
 | `page` | int (≥0) | `0` | 0-indexed 페이지 번호 |
-| `page_size` | int (≥1) | `guard.default_page_size` (기본 100) | 페이지당 줄 수 |
+| `page_size` | int (≥1) | `guard.default_page_size` (기본 100) | 페이지당 줄 수. `guard.max_page_size`(기본 1000)를 넘으면 그 값으로 줄인다 |
 
 `run_paged`는 파서를 실행하지 않는다. `stdout.parsed`는 항상 `null`이다. 부분 출력은 구조화 파싱이 불가능하다.
 
-`run_paged`는 스트리밍이 아니다. 명령의 전체 stdout을 실행 완료까지 메모리에 적재한 뒤 페이지 단위로 잘라 반환한다(`page`/`page_size`는 응답 절삭일 뿐 실행 범위 절삭이 아니다). 이 계층은 `max_output_bytes` 상한을 적용하지 않으므로(`runPaged` 내부에서 0으로 전달), 실질 상한은 실행을 위임받는 `execFile`의 `maxBuffer`(10MB, `src/engine/executor.ts`)가 결정한다. 전체 stdout이 10MB를 초과하면 `execFile`이 reject하고 해당 페이지 요청은 실패 봉투로 귀결된다.
+`run_paged`는 스트리밍이 아니다. 명령의 전체 stdout을 실행 완료까지 메모리에 적재한 뒤 페이지 단위로 잘라 반환한다(`page`/`page_size`는 응답 절삭일 뿐 실행 범위 절삭이 아니다). 실행 단계에는 `max_output_bytes`를 적용하지 않으므로 실행 단계의 상한은 실행기의 스트림별 버퍼 상한(10MB, `src/engine/executor.ts`)이다. 전체 stdout이 10MB를 넘으면 실행이 중단되고 `failure.reason="output_overflow"` 봉투가 반환된다. 잘라낸 페이지의 stdout과 stderr에는 `max_output_bytes`를 적용하며, 넘으면 마지막 완전한 줄까지 남기고 `truncated: true`를 표시한다.
 
 응답에 `page_info` 필드가 추가된다:
 - `page_info.page`: 현재 페이지 (0-indexed)
-- `page_info.page_size`: 요청한 페이지 크기
+- `page_info.page_size`: 적용한 페이지 크기
+- `page_info.requested_page_size`: 요청한 `page_size`가 `guard.max_page_size`를 넘어 줄였을 때만 있는 원래 요청값. `guard.default_page_size`는 설정을 읽을 때 `max_page_size` 이하로 줄이므로 `page_size`를 주지 않은 요청에는 나타나지 않는다
 - `page_info.total_lines`: stdout 전체 줄 수
 - `page_info.has_next`: 다음 페이지 존재 여부
 - `page_info.cache`: `{ hit, age_ms }`. `page=0`은 항상 새로 실행해 저장하고, `page>0`은 같은 (명령, 인자, 실경로 cwd) 결과가 30초 안에 있으면 재실행 없이 재사용한다. 최대 16항목, LRU
@@ -141,19 +170,38 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 
 에이전트 온보딩 도구. 현재 환경의 허용 명령, 사용 가능 파서, guard 제한, 버전 정보를 반환한다.
 
-파라미터: 없음.
+파라미터:
 
-응답 (`DescribeResult`):
+| 파라미터 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `cmd` | string? | 없음 | 자세히 볼 명령 이름. 주면 그 명령의 능력 요약(`CommandDescription`)만 반환한다 |
+
+`cmd` 없는 응답 (`DescribeResult`):
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `version` | string | Parism 패키지 버전 |
 | `allowed_commands` | string[] | guard에서 허용하는 명령 목록 |
 | `available_parsers` | string[] | 등록된 파서 이름 목록 |
-| `guard_summary` | object | `timeout_ms`, `max_output_bytes`, `block_patterns`, `allowed_paths`, `command_arg_restrictions` |
+| `guard_summary` | object | `timeout_ms`, `max_output_bytes`, `block_patterns`, `allowed_paths`, `command_arg_restrictions`, `profile`(`readonly` 또는 `build`), `policies`(명령별 유효 정책: `subcommands`, `flags`, `positionals`) |
 | `telemetry_enabled` | boolean | 텔레메트리 활성화 여부 |
+| `stats` | object? | `telemetry.enabled=true`일 때만. 명령별 결과 횟수(6.5) |
 
 에이전트가 Parism을 처음 사용하거나 가용 명령을 탐색할 때 호출한다. 실행 파이프라인을 거치지 않는다.
+
+`cmd`를 준 응답 (`CommandDescription`, `src/facade/capabilities.ts`). MCP 도구는 이 응답을 들여쓰기 없이 직렬화하며 기본 명령 40종 모두 2KB 이하다. 이름 목록(서브커맨드, 플래그, 필드)은 공백으로 이은 문자열이다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `cmd` | string | 명령 이름 |
+| `profile` | `readonly`\|`build` | guard 프로필 |
+| `policy` | object | 유효 guard 정책. `origin`(`default`, `build`, `config`, 정책 없이 허용된 명령은 `none`), `subcommands`, `flags`, `positionals`, 있으면 `sub_positionals`, `sub_verbs`, `sub_flags`(기본 표에 없는 서브커맨드 전용 플래그), `leading_flags`, `allowed_values`, `max_positionals`, `positional_chars`, `positional_prefix`, `file_ref_flags`, `blocked_flags`(`command_arg_restrictions`) |
+| `parser` | object\|null | 파서 계약의 형식 선언(5.1). `requires`(하나 이상 필요한 형식 플래그), `values`(허용 값이 정해진 플래그와 전체 일치 패턴), `flags`(그 밖의 처리 플래그), `exclusive`, `positionals`(`min`, `max`, `pattern`), `rows_key`, `row_fields`, `subcommands`(서브커맨드별 같은 모양, 빈 문자열 키는 서브커맨드 없는 실행). 플래그는 guard도 허용하는 것만 싣는다. 형식 선언이 없는 파서는 `{ any_args: true }`, 파서가 없으면 `null` |
+| `alternatives` | `{ from, args, reason }[]` | 형식 밖 대표 인자(`from`)에 대한 대체 인자 안내(3.2의 `failure.hint`와 같은 계산) |
+| `examples` | string[][] | 예시 인자. 현재 설정의 guard를 통과하는 것만 싣는다 |
+| `stats` | object? | `telemetry.enabled=true`일 때만. 이 명령의 결과 횟수 |
+
+`allowed_commands`에 없는 명령은 예외 없이 `{ cmd, failure: { kind: "guard", reason: "command_not_allowed", message } }`를 반환한다.
 
 ### 2.4 dry_run
 
@@ -172,7 +220,7 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `would_pass` | boolean | guard 통과 여부 |
-| `reason` | string\|null | 차단 시 사유 (`command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`) |
+| `reason` | string\|null | 차단 시 사유 (`command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`). 정책 거부는 `arg_not_allowed`이고 메시지에 차단된 인자와 정책 출처(`default`, `build`, `config`)가 들어간다. `build` 프로필 전용 명령은 `command_not_allowed`다 |
 | `message` | string\|null | 차단 시 상세 메시지 |
 
 `dry_run`은 프로세스를 생성하지 않으며, 파서를 실행하지 않는다. guard 검사만 수행한다.
@@ -210,8 +258,10 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `OutputField`:
 ```
-{ raw: string; parsed: unknown | null; parse_error?: ParseErrorField }
+{ raw: string; parsed: unknown | null; parse_error?: ParseErrorField; _summary?: ProjectionSummary }
 ```
+
+`_summary`는 투영(2.1)을 적용했고 파싱 결과가 최상위 배열일 때만 있다. 결과가 객체이면 요약은 `parsed._summary`에 있다.
 
 `raw`는 레덕션이 활성화된 경우를 제외하고 항상 원본을 보존한다.
 
@@ -221,29 +271,41 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `FailureInfo`:
 ```typescript
-{ kind: "guard" | "exec" | "parse" | "config"; reason: string; message: string }
+{
+  kind:    "guard" | "exec" | "parse" | "config";
+  reason:  string;
+  message: string;
+  hint?:   { args: string[]; reason: string };   // reason=unsupported_format일 때만
+}
 ```
 
 | kind | reason | 트리거 | ok |
 |---|---|---|---|
-| `guard` | `command_not_allowed` | `allowed_commands` 미포함 명령 | false |
+| `guard` | `command_not_allowed` | `allowed_commands` 미포함 명령, 또는 `build` 프로필에서만 정책이 있는 명령 | false |
 | `guard` | `path_not_allowed` | `allowed_paths` 밖 cwd 또는 경로 인자 | false |
 | `guard` | `injection_pattern` | `block_patterns` 일치 인자 | false |
-| `guard` | `arg_not_allowed` | `command_arg_restrictions` 차단 플래그 | false |
-| `exec` | `timeout` | 프로세스 `killed=true` 또는 `ETIMEDOUT` | false |
+| `guard` | `arg_not_allowed` | `command_arg_restrictions` 차단 플래그, 또는 명령 정책에 없는 서브커맨드·플래그·위치 인자·값 | false |
+| `exec` | `timeout` | `timeout_ms` 초과. POSIX에서는 프로세스 그룹 전체를 종료한다 | false |
 | `exec` | `spawn_failed` | `ENOENT` 또는 `EACCES` (바이너리 없음/권한) | false |
 | `exec` | `output_overflow` | 출력이 실행기 버퍼 상한(10MB)을 넘음 | false |
 | `exec` | `non_zero_exit` | 비정상 종료 코드 | false |
-| `parse` | `parser_exception` | 파서 함수가 예외 던짐 | false |
+| `parse` | `parser_exception` | 파서 함수가 예외 던짐 || true |
 | `parse` | `parser_not_found` | 등록된 파서 없고 native JSON도 아님 | **true** (정보성) |
-| `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 | false |
-| `parse` | `unsupported_format` | 파서의 `supports(args)`가 해당 출력 형식을 거부함 | false |
-| `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 | false |
-| `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
+| `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 || true |
+| `parse` | `unsupported_format` | 인자가 파서 계약의 형식 선언(5.1) 밖이거나 `supports(args)`가 거부함 || true |
+| `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 || true |
+| `config` | `invalid_projection` | `select`, `where`, `sort_by`, `limit`, `array`가 문법(2.1)에 맞지 않음. 실행하지 않는다 | false |
+| `config` | `unknown_field`, `type_mismatch`, `array_not_found`, `array_ambiguous` | 실행 뒤 투영할 수 없음(2.1). `parsed`는 `null`, `stdout.raw`는 남긴다 | 실행 결과 |
 
-`kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다.
+`kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `git log -n 3` → `["log", "-n", "3", "--format=%h%x09%an%x09%aI%x09%s"]`(작성자, 작성 시각 포함), `git status -s --ignored` → `["status", "--ignored"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`, `git log --oneline --decorate` → `["log", "--oneline", "--decorate=full"]`, `git diff --stat HEAD~1` → `["diff", "HEAD~1"]`(패치에 경로, 변경 종류, 바뀐 줄이 있다), `git branch --show-current` → `["branch", "-v"]`, `grep -r TODO src` → `["-n", "-r", "TODO", "src"]`, `ps -e` → `["aux"]`, `systemctl status cron` → `["list-units", "--all", "cron.service"]`. 같은 정보를 얻는 인자가 없으면(`ls -li`, `ps -ef` 등) `hint`가 없다.
 
-`kind=exec, reason=non_zero_exit`는 프로세스 종료 코드가 0이 아닌 모든 경우를 포함한다. `e.killed === true` 또는 `e.code === "ETIMEDOUT"`이면 `timeout`으로 분류한다. 분류 로직은 `src/engine/executor.ts`에 위치한다.
+`kind=parse, reason=parser_not_found`는 `ok=true`를 유지한다. 파서 부재는 실행 실패가 아니라 구조화 파싱 불가 알림이다. `stdout.raw`는 정상 보존된다. `ok`는 실행 결과만 나타내므로 `kind=parse`인 실패는 모두 `ok=true`다.
+
+`kind=parse` 실패는 실행이 성공했을 때만 `failure`가 된다. 실행이 실패했거나(`non_zero_exit`, `timeout`, `spawn_failed`, `output_overflow`) 종료 코드가 0이어도 stdout이 비고 stderr만 있으면, 파싱 오류는 `stdout.parse_error`에만 남고 `failure`는 실행 결과의 것(`kind=exec`와 stderr를 담은 메시지, 실행이 성공했으면 없음)이다. 예: 이름을 풀지 못한 `ping -c 1 no-such-host.invalid`는 `failure = { kind: "exec", reason: "non_zero_exit" }`이고 `stdout.parse_error.reason = "unrecognized_output"`이다. 이때 `unsupported_format`의 안내는 `stdout.parse_error.hint`에만 있다.
+
+`kind=exec, reason=non_zero_exit`는 프로세스 종료 코드가 0이 아닌 모든 경우를 포함한다. `timeout_ms`가 지나 종료시킨 실행은 `timeout`, 버퍼 상한 초과는 `output_overflow`로 분류한다. 분류 로직은 `src/engine/executor.ts`에 위치한다.
+
+실행기는 셸 없이 `spawn`으로 프로세스를 띄운다. POSIX에서는 자식을 새 프로세스 그룹으로 띄우고, 시간 초과나 버퍼 상한 초과 시 그룹 전체에 SIGKILL을 보내 자식이 띄운 프로세스도 남기지 않는다. 종료시킨 뒤에는 자식이 끝나고 200ms가 지나면 stdout, stderr 스트림을 닫고 결과를 확정하므로, 그룹 밖으로 분리된 자손이 출력 파이프를 갖고 있어도 결과 반환이 늦어지지 않는다. 실행 중인 프로세스 그룹은 추적해 SIGINT, SIGTERM 수신과 프로세스 종료 시 종료한다. 동시에 실행하는 자식 프로세스 수는 `guard.max_concurrency`(기본 4)로 제한하며, 넘는 요청은 자리가 날 때까지 대기한다. 검증하지 않은 설정 객체로 엔진을 만들 때 이 값이 1 미만이면 1로, 유한한 수가 아니면 4로 본다.
 
 ---
 
@@ -253,7 +315,7 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 
 ### (a) 화이트리스트
 
-`guard.allowed_commands`에 없는 명령은 프로세스를 생성하지 않는다. `execFile`을 호출하기 전에 차단하므로 어떤 실행도 발생하지 않는다.
+`guard.allowed_commands`에 없는 명령은 프로세스를 생성하지 않는다. 프로세스를 띄우기 전에 차단하므로 어떤 실행도 발생하지 않는다.
 
 한계: 화이트리스트 범위가 너무 넓으면 (`bash`, `sh`, `python` 등 포함 시) 방어 효과가 크게 줄어든다.
 
@@ -262,7 +324,12 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 `guard.allowed_paths`가 설정된 경우 두 가지를 검사한다.
 
 1. `cwd`가 허용 경로의 하위인지 (`path.resolve` 후 접미 슬래시 기반 prefix 비교)
-2. 경로 인자: `/`, `./`, `../`로 시작하는 인자 + `PATH_TAKING_COMMANDS`(`cat`, `find`, `ls`, `grep`, `stat`, `du`, `tree`, `head`, `tail`, `wc`, `git`, `docker`, `kubectl`, `cargo`, `node`, `npx`, `npm`)의 positional 인자 + 정책 `path` 플래그 값. 정책이 없는 명령은 슬래시를 포함한 인자, `cwd` 기준으로 존재하는 항목을 가리키는 인자, 플래그에 붙은 경로형 값 또는 존재하는 항목을 가리키는 값도 검사한다.
+2. 경로 인자: 정책이 있는 명령과 없는 명령이 같은 규칙(`collectPathCandidates`, `src/engine/guard.ts`)을 쓴다.
+   - 정책의 위치 인자 규칙이 `path`인 위치 인자와 `path` 종류 플래그 값은 형식과 관계없이 검사한다.
+   - 그 밖의 위치 인자와 플래그 값은 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키면 검사한다. 중간에 `..`가 있는 상대경로(`a/../../x`)와 허용 경로 밖을 가리키는 링크 이름도 여기에 걸린다.
+   - `key=값`, `+opt=값` 형태의 위치 인자는 첫 `=` 뒤 값이 `/`를 포함하거나 `.`, `~`로 시작하면 그 값도 검사한다. 위치 인자 규칙이 `url`인 명령과 정책에 `textPositionals`가 있는 명령(`grep`, `echo`)은 제외한다.
+   - 정책이 없는 명령은 어느 플래그가 값을 받는지 모르므로 `--x=값`의 값과, 짧은 플래그 묶음(`-abVALUE`)에서 각 글자 뒤 나머지를 값 후보로 본다. `build` 프로필의 `node`, `npx`가 대상 프로그램 몫으로 넘기는 인자도 같은 방식으로 본다.
+   - 서브커맨드, 앞에 오는 전역 플래그, 하위 동사(`gh pr list`의 `list`)는 경로 후보가 아니다.
 
 비교는 심볼릭 링크를 해석한 실경로로 한다. 프로젝트 설정의 `allowed_paths`는 실경로로 바꿔 전역 기준 경로 안에 있는 항목만 남긴다.
 
@@ -298,19 +365,84 @@ Guard는 에이전트가 생성한 명령이 시스템에 예상치 못한 범�
 `src/parsers/registry.ts`에 정의된다.
 
 ```typescript
-export interface ParserPack {
+export interface ParserPack extends ParserContract {
   name:      string;
   parse:     (raw: string, args: string[], ctx?: ParseContext) => unknown;
   schema:    z.ZodTypeAny;
   fixtures:  Fixture[];
   meta?:     { os?: string[]; version?: string };
-  supports?:    (args: string[]) => boolean;
-  headerLines?: number;
-  noise?:       RegExp;
+}
+
+type FlagArity = "bool" | "value" | "attached";
+
+export interface ParserContract {
+  // 입력 형식 선언
+  acceptedFlags?:       Record<string, FlagArity>;
+  acceptedValues?:      Record<string, RegExp>;
+  acceptedPositionals?: { min?: number; max?: number; pattern?: RegExp };
+  requiredFlags?:       string[];
+  exclusiveFlags?:      string[];
+  leadingFlags?:        Record<string, FlagArity>;
+  subcommands?:         Record<string, ParserContract>;
+  plusFlags?:           boolean;
+  singleDashLong?:      boolean;
+  supports?:            (args: string[]) => boolean;
+  hint?:                (rest: string[]) => { args: string[]; reason: string; native?: boolean } | null;
+  // 출력 모양
+  headerLines?:         number;
+  noise?:               RegExp;
+  rowsKey?:             string;
+  rowLine?:             RegExp;
+  rowFields?:           string[];
+  nulRecords?:          boolean;
+  blankRecords?:        boolean;
+  outputFlags?:         Record<string, Pick<ParserContract, "headerLines" | "noise" | "rowsKey" | "rowLine" | "rowFields" | "nulRecords" | "blankRecords">>;
 }
 ```
 
-`supports`, `headerLines`, `noise`는 선택 필드이며 파서 실패 계약을 구성한다. `supports(args)`가 `false`를 반환하면 파서를 실행하지 않고 `parse_error.reason="unsupported_format"`을 반환한다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 실패가 아니다.
+계약 필드는 모두 선택이다.
+
+입력 형식 선언은 파서가 출력 형식을 검증한 인자 범위다. 선언(`acceptedFlags`, `acceptedPositionals`, `subcommands` 가운데 하나)이 있으면 그 밖의 인자는 파서를 실행하지 않고 `parse_error.reason="unsupported_format"`을 반환하며, 메시지에 원인 인자를 밝힌다. 선언이 없으면 인자를 제한하지 않는다.
+- `acceptedFlags`: 플래그 이름과 값 방식. `bool`은 값이 없고, `value`는 붙은 값(`--x=v`, `-xv`)이나 다음 인자를 값으로 받으며, `attached`는 붙은 값만 받는다(`--color=never`, `-U0`). 단문자 묶음(`-la`)은 글자마다 나눠 검사한다. `-5` 같은 숫자 축약은 `"-<number>"` 이름으로 선언한다. `--` 뒤는 모두 위치 인자다.
+- `acceptedValues`: 플래그 값 패턴. `requiredFlags`: 이 가운데 하나 이상이 있어야 한다(`ls`의 `-l`). `exclusiveFlags`: 이 가운데 하나까지만 받는다(`id`의 `-u`, `-g`, `-G`).
+- `acceptedPositionals`: 위치 인자 개수(`min`, `max`)와 모든 위치 인자가 일치해야 하는 `pattern`.
+- `leadingFlags`: 서브커맨드 앞에 올 수 있는 전역 옵션(`git --no-pager`, `git -C <경로>`). 선언은 서브커맨드 위치를 찾는 데 쓰며 허용 여부는 guard 정책이 정한다. 기본 정책은 `git`의 전역 옵션으로 `--no-pager`만 받는다(`-c`로 출력 설정을 바꾸면 파서가 처리하지 못하는 출력이 나올 수 있다). `subcommands`: 서브커맨드 낱말(`"log"`, `"pr list"`)별 계약으로, 상위 계약에 덧씌운다. 빈 문자열 키는 서브커맨드 없이 실행한 경우다. 서브커맨드를 선언한 명령에서 선언 밖의 서브커맨드는 `unsupported_format`이다.
+- `plusFlags`: `+`로 시작하는 인자를 플래그로 본다(`dig +tcp`, `lsof +D`). `singleDashLong`: 단일 대시 긴 이름(`find -name`)을 묶음으로 나누지 않는다.
+- `supports(args)`: 선언으로 표현하기 어려운 조건. 선언 검사를 통과한 뒤 추가로 적용하며 `false`면 `unsupported_format`이다.
+- `hint(rest)`: 서브커맨드 다음 인자를 받아 같은 정보를 얻는 대체 인자를 제안한다. 레지스트리는 앞쪽 전역 옵션과 서브커맨드를 다시 붙이고, `native`가 아닌 제안은 같은 계약의 형식 검사를 통과해야 `parse_error.hint`로 내보낸다.
+
+출력 모양 필드는 실패 판정과 불변식 검사에 쓰인다. `headerLines`는 데이터가 아닌 머리 줄 수, `noise`는 합계·범례·안내 문구 같은 비데이터 줄의 패턴이다. 머리 줄과 noise 줄을 제외하고 데이터 줄이 남는데 파서 결과에 인식된 값이 하나도 없으면 `parse_error.reason="unrecognized_output"`을 반환한다. 머리 줄만 있거나 출력이 비어 있는 경우는 정상적인 빈 결과로 보며 `unrecognized_output`이 아니다. 출력이 비어 있으면 결과를 낼 수 없는 파서(`ping`, `id`, `curl -I`)는 빈 출력에서 `unrecognized_output`을 내지만, 그런 실행은 대개 실패한 실행이므로 `failure`는 실행 실패를 유지한다(3.2절). `rowsKey`는 데이터 줄 하나당 행 하나를 담는 결과 배열의 키, `rowLine`은 데이터 줄 가운데 행이 되는 줄의 패턴(없으면 모든 데이터 줄), `rowFields`는 행 객체가 가질 수 있는 필드 이름이다. `nulRecords`면 행이 줄바꿈 대신 NUL로 끝난다. `blankRecords`면 빈 줄과 공백만 있는 줄도 데이터 줄이며 마지막 종결 문자 뒤의 빈 조각만 뺀다(`grep -v`나 빈 패턴의 일치 줄). `outputFlags`는 플래그 이름이나 `"이름=값"`을 키로 하는 출력 모양 표이며, 인자에 그 플래그가 있으면 값의 필드를 유효 계약에 덧씌운다(`find`의 `-print0`, `du`의 `-0`, `grep`의 `-Z`는 `nulRecords`, `wc`의 `--total=only`는 행 배열 없음).
+
+`src/parsers/invariants.ts`의 `checkInvariants(parsed, raw, contract)`는 파싱 결과를 원본과 계약으로 대조해 위반 목록을 돌려준다. `silent_empty`(데이터 줄이 있는데 결과가 비었다), `row_count`(`rowsKey` 배열 길이와 행 줄 수가 다르다. `_summary.truncated`면 `_summary.total`과 비교), `non_finite`(NaN, Infinity), `field_names`(`rowFields` 밖의 필드)를 판정한다. 출력 전체가 JSON 배열 문서이면(`gh pr list --json`) 행 수는 배열 원소 수다. 런타임에는 `unrecognized_output` 판정만 이 모듈을 쓰고, 나머지는 시험에서 쓴다. `ParserRegistry.contractFor(cmd, args)`가 서브커맨드와 `outputFlags`를 반영한 유효 계약을 돌려준다.
+
+플랫폼 시험(`tests/platform/`)은 현재 OS에서 쓸 수 있는 명령(Linux와 macOS의 `ls`, `ps`, `df`, `du`, `stat`, `find`, `uname`, `id`, `ping -c 1 127.0.0.1`, 시험 안에서 띄운 로컬 HTTP 서버에 대한 `curl -I`, `netstat`, `lsof`, `wc`, `grep`, `which`, `git`, Linux의 `ss`, `free`, `systemctl`, Windows의 `cmd /d /c dir`, `tasklist`, `ipconfig`, `systeminfo`, `curl`, `git`)을 시험 시점에 실행해 출력을 받고, 그 출력에 위 불변식과 기본 필드 검사를 적용한다. 출력은 저장하지 않는다. 자식 환경은 실행기와 같이 `LC_ALL=C`, `LANG=C`이고, 다른 OS의 명령과 설치되지 않았거나 실패한 명령은 건너뛴다. CI는 Linux 시험 작업(`tests/**` 전체)과 macOS, Windows 작업(`npx vitest run tests/platform`)에서 이 시험을 돌린다.
+
+내장 파서의 계약은 `src/parsers/contracts.ts`에 있다. 허용 플래그는 실측으로 처리를 확인한 것만 둔다. 형식과 무관한 파서(`head`, `tail`, `cat`, `kill`)와 실측하지 못한 명령(`tree`, `terraform`, `brew`, `pnpm`, `yarn`, `tasklist`, `ipconfig`, `systeminfo`)에는 형식 선언이 없다.
+
+파서는 출력에서 값을 얻을 수 없거나 줄 해석이 모호하면 `UnrecognizedOutputError`(`src/parsers/registry.ts`)를 던진다. 레지스트리는 이 예외를 `parser_exception`이 아닌 `unrecognized_output`으로 보고한다. 기본값을 채운 결과 객체를 돌려주지 않기 위한 장치로, `ping`(통계 줄 없음), `id`(uid, gid 없음), `curl -I`(상태 줄 없음), `lsof`(머리 줄 없음), `env`(NAME=value가 아닌 줄), `grep`(-r 단일 피연산자의 파일 여부를 가릴 수 없음), `wc`(개수 열 수가 인자와 맞지 않는 줄)가 쓴다.
+
+내장 파서의 선택 출력 필드는 해당 형식일 때만 나타난다.
+
+| 파서 | 선택 필드 | 의미 |
+|-|-|-|
+| `ls -l` | `directory` | `-R`이나 피연산자 둘 이상의 구획 머리줄(`./sub:`). 파일 피연산자의 항목에는 없다 |
+| `stat` | `link_target`, `files[]` | 링크 대상. 파일이 여럿이면 최상위가 `files[]`이다 |
+| `du` | `modified_at` | `--time` |
+| `df` | `type`, `size`, `block_size` | `-T`의 종류. `blocks_1k`는 1K 블록일 때만 있다. 단위 붙은 크기(`-h`, `-H`, `--si`)는 `size`에 값 그대로("547G"), 다른 블록 단위(`-m`, `-B1M`)는 `size`에 블록 수를 담고 단위는 결과의 `block_size` |
+| `dig` | `queries` | 쿼리가 여럿일 때 응답마다의 `query`, `query_type`, `answers`, `query_time_ms`, `server`. 맨 위 필드는 첫 응답이다. 루트 이름은 `"."`이고 루트를 가리키는 값(`0 .`)은 점을 지킨다 |
+| `wc` | `total`, `entries[].lines`, `words`, `chars`, `bytes`, `max_line_length` | `--total=only`(개수 플래그 하나)의 합계. 이때는 `entries`가 없다. 개수 플래그가 하나면 행은 `count`와 `file`이고, 없거나 둘 이상이면 고른 열을 이름 붙인 필드로 담는다(플래그가 없으면 `lines`, `words`, `bytes`). `file`은 개수 다음 공백 한 칸 뒤의 이름 그대로다 |
+| `ps` | `depth` | `f`, `--forest` 트리의 깊이(루트 0) |
+| `curl -I` | `header_values`, `history` | 반복 헤더의 값 목록(`headers`에는 `, `로 이은 값), `-L`로 따라간 앞선 응답 |
+| `grep` | `byte_offset`, `context` | `-b`의 오프셋, `-A/-B/-C` 문맥 줄 표시(문맥 줄 옵션은 `-n`이 있어야 받는다). 빈 줄과 공백만 있는 일치 줄도 행이다. `-r`(`-R`, `-d recurse`)에서 이름 열이 나오면 `-n`이나 `-b`가 있어야 받는다(번호 열 없이는 콜론이 든 이름과 구분자를 가를 수 없다) |
+| `git status` | `renamed`, `ignored`, `unmerged`, `detached`, `detached_at` | 이름 바꾸기 `{old, new}`(staged에는 새 경로), `--ignored` 대상, 충돌 항목, detached HEAD(`branch`는 `HEAD`) |
+| `git log` | `refs`, `author`, `date` | `--decorate=full` 참조(git이 찍은 전체 이름 그대로: `HEAD -> refs/heads/main`, `tag: refs/tags/v1.0`), `--format=%h%x09%an%x09%aI%x09%s`의 작성자와 작성 시각(ISO 8601). 짧은 참조(`--decorate`, `--decorate=short`)는 괄호로 시작하는 제목과 가를 수 없어 받지 않는다 |
+| `git diff` | `files[].status`, `old_path`, `binary` | 변경 종류(`modified`, `added`, `deleted`, `renamed`, `copied`), 이름 바꾸기 전 경로, 바이너리 변경 |
+| `git branch` | `detached`, `points_to`, `worktree`, `upstream_gone` | detached HEAD 항목, `origin/HEAD -> origin/main`의 대상(`-v`의 열 맞춤 공백 포함), 다른 작업 트리에서 쓰는 브랜치, 사라진 상류(`[gone]`, 이때 `ahead`, `behind`는 `null`) |
+| `apt search` | `description` | 패키지 줄 아래 설명 |
+| `npm ls` | `deduped`, `problem` | `deduped` 표시, `UNMET DEPENDENCY`나 `extraneous` 같은 문제 표시. 이름으로 거른 트리의 `(empty)` 표시는 의존성이 아니라 빈 `dependencies`다 |
+| `cargo tree` | `depth`, `deduped`, `proc_macro`, `source` | 깊이, `(*)`, `(proc-macro)`, git 같은 경로가 아닌 소스 |
+
+`compact` 형식은 객체 배열의 모든 행에서 키를 모아 열을 만든다. 일부 행에만 있는 선택 필드도 열로 남는다.
 
 `schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
 
@@ -320,9 +452,31 @@ export interface ParserPack {
 
 `ParserRegistry`에는 두 등록 경로가 있다.
 
-`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 `{ supports?, headerLines?, noise? }` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
+`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 5.1의 `ParserContract` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
 
-`registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 커스텀 파서 및 외부 파서가 사용하는 경로다.
+`registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 서버 스레드에서 실행하는 커스텀 파서와 `parsers.external_isolation: "none"`인 외부 파서가 사용하는 경로다.
+
+`registerIsolated(parser)`: 다른 실행 단위에서 도는 파서(`IsolatedParser`: `name`, `contract`, `parse(args, raw, ctx, strictSchemas)`, `close()`, 선택 `withDeadline(task)`)를 등록한다. `withCallDeadline(cmd, task)`는 task 안의 그 명령 실행 단위 호출이 시간 상한 하나를 함께 쓰게 하며 `parse()`가 스스로 이 범위를 쓴다. 계약 선언은 `parser.contract`를 쓰고, strict 검사는 실행 단위가 수행해 위반 메시지를 결과와 함께 돌려준다. `listPacks()`에는 나타나고 `getPack()`으로는 조회되지 않는다. 같은 이름을 다시 등록하면 이전 실행 단위를 닫는다. `ParserRegistry.close()`는 모든 실행 단위를 끝낸다.
+
+계약 함수(`supports`, `hint`)가 예외를 던지면 `parse()`는 예외를 전파하지 않고 `parser_exception`으로 보고한다.
+
+### 5.2.1 외부 ParserPack 격리 실행
+
+`loadExternalParsers`는 기본적으로 외부 팩마다 워커 스레드(`node:worker_threads`) 하나를 띄워 `parser.js`를 그 워커에서만 읽는다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 서버 스레드에서 실행한다.
+
+- 메타데이터: 워커가 계약 선언을 구조화 복제 가능한 값으로 보낸다. `RegExp`는 그대로 전달되고, 함수(`supports`, `hint`, 서브커맨드 계약 안의 함수)는 호출할 때마다 워커에서 평가하는 대리 함수가 된다. 서버 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다.
+- 동기 호출: 서버 스레드는 요청을 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. `parse()`는 동기 API 그대로다. 기다리는 동안 서버 스레드는 막힌다. `parse()` 호출 하나의 계약 함수(`supports`, `hint`) 왕복과 `parse` 왕복, 다시 띄운 워커의 기동 대기는 시간 상한 하나를 함께 쓰므로 호출 하나가 서버 스레드를 막는 시간은 시간 상한에 수 ms를 더한 정도다. 엔진의 `run`은 파싱과 투영용 계약 조회(`contractFor`)를 한 호출로 묶는다. 예외는 처음 로드(서버 시작, `parism add`)이며 기동 상한까지 막힐 수 있다.
+- 상한: 호출 하나(계약 함수와 `parse` 왕복 전부) `parsers.external_time_limit_ms`(기본 500ms), 워커 V8 힙의 old generation `parsers.external_memory_limit_mb`(기본 128MB, `resourceLimits.maxOldGenerationSizeMb`. `Buffer`, `ArrayBuffer`처럼 힙 밖에 잡는 메모리는 제한하지 않는다), 워커 기동과 모듈 로드 2초(설정으로 바꾸지 않는다).
+- 실패: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`이며 메시지가 원인과 대기 시간을 밝힌다(`External parser 'x' did not answer within 500 ms; its worker was stopped and restarts after 2000 ms`). 스스로 끝난 워커는 종료 신호로 바로 알리고(호출 사이에 끝난 경우 포함), 메모리 상한으로 멈춘 워커는 시간 상한에서 끝난다. 워커 `error` 이벤트는 stderr 경고(`ERR_WORKER_OUT_OF_MEMORY` 등)로 남는다. 처음 로드할 때의 기동 상한 초과와 로드 실패는 그 팩만 건너뛰고 경고한다.
+- 장애 뒤 대기: 워커 장애(시간 상한 초과, 비정상 종료, 메모리 상한 초과, 다시 띄울 때의 기동 상한 초과와 로드 실패, 호출 밖에서 스스로 끝남) 뒤에는 워커를 끝내고 대기 시간 동안 워커를 띄우지 않고 바로 `parser_exception`(`External parser 'x' is paused for N ms after its worker stopped`)으로 답한다. 대기 시간은 2초에서 시작해 장애가 이어질 때마다 두 배로 늘어 30초에서 멈추며, 워커가 답하고 장애가 없었던 호출 뒤에 2초로 돌아간다. 대기 시간이 지난 뒤의 호출이 워커를 다시 띄운다. 그 호출의 상한 안에 기동이 끝나지 않으면 워커는 그대로 두고 그 호출만 `parser_exception`(`... is still starting; the call stopped at its 500 ms limit`)이며, 다음 호출이 기동을 이어서 기다린다.
+- 계약 조회: `contractFor`와 `formatHint`는 계약 함수가 예외를 던지면(워커 장애와 대기 포함) `undefined`다. 투영은 이때 계약의 `rowsKey`, `rowFields` 없이 대상 배열을 고른다.
+- 반환값: 구조화 복제 가능한 값만 받는다. 함수, Promise, Symbol이 든 값은 `parser_exception`(`Parser returned a value that cannot be passed between threads: ...`)이다. 이름이 `UnrecognizedOutputError`인 예외는 `unrecognized_output`이다.
+- strict 검사: `strict_schemas=true`이면 워커가 팩의 `schema.safeParse`로 검사한다. `safeParse`가 없는 스키마는 검사하지 않는다. 조용한 빈 결과 판정이 스키마 위반보다 먼저다.
+- 출력: 워커 안의 `console`과 `process.stdout.write`는 stderr로 간다(`process.stderr.write`는 그대로). 워커는 보안 경계가 아니므로 파일 기술자 1에 직접 쓰는 출력은 막지 못한다.
+- 팩 이름: `parism add`는 디렉터리를 만들기 전에 팩 이름이 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자인지, 설치 경로가 `parsers/` 바로 아래인지 검사하고 맞지 않으면 설치하지 않는다. 시작 시 로더도 `registry.json`의 항목 이름을 같은 형식으로 검사해 맞지 않는 항목을 경고와 함께 건너뛴다.
+- `parism add`도 팩 이름을 워커에서 읽는다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 팩 객체를 같은 스레드에서 실행하고, `parism inspect`는 내장 파서만 쓴다.
+
+워커 격리는 결함 격리이며 보안 경계가 아니다. 워커는 서버 프로세스의 권한을 그대로 가진다. [SECURITY.md](SECURITY.md)와 `docs/adr/2026-07-21-external-parser-sandbox.md` 참조.
 
 ### 5.3 strict_schemas 모드
 
@@ -348,7 +502,7 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `parism add <path>` | 파서 팩을 `~/.parism/parsers/`에 영구 등록 |
 | `parism inspect "<cmd>"` | raw / parsed / compact 비교 출력 + 토큰 수 |
 
-등록된 외부 파서는 MCP 서버 / 라이브러리 모드 시작 시 `loadExternalParsers`가 자동으로 로드한다.
+등록된 외부 파서는 MCP 서버 / 라이브러리 모드 시작 시 `loadExternalParsers`가 자동으로 로드한다. 실행 방식과 상한은 5.2.1과 6.4를 따른다.
 
 ---
 
@@ -358,17 +512,31 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 
 | 필드 | 기본값 | 설명 |
 |---|---|---|
-| `allowed_commands` | 44종 목록 | 허용 명령어 화이트리스트 |
+| `allowed_commands` | 40종 목록 | 허용 명령어 화이트리스트. 40종 모두 기본 정책이 있다 |
 | `allowed_paths` | `[process.cwd()]` | 허용 경로. 빈 배열이면 경로 제한 없음 |
 | `timeout_ms` | `10000` | 프로세스 타임아웃 (밀리초) |
 | `max_output_bytes` | `102400` (100 KB) | stdout 최대 크기. `0`이면 무제한 |
 | `max_items` | `500` | 리스트 파서 최대 항목 수. `0`이면 무제한 |
-| `default_page_size` | `100` | `run_paged` 기본 줄 수 |
+| `default_page_size` | `100` | `run_paged` 기본 줄 수. `max_page_size`보다 크면 설정을 읽을 때 그 값으로 줄인다 |
+| `max_page_size` | `1000` | `run_paged` `page_size` 상한. 1 이상 정수 |
+| `max_concurrency` | `4` | 동시에 실행하는 자식 프로세스 수 상한. 넘는 요청은 대기한다. 1 이상 정수 |
 | `block_patterns` | 9개 인젝션 패턴 | 인자 차단 패턴 |
 | `command_arg_restrictions` | node/npx/curl 제한 | 명령별 차단 플래그 |
 | `secrets` | 하위 참조 | 시크릿 설정 통합 객체 (v0.6) |
 | `profile` | `"readonly"` | `"build"`이면 빌드·시험 실행 서브커맨드를 추가로 허용. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 사용 |
 | `command_policies` | 없음 | 명령 단위 정책 덮어쓰기. 우선순위는 `command_policies`, `build` 프로필, 기본 정책 순 |
+
+기본 정책은 읽기 용도에 필요한 플래그만 허용한다. 출력 파일을 지정하는 옵션(`tree -o`, `ss -D` 등), 시스템 상태를 바꾸는 옵션과 위치 인자(`date -s`, `hostname <이름>` 등), 끝나지 않는 반복 실행 옵션(`tail -f`, `free -s`, `netstat -c` 등), 재귀 중 심볼릭 링크를 따라가는 옵션(`grep -R`, `du -L`, `tree -l`, `ls -L`, `find -L`)은 없다. `hostname`은 위치 인자를 받지 않고, `date`는 `+`로 시작하는 출력 형식 하나만 위치 인자로 받는다. `ps`의 위치 인자는 BSD식 옵션 낱말로 보고 `auxfwrljsvhcmnSHTgZ` 글자로만 이루어진 경우에만 받는다. `ps`의 대시 옵션에는 `-x`와 사용자·그룹 선택 옵션(`-u`, `-U`, `-g`, `-G`, `--user`)이 없고, 실행 시 대시 옵션 낱말의 전체 선택 글자 `e`는 같은 뜻의 `A`로 바뀐다(`-ef`는 `-Af`로 실행). `lsof`는 `+`로 시작하는 인자도 플래그로 검사한다. 기본 정책이나 `build` 프로필 정책을 쓰는 기본 명령은 인자가 정확히 `--version` 하나이면 정책 검사를 생략하며, `--help`는 허용하지 않는다. 정책이 없는 명령은 사용자가 `allowed_commands`에 직접 추가한 명령뿐이다.
+
+명령 정책은 `subcommands`, `flags`, `positionals` 외에 위치 인자 조건 `positionalChars`(허용 문자), `positionalPrefix`(접두사), `maxPositionals`(최대 개수), `plusFlags`(`+`로 시작하는 인자를 플래그로 분해), `textPositionals`(위치 인자를 검색어나 출력 문자열로 보고 `key=값`의 `=` 뒤 값을 따로 경로 검사하지 않음)를 가질 수 있다.
+
+설정 값은 레이어(전역, 프로젝트, 환경 변수, `loadConfig`의 단일 파일)마다 필드 단위로 검증한다(`src/config/schema.ts`).
+
+- 형식이 틀린 필드는 stderr에 한 번 경고하고 무시한다. 무시한 필드는 앞 레이어의 값을 유지한다. 기동은 계속한다.
+- `timeout_ms`, `max_output_bytes`, `max_items`, `default_page_size`, `adaptive_format_threshold.*`는 유한한 0 이상 정수만 받는다.
+- `command_policies`와 `command_arg_restrictions`는 명령 단위로 검사해 틀린 항목만 무시한다. 정책에 알 수 없는 키가 있으면 그 항목을 무시한다.
+- `secrets`와 `adaptive_format_threshold`는 하위 키 단위로 병합한다. 지정하지 않은 하위 값은 앞 레이어의 값을 유지한다.
+- 최상위 값이 객체가 아닌 설정 파일은 경고 후 무시한다.
 
 ### 6.2 guard.secrets (v0.6 통합)
 
@@ -413,7 +581,12 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 
 | 필드 | 기본값 | 설명 |
 |---|---|---|
-| `strict_schemas` | `false` | `registerPack` 파서 출력 Zod 검증 활성화 |
+| `strict_schemas` | `false` | `registerPack` 파서 출력 Zod 검증 활성화. 격리 실행 외부 팩은 워커가 검증한다 |
+| `external_isolation` | `"worker"` | 외부 ParserPack 실행 방식. `"worker"`는 팩마다 워커 스레드, `"none"`은 서버 스레드 |
+| `external_time_limit_ms` | `500` | 외부 팩 호출 하나(계약 함수와 parse 왕복 전부)의 시간 상한. 1 이상 정수 |
+| `external_memory_limit_mb` | `128` | 외부 팩 워커의 V8 힙(old generation) 상한. 힙 밖 메모리는 제한하지 않는다. 1 이상 정수 |
+
+`external_*` 값은 전역 설정에서 정한다. 신뢰하지 않는 프로젝트 설정(전역 `trust_project_config`가 참이 아님)은 격리를 `"worker"`로 켜거나 상한을 기준값 이하로 낮추는 값만 반영하고, 격리를 끄거나 상한을 올리는 값은 stderr 경고 후 버린다. 환경 변수로는 바꿀 수 없다.
 
 ### 6.5 telemetry
 
@@ -422,6 +595,8 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `enabled` | `false` | 파이프라인 단계별 성능 메트릭 활성화 |
 
 `config.telemetry.enabled=true`로 설정하면 `ResponseEnvelope.telemetry` 필드에 `guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`, `raw_bytes`가 포함된다. 기본 비활성이므로 응답 크기에 영향이 없다.
+
+같은 설정이 켜져 있으면 엔진은 프로세스 안에 명령별 결과 횟수를 모으고 `describe`의 `stats`로 보여 준다(`describe(cmd)`는 그 명령의 것만). 외부로 보내거나 파일에 저장하지 않으며 재시작하면 비워진다. `run` 한 번은 결과 하나로 센다. guard 거부는 `guard.<reason>`, 실행 실패는 `exec.<reason>`, 그 밖에는 파싱 결과(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`)이며 native JSON 폴백이 결과를 냈으면 `parsed`다. `run_paged`는 파싱하지 않으므로 guard 거부와 실행 실패만 센다. 허용 목록 밖의 명령은 `(unlisted)` 한 항목으로 모은다. 예: `{ "ls": { "parsed": 12, "unsupported_format": 1, "guard": { "path_not_allowed": 2 } } }`. 활성 시 `run` 한 번에 더해지는 비용은 1µs 미만이다.
 
 ```json
 {
@@ -439,7 +614,9 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 2. 프로젝트: `<cwd>/prism.config.json`
 3. 환경 변수: `PARISM_` 접두 변수
 
-MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일한 3레이어 병합을 사용한다. `createEngine({ configPath })`로 특정 파일을 지정하면 단일 파일 로더(`loadConfig`)로 그 파일만 로드한다. 파일이 없으면 무경고로 기본값에 폴백하고, JSON 파싱에 실패하면 stderr 경고 후 폴백한다.
+MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일한 3레이어 병합을 사용한다. `createEngine({ configPath })`로 특정 파일을 지정하면 단일 파일 로더(`loadConfig`)로 그 파일만 로드한다. 파일이 없으면 무경고로 기본값에 폴백하고, JSON 파싱에 실패하면 stderr 경고 후 폴백한다. `loadConfig`도 같은 필드 검증을 거치고, 실행 디렉터리가 `/`이면 기본 `allowed_paths`를 홈 디렉터리로 제한한다.
+
+정수 환경 변수는 유한한 0 이상 정수만 받는다. 목록 환경 변수가 비어 있거나 쉼표와 공백뿐이면 경고 후 무시한다. 빈 `PARISM_ALLOWED_PATHS`로 경로 제한을 끌 수 없다.
 
 | 환경 변수 | 대상 설정 | 형식 |
 |---|---|---|

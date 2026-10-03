@@ -60,6 +60,29 @@ describe("ParismEngine.run()", () => {
     expect(result.args).toEqual(["status", "-s"]);
   });
 
+  it("형식 밖의 인자는 failure.hint로 같은 정보를 얻는 인자를 안내한다", async () => {
+    const result = await engine.run("uname", { args: ["-r"] });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout.parsed).toBeNull();
+    expect(result.stdout.raw).not.toBe("");
+    expect(result.failure).toMatchObject({ kind: "parse", reason: "unsupported_format", hint: { args: ["-a"], reason: expect.any(String) } });
+    expect(result.stdout.parse_error?.hint?.args).toEqual(["-a"]);
+
+    const retry = await engine.run("uname", { args: result.failure!.hint!.args });
+    expect(retry.failure).toBeUndefined();
+    expect(retry.stdout.parsed).not.toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")("없는 사용자의 id 실행은 실행 실패와 stderr 메시지를 유지한다", async () => {
+    const result = await engine.run("id", { args: ["parism-no-such-user"] });
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatchObject({ kind: "exec", reason: "non_zero_exit" });
+    expect(result.failure?.message).toContain(result.stderr.raw.trim());
+    expect(result.stderr.raw).toContain("parism-no-such-user");
+  });
+
   it("파서 미등록 명령은 ok=true이고 failure.reason=parser_not_found를 반환한다", async () => {
     const result = await engine.run("echo", { args: ["plain text"] });
 
@@ -158,6 +181,12 @@ describe("ParismEngine.describe()", () => {
     expect(desc.guard_summary.profile).toBe("build");
     expect(desc.guard_summary.policies.npm.subcommands).toContain("run");
     expect(desc.guard_summary.policies.env.flags).toEqual(["-0"]);
+  });
+
+  it("기본 허용 명령 중 정책이 없는 명령은 없다", () => {
+    const desc    = engine.describe();
+    const missing = desc.allowed_commands.filter(c => !Object.hasOwn(desc.guard_summary.policies, c));
+    expect(missing).toEqual([]);
   });
 });
 
@@ -318,4 +347,45 @@ describe("ParismEngine.runPaged() 실행 결과 재사용", () => {
     expect(other.page_info?.cache?.hit).toBe(false);
     expect(same.page_info?.cache?.hit).toBe(true);
   });
+});
+
+describe.skipIf(process.platform === "win32")("그룹 밖 자손이 출력 파이프를 가진 실행", () => {
+  /** 새 세션으로 분리한 자손에게 stdout, stderr를 물려주고 끝나지 않는 스크립트. 첫 줄에 자손 pid를 쓴다. */
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const d = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 8000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });",
+    "process.stdout.write(String(d.pid) + '\\n');",
+    "setInterval(function () {}, 1000);",
+  ].join("\n");
+  const config = {
+    ...DEFAULT_CONFIG,
+    guard: {
+      ...DEFAULT_CONFIG.guard,
+      allowed_commands: [process.execPath, "echo"],
+      allowed_paths:    [],
+      block_patterns:   [],
+      timeout_ms:       500,
+      max_concurrency:  1,
+    },
+  };
+
+  it("시간 초과 결과를 timeout + 1초 안에 돌려주고 다음 실행을 막지 않는다", async () => {
+    const engine = new ParismEngine(config, createRegistry());
+    const start  = Date.now();
+    const first  = await engine.run(process.execPath, { args: ["-e", script] });
+    const took   = Date.now() - start;
+    const holder = Number(first.stdout.raw.trim().split("\n")[0]);
+    try {
+      expect(first.failure?.reason).toBe("timeout");
+      expect(took).toBeLessThan(1500);
+      const nextStart = Date.now();
+      const next      = await engine.run("echo", { args: ["after"] });
+      expect(next.ok).toBe(true);
+      expect(Date.now() - nextStart).toBeLessThan(1000);
+    } finally {
+      if (holder > 0) {
+        try { process.kill(holder, "SIGKILL"); } catch { /** 이미 종료됨 */ }
+      }
+    }
+  }, 15000);
 });

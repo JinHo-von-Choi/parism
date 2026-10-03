@@ -135,7 +135,7 @@ Parism의 CFR은 0%다. 파서는 deterministic code이기 때문이다. 정규�
 
 **화이트리스트**: `allowed_commands`에 없는 명령어는 실행되지 않는다. 프로세스를 만들지도 않는다. 설명 없이 거절한다.
 
-**경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. `/`, `./`, `../`로 시작하는 인자와, `cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo` 등 경로를 받는 명령의 positional 인자(`cat subdir/file`, `find src`)도 허용 경로 밖이면 차단된다. 정책이 없는 명령은 슬래시를 포함한 인자와, `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 인자와 플래그 부착 값도 검사한다. 커널 수준 샌드박스는 아니며, 가드 수준의 방어선이다.
+**경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로 인자를 검사한다. 위치 인자와 플래그 값 중 `/`를 포함하거나 `.`, `~`로 시작하거나 `cwd` 기준으로 존재하는 항목(심볼릭 링크 포함)을 가리키는 것은 모든 명령에서 검사하고, 경로를 받는 명령의 위치 인자(`cat subdir/file`, `find src`)와 경로 플래그 값은 항상 검사한다. 허용 경로 밖이면 차단된다. 커널 수준 샌드박스는 아니며, 가드 수준의 방어선이다.
 
 **인젝션 패턴 차단**: 각 인자를 개별적으로 순회하며 `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, `<`가 포함되면 실행하지 않는다. 인자 단위 검사이므로 서로 다른 인자 경계를 넘어서는 오탐이 발생하지 않는다.
 
@@ -170,29 +170,29 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 | 카테고리 | 명령어 | 파싱 결과 | 기본 허용 |
 |---|---|---|---|
-| 파일시스템 | `ls` | `entries[]`: 이름, 타입, 권한, 크기, 수정 시각, 소유자 | O |
+| 파일시스템 | `ls -l` | `entries[]`: 이름, 타입, 권한, 크기, 수정 시각, 소유자, 링크 대상, `directory`(`-R`과 피연산자 둘 이상의 구획) | O |
 | 파일시스템 | `find` | `paths[]`: 경로 목록 | O |
-| 파일시스템 | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프 | O |
-| 파일시스템 | `du` | `entries[]`: 크기, 경로 | O |
-| 파일시스템 | `df` | `filesystems[]`: 파티션, 사용량, 마운트 위치 | O |
+| 파일시스템 | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, 타임스탬프. 파일이 여럿이면 `files[]` | O |
+| 파일시스템 | `du` | `entries[]`: 크기, 경로, `modified_at`(`--time`) | O |
+| 파일시스템 | `df` | `filesystems[]`: 파티션, `type`(`-T`), 크기, 사용량, 마운트 위치. 1K 블록은 `blocks_1k`, 단위 붙은 크기(`-h`)는 `size`, 다른 블록 단위는 `size`와 `block_size` | O |
 | 파일시스템 | `tree` | `root`, `tree{}`: 계층 구조 노드, `total_files`, `total_dirs` | O |
-| 프로세스 | `ps` | `processes[]`: PID, CPU%, MEM%, 명령어 | O |
+| 프로세스 | `ps aux` | `processes[]`: PID, CPU%, MEM%, 명령어, `depth`(트리 출력) | O |
 | 프로세스 | `kill` | raw pass-through (기본 차단, prism.config.json에서 명시적 허용 시 사용) | X |
 | 네트워크 | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
-| 네트워크 | `curl -I` | `status_code`, `headers{}` | O |
+| 네트워크 | `curl -I` | `status_code`, `headers{}`, `header_values{}`(반복 헤더), `history[]`(`-L`의 앞선 응답) | O |
 | 네트워크 | `netstat` | `connections[]`: proto, local/foreign address, state | O |
-| 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태 | O |
-| 네트워크 | `ss` | `entries[]`: 상태, 수신/발신 큐, 로컬/피어 주소, 프로세스 | O |
-| 네트워크 | `dig` | `query`, `answers[]`: 타입, 값, TTL, `query_time_ms` | O |
-| 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트 | O |
-| 텍스트 | `wc` | `entries[]`: count, 파일명 | O |
+| 네트워크 | `lsof -i` | `entries[]`: PID, 프로세스명, 프로토콜, 로컬/원격 주소, 상태(`-u` 사용자 선택 포함) | O |
+| 네트워크 | `ss` | `connections[]`: netid, 상태, 수신/발신 큐, 로컬/피어 주소와 포트 | O |
+| 네트워크 | `dig` | `query`, `query_type`(QUESTION 섹션이 없으면 빈 문자열), `answers[]`: 타입, 값, TTL, `query_time_ms`. 쿼리가 여럿이면 `queries[]`에 응답마다 | O |
+| 텍스트 | `grep -n` | `matches[]`: 파일, 라인 번호, 텍스트, `byte_offset`(`-b`), `context`(`-A/-B/-C`의 문맥 줄). 빈 줄 일치(`-v`, 빈 패턴)도 행이다. `-r`의 이름 열은 `-n`이나 `-b`와 함께 받는다 | O |
+| 텍스트 | `wc` | `entries[]`: 개수 플래그 하나면 count, 파일명. 플래그가 없거나 여럿이면 `lines`, `words`, `chars`, `bytes`, `max_line_length` 가운데 고른 열과 파일명. 파일명은 공백까지 그대로. `--total=only`(개수 플래그 하나)는 `total` | O |
 | 텍스트 | `head`, `tail`, `cat` | `lines[]` | O |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message | O |
-| Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind | O |
+| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]`(`--decorate=full`의 전체 참조 이름), `author`, `date`(`--format=%h%x09%an%x09%aI%x09%s`) | O |
+| Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
+| Git | `git branch -vv` | `branches[]`: 이름, current, upstream, ahead/behind(상류가 사라졌으면 `null`), `upstream_gone`, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]`/`events[]`: 상태, 재시도, 이벤트 사유/메시지 | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`/`stats[]`: 이미지, 상태, CPU/MEM/IO | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: 이미지, 상태, 포트, 이름 / `stats[]`: CPU, 메모리, 네트워크, 블록 I/O, pids | O |
 | DevOps | `gh pr list` | `pull_requests[]`: 번호, 제목, 상태, 작성자, 라벨 | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build 프로필) | `summary`: to_add, to_change, to_destroy | O |
@@ -203,12 +203,12 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 | 시스템 | `uname` | `kernel`, `hostname`, `release`, `version`, `arch`, `os` | O |
 | 시스템 | `id` | `uid`, `gid`, `username`, `groups[]`: id, name | O |
 | 시스템 | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
-| 시스템 | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
-| 시스템 | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| 시스템 | `journalctl` (short 계열 `-o`) | `entries[]`: timestamp, hostname(`--no-hostname`이면 빈 문자열), unit, pid, message (Linux) | O |
+| 시스템 | `apt list`, `apt search` | `packages[]`: name, suite, version, arch, status, description(search) | O |
 | 시스템 | `brew list --versions` | `packages[]`: name, version | O |
-| 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| 패키지 | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth, `deduped`, `problem` | O |
 | 패키지 | `yarn list` (build 프로필) | `dependencies[]`: name, version, depth | X |
-| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path | O |
+| 패키지 | `cargo tree` (build 프로필) | `crates[]`: name, version, path, source, depth, deduped, proc_macro | O |
 | Windows | `dir` | `directory`, `entries[]`: 이름, 타입, 크기, 수정 시각, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: 이름, PID, 세션, 메모리. CSV 형식 지원 | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, 서브넷, 게이트웨이, DNS, MAC | X |
@@ -218,7 +218,36 @@ Guard의 위협 모델, 4겹 방어선의 한계, 신뢰할 수 없는 환경에
 
 파서가 없는 명령어는 `parsed: null`로 반환된다. `raw`는 그대로 있다. 파서가 예외를 던지면 `stdout.parse_error`에 `{ reason: "parser_exception", message: string }`가 포함되어 "파서 없음"과 "파서 버그"를 구분할 수 있다.
 
+> 실행이 실패했거나 stdout 없이 stderr만 있으면 `result.failure`는 실행 실패(`kind: "exec"`, stderr를 담은 메시지)를 유지하고 파싱 오류는 `stdout.parse_error`에만 남는다.
+>
 > `stdout.parse_error.reason` 은 `"parser_exception"`, `"schema_violation"`, `"unsupported_format"`, `"unrecognized_output"` 네 값을 가진다. `unsupported_format` 은 파서가 해당 인자의 출력 형식을 지원하지 않을 때, `unrecognized_output` 은 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못했을 때 반환된다. "파서 없음"은 `parse_error`가 아니라 `result.failure.reason === "parser_not_found"` 로 노출된다(`result.failure.kind === "parse"`).
+
+### 허용 형식과 대체 인자 안내
+
+내장 파서는 출력 형식을 실측으로 확인한 인자 범위(허용 플래그, 위치 인자 규칙, 서브커맨드)를 계약으로 선언한다(`src/parsers/contracts.ts`). 범위 밖의 인자는 파서를 실행하지 않고 `unsupported_format`을 반환한다. 틀린 값을 조용히 돌려주는 대신 실패를 드러내기 위해서다. `raw`는 그대로이고, 출력이 JSON 문서이면 네이티브 JSON 패스스루가 `parsed`를 채운다.
+
+같은 정보를 처리 가능한 형식으로 얻는 인자가 있으면 `result.failure.hint`(같은 값이 `stdout.parse_error.hint`)에 `{ args, reason }`으로 담긴다. `args`는 같은 명령에 그대로 넘기는 전체 인자이며 readonly 기본 정책을 통과한다.
+
+| 요청 | `failure.hint.args` |
+|-|-|
+| `uname -r` | `["-a"]` |
+| `ls -lh` | `["-l"]` |
+| `git status -s` | `["status"]` |
+| `git status -s --ignored` | `["status", "--ignored"]` |
+| `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
+| `git log --oneline --decorate` | `["log", "--oneline", "--decorate=full"]` |
+| `git diff --stat HEAD~1` | `["diff", "HEAD~1"]` |
+| `git branch --show-current` | `["branch", "-v"]` |
+| `grep -r TODO src` | `["-n", "-r", "TODO", "src"]` |
+| `ps -e` | `["aux"]` |
+| `systemctl status cron` | `["list-units", "--all", "cron.service"]` |
+| `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
+| `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
+| `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
+| `npm ls --parseable` | `["ls", "--json"]` |
+
+같은 정보를 얻는 인자가 없으면(`ls -li`, `ps -ef`, `grep -z` 등) `hint`가 없다.
 
 ### 네이티브 JSON 패스스루
 
@@ -280,7 +309,7 @@ if (!result.ok) {
 console.log(result.stdout.parsed);
 ```
 
-RunOptions — `args` / `cwd` / `format` / `includeDiff`. RunPagedOptions — 위 옵션 전체 + `page` / `page_size`.
+RunOptions: `args` / `cwd` / `format` / `includeDiff` / `select` / `where` / `sort_by` / `limit` / `array`. RunPagedOptions: `args` / `cwd` / `format` / `includeDiff` + `page` / `page_size`. `engine.describe("git")`은 한 명령의 능력 요약을 돌려준다.
 
 설계 상세는 [SPECIFICATION.md](SPECIFICATION.md) §1.1 참조.
 
@@ -315,6 +344,7 @@ Parism 은 MCP stdio 프로토콜을 통해 주요 AI CLI/IDE 에 연결할 수 
 - `cwd` — 작업 디렉토리 (기본값: 현재 디렉토리)
 - `format` — 출력 형식 (`"json"` 기본값, `"compact"`, `"json-no-raw"`). compact는 리스트형 출력을 schema+rows 컬럼 기반으로 압축하여 토큰 비용을 절감한다.
 - `includeDiff` — 파일시스템 diff 포함 여부 (기본값: `false`). `false`면 스냅샷 생략으로 지연 감소. MCP 고빈도 호출 시 권장.
+- `select`, `where`, `sort_by`, `limit`, `array`: 서버 측 투영과 필터. 아래 참조.
 
 compact 예시:
 
@@ -325,6 +355,26 @@ compact 예시:
 }
 ```
 
+#### 투영과 필터
+
+`select`(필드 목록), `where`(조건 목록), `sort_by`(`{ field, order }`), `limit`(행 수)은 파싱 결과의 최상위 배열(`ls`의 `entries`, `git log`의 `commits` 등)에만 적용한다. 적용 순서는 `where`, `sort_by`, `limit`, `select`다. 배열이 여럿이면 `array`로 고른다.
+
+```json
+{
+  "cmd": "ls", "args": ["-l"],
+  "where":   [{ "field": "type", "op": "eq", "value": "file" }, { "field": "size_bytes", "op": "gt", "value": 1000 }],
+  "sort_by": { "field": "size_bytes", "order": "desc" },
+  "limit":   10,
+  "select":  ["name", "size_bytes"]
+}
+```
+
+- 조건 연산: `eq`, `ne`(문자열, 수, 불리언, `null`), `prefix`, `contains`(문자열, 대소문자 구분), `gt`, `gte`, `lt`, `lte`(수). 조건은 모두 맞아야 한다.
+- 결과에는 `_summary: { total, matched, shown }`이 붙고 `stdout.raw`는 실리지 않는다. 결과 객체 안의 배열이면 `parsed._summary`, 결과가 배열이면 `stdout._summary`다.
+- 정렬은 안정 정렬이며 값이 없는 행은 뒤에 둔다. `format: "compact"`와 함께 쓸 수 있고 적응형 형식 임계값은 줄어든 행 수를 본다.
+- 없는 필드나 형이 맞지 않는 비교는 `failure.kind = "config"`(`unknown_field`, `type_mismatch`)이며 raw를 남긴다. 문법이 틀린 인자는 실행하지 않는다.
+- 500개 항목 디렉터리의 `ls -l`에서 `select: ["name","size_bytes"], limit: 50`은 응답 토큰을 96% 줄인다(28,609 → 1,066, 기본 설정, gpt-tokenizer).
+
 ### run_paged
 
 대용량 출력을 페이지 단위로 읽는다. `ps aux`, `find`, `grep -r` 등에 사용한다.
@@ -333,6 +383,7 @@ compact 예시:
 - `cmd`, `args`, `cwd` — `run`과 동일
 - `page` — 0-indexed 페이지 번호 (기본값: `0`)
 - `page_size` — 페이지당 줄 수 (기본값: `default_page_size` 설정값, 기본 100)
+- `page_size` 상한: `max_page_size`(기본 1000). 넘는 요청은 그 값으로 줄이고 `page_info.requested_page_size`에 요청값을 남긴다
 - `includeDiff` — 파일시스템 diff 포함 여부 (기본값: `false`). `false`면 스냅샷 생략으로 지연 감소.
 
 응답 추가 필드:
@@ -354,7 +405,8 @@ compact 예시:
 
 에이전트 온보딩 도구. 현재 환경의 허용 명령, 사용 가능 파서, guard 제한, 버전 정보를 반환한다.
 
-파라미터: 없음.
+파라미터:
+- `cmd`: 선택. 주면 그 명령의 능력 요약만 반환한다(아래).
 
 응답:
 - `version` — Parism 패키지 버전
@@ -362,8 +414,16 @@ compact 예시:
 - `available_parsers` — 등록된 파서 이름 목록
 - `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns`(전체 배열), `allowed_paths`
 - `telemetry_enabled` — 텔레메트리 활성화 여부
+- `stats`: 텔레메트리를 켰을 때만. 명령별 결과 횟수
 
 에이전트가 Parism을 처음 사용할 때 이 도구를 먼저 호출하면 가용 명령과 제한 사항을 한눈에 파악할 수 있다.
+
+`describe({ cmd: "git" })`는 한 명령의 정보를 2KB 이하로 돌려준다. 정책 거부나 형식 미지원으로 재시도하기 전에 확인하는 용도다.
+- `policy`: guard가 허용하는 서브커맨드, 플래그, 위치 인자 규칙과 정책 출처(`origin`: `default`, `build`, `config`, `none`)
+- `parser`: 파서가 처리하는 형식. `requires`(하나 이상 필요한 플래그), `values`(값 패턴), `flags`, `rows_key`, `row_fields`, 서브커맨드별 같은 모양
+- `alternatives`: 형식 밖 인자를 대신할 인자(`{ from, args, reason }`)
+- `examples`: 현재 guard를 통과하는 예시 인자
+- 이름 목록은 공백으로 이은 문자열이다. 허용되지 않은 명령은 `failure`(`command_not_allowed`)를 담은 결과다.
 
 ### dry_run
 
@@ -408,7 +468,10 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
     }
   },
   "parsers": {
-    "strict_schemas": false
+    "strict_schemas": false,
+    "external_isolation": "worker",
+    "external_time_limit_ms": 500,
+    "external_memory_limit_mb": 128
   },
   "telemetry": {
     "enabled": false
@@ -426,7 +489,9 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `parsers.strict_schemas`를 `true` 로 설정하면 각 파서의 Zod 스키마로 파싱 결과를 검증한다. 스키마 위반 시 `failure.reason === "schema_violation"` 을 반환한다. 기본 `false` 이며 opt-in 방식이다.
 
-`telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다.
+`parsers.external_isolation`, `external_time_limit_ms`, `external_memory_limit_mb`는 외부 파서 팩의 실행 방식과 상한이다(아래 "외부 파서 격리 실행"). 전역 설정에서 정하며, 신뢰하지 않는 프로젝트 설정은 격리를 끄거나 상한을 올리지 못한다.
+
+`telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다. 켜면 프로세스 안에 명령별 결과 횟수(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, 사유별 `guard`, `exec`)도 모아 `describe`의 `stats`로 보여 준다. 외부로 보내거나 저장하지 않는다.
 
 > legacy `env_secret_patterns` 는 v2.0.0 에서 제거됐다. 설정에 남아 있으면 stderr 에 경고하고 무시한다.
 
@@ -506,13 +571,29 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* 구조화된 결과 반환 */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
-  supports: (args) => !args.includes("--json"), // 선택: false면 unsupported_format
-  headerLines: 1,                                // 선택: 데이터가 아닌 머리 줄 수
-  noise: /^Total /,                              // 선택: 데이터가 아닌 줄 패턴
+  acceptedFlags: { "-a": "bool", "-n": "value" }, // 선택: 출력 형식을 검증한 플래그. 그 밖은 unsupported_format
+  acceptedPositionals: { max: 1 },                // 선택: 위치 인자 규칙
+  supports: (args) => args.length < 4,            // 선택: 선언 뒤에 추가로 적용하는 규칙
+  headerLines: 1,                                 // 선택: 데이터가 아닌 머리 줄 수
+  noise: /^Total /,                               // 선택: 데이터가 아닌 줄 패턴
+  rowsKey: "items",                               // 선택: 데이터 줄마다 행 하나를 담는 배열(불변식 검사용)
 };
 
 export default pack;
 ```
+
+### 외부 파서 격리 실행
+
+등록한 팩은 기본적으로 팩마다 하나의 워커 스레드에서 읽고 실행한다(`parsers.external_isolation: "worker"`). 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받으며, `supports`와 `hint` 같은 함수 선언은 호출할 때마다 워커에서 평가한다. `parse()` 호출 하나(`supports`, `hint` 왕복 포함)가 `external_time_limit_ms`(기본 500ms)를 넘기거나, 워커가 비정상 종료하거나, V8 힙이 `external_memory_limit_mb`(기본 128MB)를 넘으면 `parse_error.reason = "parser_exception"`으로 보고한다. 그 뒤 대기 시간(2초에서 시작해 장애가 이어지면 두 배씩, 최대 30초) 동안은 워커를 띄우지 않고 바로 실패로 답하고, 대기 시간이 지난 뒤의 호출이 워커를 다시 띄운다. 서버는 계속 응답한다. `strict_schemas` 검사는 워커가 팩 스키마로 수행한다.
+
+- `parse()`의 반환값은 구조화 복제가 가능한 값이어야 한다. 함수, Promise, Symbol이 든 값은 `parser_exception`이다.
+- `parse()`는 서버 스레드의 전역 상태를 볼 수 없다. 팩 안의 `console`과 `process.stdout.write` 출력은 stderr로 간다.
+- 힙 상한은 V8 힙만 제한한다. `Buffer`처럼 힙 밖에 잡는 메모리는 제한하지 않는다.
+- 호출마다 입력과 결과를 복제하는 비용이 든다. 20줄 입력에서 호출당 약 0.1ms, 500줄 입력에서 약 1.6ms가 더해진다(`npm run benchmark:external`).
+- 이전처럼 서버 스레드에서 실행하려면 전역 `~/.parism/prism.config.json`에 `"parsers": { "external_isolation": "none" }`을 둔다.
+- `parism add`도 팩 이름을 워커에서 읽는다. 팩 이름은 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자여야 한다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 같은 스레드에서 실행한다.
+
+워커 격리는 결함 격리이지 보안 샌드박스가 아니다. 워커는 서버 프로세스의 권한(파일, 네트워크, 자식 프로세스, 환경 변수)을 그대로 가진다. 직접 작성했거나 검토한 팩만 등록하고, 신뢰할 수 없는 제3자 팩은 Parism 전체를 컨테이너나 VM 안에서 실행한다. [SECURITY.md](SECURITY.md) 참조.
 
 인자 없이 `parism`을 실행하면 기존과 동일하게 MCP 서버로 동작한다.
 

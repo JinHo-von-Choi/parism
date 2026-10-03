@@ -127,7 +127,7 @@ There are four layers of defense.
 
 **Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
 
-**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. Args starting with `/`, `./`, `../` and positional args of path-taking commands (`cat`, `find`, `ls`, `grep`, `git`, `docker`, `kubectl`, `cargo`, e.g. `cat subdir/file`, `find src`) are checked. For commands without a policy, args containing `/` and args or attached flag values that name an existing entry under `cwd` (including symbolic links) are checked as well. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
+**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. For every command, positional args and flag values that contain `/`, start with `.` or `~`, or name an existing entry under `cwd` (including symbolic links) are checked; positional args of path-taking commands (e.g. `cat subdir/file`, `find src`) and path flag values are always checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
 
 **Injection Pattern Blocking**: Each argument is checked individually for `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`. Per-argument checking prevents cross-boundary false positives (e.g., `["foo>", ">bar"]` is not falsely detected as `>>`).
 
@@ -153,29 +153,29 @@ The agent receives the block reason in the same envelope structure as any other 
 
 | Category | Command | Parsed Output | Default |
 |---|---|---|---|
-| Filesystem | `ls` | `entries[]`: name, type, permissions, size, modified time, owner | O |
+| Filesystem | `ls -l` | `entries[]`: name, type, permissions, size, modified time, owner, link target, `directory` (`-R` and multiple operands) | O |
 | Filesystem | `find` | `paths[]`: list of paths | O |
-| Filesystem | `stat` | `file`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps | O |
-| Filesystem | `du` | `entries[]`: size, path | O |
-| Filesystem | `df` | `filesystems[]`: partition, usage, mount point | O |
+| Filesystem | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps. `files[]` for several files | O |
+| Filesystem | `du` | `entries[]`: size, path, `modified_at` (`--time`) | O |
+| Filesystem | `df` | `filesystems[]`: partition, `type` (`-T`), size, usage, mount point. 1K blocks use `blocks_1k`, sizes with units (`-h`) use `size`, other block units use `size` and `block_size` | O |
 | Filesystem | `tree` | `root`, `tree{}`: hierarchical node map, `total_files`, `total_dirs` | O |
-| Process | `ps` | `processes[]`: PID, CPU%, MEM%, command | O |
+| Process | `ps aux` | `processes[]`: PID, CPU%, MEM%, command, `depth` (tree output) | O |
 | Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
 | Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
-| Network | `curl -I` | `status_code`, `headers{}` | O |
+| Network | `curl -I` | `status_code`, `headers{}`, `header_values{}` (repeated headers), `history[]` (earlier responses of `-L`) | O |
 | Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
-| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state | O |
-| Network | `ss` | `connections[]`: state, recv/send queue, local/peer address | O |
-| Network | `dig` | `query`, `answers[]`: type, value, TTL, `query_time_ms` | O |
-| Text | `grep -n` | `matches[]`: file, line number, text | O |
-| Text | `wc` | `entries[]`: count, filename | O |
+| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state (also with `-u` user selection) | O |
+| Network | `ss` | `connections[]`: netid, state, recv/send queue, local/peer address and port | O |
+| Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms`. Several queries add `queries[]`, one per response | O |
+| Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`). Blank matching lines (`-v`, empty pattern) are rows. The file name column of `-r` is accepted with `-n` or `-b` | O |
+| Text | `wc` | `entries[]`: count and filename for one counter flag; with no counter flag or several, the chosen columns of `lines`, `words`, `chars`, `bytes`, `max_line_length` and the filename. Filenames keep their spaces. `--total=only` (one counter flag) gives `total` | O |
 | Text | `head`, `tail`, `cat` | `lines[]` | O |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message | O |
-| Git | `git diff` | `files_changed[]` | O |
-| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind | O |
+| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
+| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (full ref names of `--decorate=full`), `author`, `date` (`--format=%h%x09%an%x09%aI%x09%s`) | O |
+| Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
+| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind (`null` when the upstream is gone), `upstream_gone`, `detached`, `points_to` | O |
 | DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]` / `stats[]`: image, status, CPU/MEM/IO | O |
+| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: image, status, ports, names / `stats[]`: CPU, memory, network, block I/O, pids | O |
 | DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
 | DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
 | DevOps | `terraform plan` (build profile) | `summary`: to_add, to_change, to_destroy | O |
@@ -186,12 +186,12 @@ The agent receives the block reason in the same envelope structure as any other 
 | System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
 | System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name | O |
 | System | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
-| System | `journalctl -o short-iso` | `entries[]`: timestamp, hostname, unit, pid, message (Linux) | O |
-| System | `apt list --installed` | `packages[]`: name, version, arch, status | O |
+| System | `journalctl` (short `-o` formats) | `entries[]`: timestamp, hostname (empty with `--no-hostname`), unit, pid, message (Linux) | O |
+| System | `apt list`, `apt search` | `packages[]`: name, suite, version, arch, status, description (search) | O |
 | System | `brew list --versions` | `packages[]`: name, version | O |
-| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth | O |
+| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth, `deduped`, `problem` | O |
 | Package | `yarn list` (build profile) | `dependencies[]`: name, version, depth | X |
-| Package | `cargo tree` (build profile) | `crates[]`: name, version, path | O |
+| Package | `cargo tree` (build profile) | `crates[]`: name, version, path, source, depth, deduped, proc_macro | O |
 | Windows | `dir` | `directory`, `entries[]`: name, type, size, modified time, `free_bytes` | X |
 | Windows | `tasklist` | `processes[]`: name, PID, session, memory. CSV format supported | X |
 | Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, subnet, gateway, DNS, MAC | X |
@@ -201,7 +201,36 @@ Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "
 
 Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
 
+> When the command failed, or stdout is empty and only stderr has text, `result.failure` keeps the execution failure (`kind: "exec"` with the stderr text) and the parse error stays only in `stdout.parse_error`.
+>
 > `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error`; it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+
+### Accepted Formats and Alternative Args
+
+Each built-in parser declares the argument range whose output format was verified on real output (accepted flags, positional rules, subcommands) in its contract (`src/parsers/contracts.ts`). Args outside that range do not run the parser and return `unsupported_format`, so a wrong result is reported as a failure instead of being returned silently. `raw` is kept, and when the output is a JSON document the native JSON passthrough fills `parsed`.
+
+When other args give the same information in a handled format, `result.failure.hint` (same value in `stdout.parse_error.hint`) carries `{ args, reason }`. `args` is the full argument list for the same command and passes the readonly default policy.
+
+| Request | `failure.hint.args` |
+|-|-|
+| `uname -r` | `["-a"]` |
+| `ls -lh` | `["-l"]` |
+| `git status -s` | `["status"]` |
+| `git status -s --ignored` | `["status", "--ignored"]` |
+| `git log --oneline --graph` | `["log", "--format=%h %s"]` |
+| `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
+| `git log --oneline --decorate` | `["log", "--oneline", "--decorate=full"]` |
+| `git diff --stat HEAD~1` | `["diff", "HEAD~1"]` |
+| `git branch --show-current` | `["branch", "-v"]` |
+| `grep -r TODO src` | `["-n", "-r", "TODO", "src"]` |
+| `ps -e` | `["aux"]` |
+| `systemctl status cron` | `["list-units", "--all", "cron.service"]` |
+| `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
+| `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
+| `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
+| `npm ls --parseable` | `["ls", "--json"]` |
+
+There is no `hint` when no args give the same information (`ls -li`, `ps -ef`, `grep -z`, and so on).
 
 ### Native JSON Passthrough
 
@@ -276,6 +305,27 @@ Parameters:
 - `cwd` — working directory (default: current directory)
 - `format` — output format (`"json"` default, `"compact"`, `"json-no-raw"`)
 - `includeDiff` — include filesystem diff (default: `false`). `false` skips snapshot for lower latency. Recommended for MCP.
+- `select`, `where`, `sort_by`, `limit`, `array`: server-side projection and filtering, see below.
+
+#### Projection and filtering
+
+`select` (field names), `where` (conditions), `sort_by` (`{ field, order }`) and `limit` (row count) apply only to the top-level array of the parsed result (`entries` for `ls`, `commits` for `git log`, and so on), in the order `where`, `sort_by`, `limit`, `select`. When the result has several arrays, pick one with `array`.
+
+```json
+{
+  "cmd": "ls", "args": ["-l"],
+  "where":   [{ "field": "type", "op": "eq", "value": "file" }, { "field": "size_bytes", "op": "gt", "value": 1000 }],
+  "sort_by": { "field": "size_bytes", "order": "desc" },
+  "limit":   10,
+  "select":  ["name", "size_bytes"]
+}
+```
+
+- Operators: `eq`, `ne` (string, number, boolean or `null`), `prefix`, `contains` (string, case-sensitive), `gt`, `gte`, `lt`, `lte` (number). All conditions must hold.
+- The result carries `_summary: { total, matched, shown }` and omits `stdout.raw`. The summary is `parsed._summary` when the array sits inside the result object, or `stdout._summary` when the result itself is an array.
+- Sorting is stable and rows without the field go last. Works with `format: "compact"`; the adaptive format thresholds see the reduced row count.
+- An unknown field or a comparison on the wrong type returns `failure.kind = "config"` (`unknown_field`, `type_mismatch`) and keeps raw. Malformed arguments are rejected before execution.
+- For `ls -l` on a 500-entry directory, `select: ["name","size_bytes"], limit: 50` cuts the response from 28,609 to 1,066 tokens (96%, default config, gpt-tokenizer).
 
 ### run_paged
 
@@ -285,6 +335,7 @@ Parameters:
 - `cmd`, `args`, `cwd` — same as `run`
 - `page` — 0-indexed page number (default: `0`)
 - `page_size` — lines per page (default: `default_page_size`, 100 by default)
+- `page_size` limit: `max_page_size` (1000 by default). Larger requests are reduced to it and the request is kept in `page_info.requested_page_size`
 - `includeDiff` — include filesystem diff (default: `false`)
 
 Extra fields:
@@ -297,7 +348,8 @@ Extra fields:
 
 Agent onboarding tool. Returns allowed commands, available parsers, guard limits, and version info.
 
-Parameters: none.
+Parameters:
+- `cmd`: optional. When given, returns only that command's capability summary (below).
 
 Response:
 - `version` — Parism package version
@@ -305,8 +357,16 @@ Response:
 - `available_parsers` — registered parser names
 - `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns` (full array), `allowed_paths`
 - `telemetry_enabled` — whether telemetry is active
+- `stats`: only when telemetry is enabled. Outcome counts per command
 
 Call this first when the agent encounters Parism for the first time.
+
+`describe({ cmd: "git" })` returns one command's details in at most 2 KB, to check before a retry caused by a guard denial or an unsupported format.
+- `policy`: subcommands, flags and positional rule the guard allows, and where the policy comes from (`origin`: `default`, `build`, `config`, `none`)
+- `parser`: formats the parser handles. `requires` (at least one needed), `values` (value patterns), `flags`, `rows_key`, `row_fields`, and the same shape per subcommand
+- `alternatives`: arguments that replace out-of-format ones (`{ from, args, reason }`)
+- `examples`: example arguments that pass the current guard
+- Name lists are space-separated strings. A command that is not allowed returns a result with `failure` (`command_not_allowed`).
 
 ### dry_run
 
@@ -358,13 +418,15 @@ Place `prism.config.json` in the project root to control Guard behavior.
 
 `guard.secrets.env_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them. The legacy `env_secret_patterns` key was removed in 2.0.0; if present it is ignored with a warning on stderr.
 
+`parsers.external_isolation` (`"worker"` by default, or `"none"`), `parsers.external_time_limit_ms` (default 500) and `parsers.external_memory_limit_mb` (default 128) control how external parser packs run (see "External Parser Isolation" below). Set them in the global config; an untrusted project config cannot disable isolation or raise the limits.
+
 `guard.profile` defaults to `"readonly"`, which allows read-only subcommands only. `"build"` additionally allows build and test subcommands such as `npm run`, `npm test`, `cargo build`, `terraform plan` and `docker compose ps`. These run project code, so enable it only for repositories you trust. `cargo` query subcommands (`tree`, `metadata`, `search`, `pkgid`) also require the `build` profile, since they can run a rustc wrapper configured by the repository. `node`, `npx` and `yarn` must be added to `allowed_commands` explicitly and work only under the `build` profile; `npx` runs with `--no`, so only locally installed binaries run. Override per-command rules with `guard.command_policies`. A project `prism.config.json` cannot widen the guard; to allow that, set `"trust_project_config": true` in the global `~/.parism/prism.config.json`.
 
 The `prism.config.json` in the repository is an example and is not included in the npm package.
 
 `command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
 
-`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in.
+`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in. It also keeps in-process outcome counts per command (`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, `guard` and `exec` by reason), shown as `stats` in `describe`. Nothing is sent or stored.
 
 ### Config Layers and Environment Variables
 
@@ -438,13 +500,28 @@ const pack: ParserPack = {
   parse(raw, args, ctx?) { /* return structured result */ },
   schema: { /* JSON Schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
-  supports: (args) => !args.includes("--json"), // optional: false yields unsupported_format
-  headerLines: 1,                                // optional: number of non-data header lines
-  noise: /^Total /,                              // optional: pattern for non-data lines
+  acceptedFlags: { "-a": "bool", "-n": "value" }, // optional: flags whose output format is handled; others yield unsupported_format
+  acceptedPositionals: { max: 1 },                // optional: positional argument rule
+  supports: (args) => args.length < 4,            // optional: extra rule applied after the declaration
+  headerLines: 1,                                 // optional: number of non-data header lines
+  noise: /^Total /,                               // optional: pattern for non-data lines
+  rowsKey: "items",                               // optional: array holding one row per data line (invariant checks)
 };
 
 export default pack;
 ```
+
+### External Parser Isolation
+
+Registered packs run, by default, in one worker thread per pack (`parsers.external_isolation: "worker"`). The server thread never executes the pack module; it receives only the declared contract, and function-valued declarations such as `supports` and `hint` are evaluated in the worker on each call. When a single `parse()` exceeds `external_time_limit_ms` (default 500 ms), the worker exits abnormally, or its heap exceeds `external_memory_limit_mb` (default 128 MB), the call reports `parse_error.reason = "parser_exception"` and the worker is restarted on the next call. The server keeps responding. With `strict_schemas`, the worker validates the result against the pack schema.
+
+- `parse()` must return structured-clone-able data. Values containing functions, Promises or Symbols yield `parser_exception`.
+- `parse()` cannot see server-thread global state. `console` output inside a pack goes to stderr.
+- Each call copies the input and the result: about 0.1 ms extra per call for a 20-line input and about 1.6 ms for 500 lines (`npm run benchmark:external`).
+- To run packs on the server thread as before, set `"parsers": { "external_isolation": "none" }` in the global `~/.parism/prism.config.json`.
+- `parism add` also reads the pack name in a worker. The fixture replay helper (`runFixtureTests`) is an author tool and runs the pack on the calling thread.
+
+Worker isolation is fault isolation, not a security sandbox. A worker has the same permissions as the server process (files, network, child processes, environment variables). Register only packs you wrote or reviewed, and run Parism inside a container or VM when you need third-party packs you do not trust. See [SECURITY.md](SECURITY.md).
 
 Running `parism` without arguments starts the MCP server as before.
 

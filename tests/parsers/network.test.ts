@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parsePing }   from "../../src/parsers/network/ping.js";
 import { parseCurl }   from "../../src/parsers/network/curl.js";
 import { parseNetstat } from "../../src/parsers/network/netstat.js";
+import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
 
 describe("parseCurl()", () => {
   it("-I 사용 시 status_code와 headers를 파싱한다", () => {
@@ -20,16 +21,25 @@ describe("parseCurl()", () => {
     expect(result.headers["content-type"]).toBe("application/json");
   });
 
-  it("-I 사용 시 statusLine 형식 불일치면 0과 빈 문자열", () => {
-    const raw    = "Invalid response\nContent-Type: text/plain\n";
-    const result = parseCurl("curl", ["-I", "https://x.com"], raw) as {
-      status_code: number;
-      status_text: string;
-      headers: Record<string, string>;
-    };
-    expect(result.status_code).toBe(0);
-    expect(result.status_text).toBe("");
-    expect(result.headers["content-type"]).toBe("text/plain");
+  it("-I 사용 시 상태 줄이 없으면 값을 만들지 않는다", () => {
+    expect(() => parseCurl("curl", ["-I", "https://x.com"], "Invalid response\nContent-Type: text/plain\n")).toThrow(UnrecognizedOutputError);
+    expect(() => parseCurl("curl", ["-sI", "https://no-such-host.invalid"], "")).toThrow(UnrecognizedOutputError);
+  });
+
+  it("리다이렉트를 따라간 응답은 최종 응답을 본문으로 하고 앞선 응답을 history에 담는다", () => {
+    const raw = ["HTTP/1.1 301 Moved Permanently", "Location: https://x.com/", "", "HTTP/2 200", "content-type: text/html", ""].join("\r\n");
+    const r = parseCurl("curl", ["-sIL", "http://x.com"], raw) as { status_code: number; status_text: string; history: Array<{ status_code: number; headers: Record<string, string> }> };
+    expect(r).toMatchObject({ status_code: 200, status_text: "" });
+    expect(r.history).toHaveLength(1);
+    expect(r.history[0]).toMatchObject({ status_code: 301, headers: { location: "https://x.com/" } });
+  });
+
+  it("같은 이름의 헤더가 반복되면 값을 잇고 header_values에 모두 담는다", () => {
+    const raw = ["HTTP/2 200", "set-cookie: a=1", "set-cookie: b=2", "server: x"].join("\n");
+    const r = parseCurl("curl", ["-sI", "https://x.com"], raw) as { headers: Record<string, string>; header_values: Record<string, string[]> };
+    expect(r.headers["set-cookie"]).toBe("a=1, b=2");
+    expect(r.header_values).toEqual({ "set-cookie": ["a=1", "b=2"] });
+    expect(r.headers["server"]).toBe("x");
   });
 
   it("-I 없을 때 raw를 반환한다", () => {
@@ -117,9 +127,15 @@ describe("parsePing()", () => {
     expect(result.packet_loss_percent).toBe(100);
   });
 
-  it("형식 불일치 시 기본값 반환", () => {
-    const result = parsePing("ping", [], "invalid output");
-    expect(result.target).toBe("");
-    expect(result.packets_transmitted).toBe(0);
+  it("통계 줄이 없으면 값을 만들지 않는다", () => {
+    expect(() => parsePing("ping", [], "invalid output")).toThrow(UnrecognizedOutputError);
+    expect(() => parsePing("ping", ["no-such-host.invalid"], "")).toThrow(UnrecognizedOutputError);
+  });
+
+  it("오류와 중복 개수 구획을 건너뛰고 소수 손실률을 읽는다", () => {
+    const r = parsePing("ping", ["h"], "PING h (10.0.0.1) 56(84) bytes of data.\n--- h ping statistics ---\n3 packets transmitted, 2 received, +1 errors, 33% packet loss, time 2ms\n") as { packets_received: number; packet_loss_percent: number };
+    expect(r).toMatchObject({ packets_received: 2, packet_loss_percent: 33 });
+    const mac = parsePing("ping", ["h"], "PING h (10.0.0.1): 56 data bytes\n--- h ping statistics ---\n3 packets transmitted, 2 packets received, 33.3% packet loss\nround-trip min/avg/max/stddev = 1.0/2.0/3.0/0.5 ms\n") as { packet_loss_percent: number; rtt_avg_ms: number };
+    expect(mac).toMatchObject({ packet_loss_percent: 33.3, rtt_avg_ms: 2 });
   });
 });

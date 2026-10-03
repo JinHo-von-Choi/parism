@@ -35,7 +35,8 @@ export function toCompact(parsed: unknown): unknown {
       continue;
     }
 
-    const schema = Object.keys(value[0] as Record<string, unknown>);
+    /** 선택 필드가 뒤쪽 행에만 있어도 열이 빠지지 않도록 모든 행의 키를 처음 나온 순서로 모은다. */
+    const schema = [...new Set(value.flatMap((item) => (typeof item === "object" && item !== null ? Object.keys(item) : [])))];
     const rows   = value.map((item) => {
       const rec = item as Record<string, unknown>;
       return schema.map((k) => flattenCell(rec[k]));
