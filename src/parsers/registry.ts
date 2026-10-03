@@ -118,6 +118,13 @@ function formatZodError(error: z.ZodError): string {
     .join("; ");
 }
 
+/** 파서 실행 중 예외를 parse_error로 바꾼다. UnrecognizedOutputError는 unrecognized_output이다. */
+function failureOf(err: unknown): ParseResult {
+  const message = err instanceof Error ? err.message : String(err);
+  if (err instanceof UnrecognizedOutputError) return { parsed: null, parse_error: { reason: "unrecognized_output", message } };
+  return { parsed: null, parse_error: { reason: "parser_exception", message } };
+}
+
 /**
  * 파서 실행 결과. parsed가 null일 때 parse_error가 있으면 파서 예외, 없으면 파서 없음.
  */
@@ -143,6 +150,26 @@ export interface FallbackParseResult extends ParseResult {
  */
 export type ParseErrorReason = "parser_exception" | "schema_violation" | "unsupported_format" | "unrecognized_output";
 
+/** 격리 실행 파서의 결과. strict 검사를 요청했고 스키마를 어겼으면 위반 메시지가 있다. */
+export interface IsolatedParseResult {
+  parsed:           unknown;
+  schemaViolation?: string;
+}
+
+/**
+ * 다른 실행 단위(워커 스레드)에서 실행하는 파서. 외부 ParserPack 격리에 쓴다.
+ * contract -- 실행 단위에서 받은 계약 선언. 함수 필드는 실행 단위를 호출하는 대리 함수다.
+ * parse    -- 파서를 실행한다. strictSchemas면 실행 단위가 팩 스키마 검사도 한다.
+ *             파서 예외는 Error로, 인식 실패는 UnrecognizedOutputError로 던진다.
+ * close    -- 실행 단위를 끝낸다.
+ */
+export interface IsolatedParser {
+  readonly name:     string;
+  readonly contract: ParserContract;
+  parse(args: string[], raw: string, ctx: ParseContext | undefined, strictSchemas: boolean): IsolatedParseResult;
+  close(): Promise<void>;
+}
+
 /** ParserPack에서 계약 선언이 아닌 정의 필드 */
 const PACK_DEFINITION_KEYS = ["name", "parse", "schema", "fixtures", "meta"] as const;
 
@@ -165,8 +192,10 @@ export class ParserRegistry {
   private readonly parsers = new Map<string, ParserFn>();
   private readonly packs     = new Map<string, ParserPack>();
   private readonly contracts = new Map<string, ParserContract>();
+  private readonly isolated  = new Map<string, IsolatedParser>();
 
   register(cmd: string, fn: ParserFn, contract?: ParserContract): void {
+    this.dropIsolated(cmd);
     this.parsers.set(cmd, fn);
     if (contract) this.contracts.set(cmd, contract);
     else this.contracts.delete(cmd);
@@ -176,11 +205,39 @@ export class ParserRegistry {
    * ParserPack을 등록한다. parsers Map에도 어댑터를 등록하여 기존 parse() 경로와 호환.
    */
   registerPack(pack: ParserPack): void {
+    this.dropIsolated(pack.name);
     this.packs.set(pack.name, pack);
     this.parsers.set(pack.name, (_cmd, args, raw, ctx) => pack.parse(raw, args, ctx));
     const contract: Record<string, unknown> = { ...pack };
     for (const key of PACK_DEFINITION_KEYS) delete contract[key];
     this.contracts.set(pack.name, contract as ParserContract);
+  }
+
+  /**
+   * 다른 실행 단위에서 도는 파서를 등록한다. 계약 선언은 parser.contract를 쓰고,
+   * strict 스키마 검사는 실행 단위가 수행한다. getPack()으로는 조회되지 않는다.
+   */
+  registerIsolated(parser: IsolatedParser): void {
+    this.dropIsolated(parser.name);
+    this.packs.delete(parser.name);
+    this.isolated.set(parser.name, parser);
+    this.parsers.set(parser.name, (_cmd, args, raw, ctx) => parser.parse(args, raw, ctx, false).parsed);
+    this.contracts.set(parser.name, parser.contract);
+  }
+
+  /** 격리 실행 파서의 실행 단위를 모두 끝낸다. */
+  async close(): Promise<void> {
+    const parsers = [...this.isolated.values()];
+    this.isolated.clear();
+    await Promise.all(parsers.map(p => p.close()));
+  }
+
+  /** 같은 이름의 격리 실행 파서를 레지스트리에서 빼고 실행 단위를 끝낸다. */
+  private dropIsolated(name: string): void {
+    const previous = this.isolated.get(name);
+    if (!previous) return;
+    this.isolated.delete(name);
+    void previous.close();
   }
 
   /**
@@ -223,7 +280,7 @@ export class ParserRegistry {
    * 등록된 모든 ParserPack 이름 목록을 반환한다.
    */
   listPacks(): string[] {
-    return [...this.packs.keys()];
+    return [...this.packs.keys(), ...this.isolated.keys()];
   }
 
   /**
@@ -245,10 +302,16 @@ export class ParserRegistry {
     if (!fn) return { parsed: null };
 
     const declared = this.contracts.get(cmd);
-    const format   = declared ? checkFormat(declared, args) : undefined;
+    let   format: ReturnType<typeof checkFormat> | undefined;
+    let   hint:   FormatHint | undefined;
+    try {
+      format = declared ? checkFormat(declared, args) : undefined;
+      if (declared && format && !format.accepted) hint = buildHint(declared, args);
+    } catch (err) {
+      return failureOf(err);
+    }
     const contract = format?.contract;
-    if (declared && format && !format.accepted) {
-      const hint = buildHint(declared, args);
+    if (format && !format.accepted) {
       return {
         parsed:      null,
         parse_error: {
@@ -259,13 +322,14 @@ export class ParserRegistry {
       };
     }
 
-    let parsed: unknown;
+    const isolated = this.isolated.get(cmd);
+    let parsed:          unknown;
+    let schemaViolation: string | undefined;
     try {
-      parsed = fn(cmd, args, raw, ctx);
+      if (isolated) ({ parsed, schemaViolation } = isolated.parse(args, raw, ctx, strictSchemas));
+      else parsed = fn(cmd, args, raw, ctx);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (err instanceof UnrecognizedOutputError) return { parsed: null, parse_error: { reason: "unrecognized_output", message } };
-      return { parsed: null, parse_error: { reason: "parser_exception", message } };
+      return failureOf(err);
     }
 
     if (parsed == null) return { parsed: null };
@@ -278,20 +342,21 @@ export class ParserRegistry {
       };
     }
 
-    // strict_schemas 활성화 시 ParserPack이 있는 경우에만 검증
+    // strict_schemas 활성화 시 ParserPack이 있는 경우에만 검증. 격리 실행 파서는 실행 단위가 검사한 결과를 쓴다.
     if (strictSchemas) {
       const pack = this.packs.get(cmd);
       if (pack) {
         const result = pack.schema.safeParse(parsed);
-        if (!result.success) {
-          return {
-            parsed:      null,
-            parse_error: {
-              reason:  "schema_violation",
-              message: formatZodError(result.error),
-            },
-          };
-        }
+        if (!result.success) schemaViolation = formatZodError(result.error);
+      }
+      if (schemaViolation !== undefined) {
+        return {
+          parsed:      null,
+          parse_error: {
+            reason:  "schema_violation",
+            message: schemaViolation,
+          },
+        };
       }
     }
 

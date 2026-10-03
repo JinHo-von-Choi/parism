@@ -22,7 +22,7 @@ import { paginateLines }                                                        
 import { Semaphore }                                                                from "../engine/semaphore.js";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
-import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
+import { loadExternalParsers, externalParserOptions }                               from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
 import { OutcomeStats, PipelineTimer, type CommandOutcomeCounts }                  from "../engine/telemetry.js";
 import { describeCommand, type CommandDescription, type CommandDescriptionFailure } from "./capabilities.js";
@@ -435,7 +435,7 @@ function resolveRealCwd(cwd: string): string {
 export async function createEngine(opts?: { configPath?: string }): Promise<ParismEngine> {
   const config = opts?.configPath ? await loadConfig(opts.configPath) : await loadConfigMultiLayer();
   const registry = createRegistry();
-  const loaded = await loadExternalParsers(parismHome(), registry);
+  const loaded = await loadExternalParsers(parismHome(), registry, externalParserOptions(config.parsers));
   if (loaded > 0) {
     process.stderr.write(`[parism] Loaded ${loaded} external parser(s)\n`);
   }

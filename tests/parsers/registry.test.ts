@@ -6,7 +6,7 @@ import {
   exportJsonSchema,
   type ParseContext,
 } from "../../src/parsers/registry.js";
-import type { ParserPack } from "../../src/parsers/registry.js";
+import type { ParserPack, ParserContract, IsolatedParser } from "../../src/parsers/registry.js";
 import { createRegistry }    from "../../src/parsers/index.js";
 
 describe("UnrecognizedOutputError", () => {
@@ -347,5 +347,62 @@ describe("ParserRegistry 계약 조회", () => {
     expect(reg.declaredContract("cat")).toBeUndefined();
     expect(reg.hasParser("cat")).toBe(true);
     expect(reg.hasParser("echo")).toBe(false);
+  });
+});
+
+describe("격리 실행 파서 등록", () => {
+  /** 실행 단위 없이 호출만 기록하는 격리 실행 파서 */
+  function fakeIsolated(name: string, contract: ParserContract = {}) {
+    const calls: { strict: boolean }[] = [];
+    let closed = 0;
+    const parser: IsolatedParser = {
+      name,
+      contract,
+      parse: (_args, raw, _ctx, strict) => {
+        calls.push({ strict });
+        return raw === "bad" ? { parsed: { value: raw }, schemaViolation: "value: Invalid" } : { parsed: { value: raw } };
+      },
+      close: async () => { closed++; },
+    };
+    return { parser, calls, closedCount: () => closed };
+  }
+
+  it("등록하면 명령과 팩 목록에 나타나고 계약 선언을 쓴다", () => {
+    const registry = new ParserRegistry();
+    const { parser } = fakeIsolated("ext", { headerLines: 1 });
+    registry.registerIsolated(parser);
+    expect(registry.hasParser("ext")).toBe(true);
+    expect(registry.listPacks()).toContain("ext");
+    expect(registry.declaredContract("ext")).toEqual({ headerLines: 1 });
+    expect(registry.getPack("ext")).toBeUndefined();
+  });
+
+  it("strict 검사 결과는 실행 단위가 돌려준 위반 메시지를 쓴다", () => {
+    const registry = new ParserRegistry();
+    const { parser, calls } = fakeIsolated("ext");
+    registry.registerIsolated(parser);
+    expect(registry.parse("ext", [], "bad", undefined, true).parse_error).toEqual({ reason: "schema_violation", message: "value: Invalid" });
+    expect(registry.parse("ext", [], "bad", undefined, false).parsed).toEqual({ value: "bad" });
+    expect(calls.map(c => c.strict)).toEqual([true, false]);
+  });
+
+  it("같은 이름을 다시 등록하면 이전 격리 실행 파서를 닫는다", async () => {
+    const registry = new ParserRegistry();
+    const first    = fakeIsolated("ext");
+    registry.registerIsolated(first.parser);
+    registry.register("ext", () => ({ builtin: true }));
+    expect(first.closedCount()).toBe(1);
+    expect(registry.parse("ext", [], "x").parsed).toEqual({ builtin: true });
+
+    const second = fakeIsolated("ext");
+    registry.registerIsolated(second.parser);
+    await registry.close();
+    expect(second.closedCount()).toBe(1);
+  });
+
+  it("계약 함수가 예외를 던지면 parse는 parser_exception으로 알린다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => ({ ok: true }), { supports: () => { throw new Error("supports failed"); } });
+    expect(registry.parse("x", [], "data").parse_error).toEqual({ reason: "parser_exception", message: "supports failed" });
   });
 });

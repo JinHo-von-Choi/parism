@@ -33,6 +33,12 @@ export interface PrismGuardConfig {
 
 export interface PrismParsersConfig {
   strict_schemas?: boolean;
+  /** 외부 ParserPack 실행 방식. worker는 팩마다 워커 스레드에서, none은 서버 스레드에서 실행한다. */
+  external_isolation?:       "worker" | "none";
+  /** 외부 ParserPack 호출 한 번의 시간 상한(ms) */
+  external_time_limit_ms?:   number;
+  /** 외부 ParserPack 워커의 힙 상한(MB) */
+  external_memory_limit_mb?: number;
   adaptive_format_threshold?: {
     json?: number;
     compact?: number;
@@ -58,9 +64,17 @@ const DEFAULT_ENV_SECRET_PATTERNS = [
   "TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL",
 ];
 
+/** 외부 ParserPack 격리 기본값: 워커 스레드, 호출당 500ms, 힙 128MB */
+export const EXTERNAL_PARSER_DEFAULTS = {
+  external_isolation:       "worker",
+  external_time_limit_ms:   500,
+  external_memory_limit_mb: 128,
+} as const satisfies PrismParsersConfig;
+
 export const DEFAULT_CONFIG: PrismConfig = {
   parsers: {
     strict_schemas: false,
+    ...EXTERNAL_PARSER_DEFAULTS,
     adaptive_format_threshold: {
       json: 0,
       compact: 50,
@@ -254,6 +268,36 @@ function narrowGuard(base: PrismGuardConfig, project: PartialPrismGuardConfig): 
   };
 }
 
+/**
+ * 신뢰하지 않는 프로젝트 설정의 외부 파서 격리 값은 좁히는 방향만 받는다.
+ * 격리는 worker로 켜는 것만, 시간과 메모리 상한은 기준값보다 낮추는 것만 반영한다. 넓히려 한 값은 경고 후 버린다.
+ */
+function narrowParsers(base: PrismParsersConfig | undefined, project: PrismParsersConfig | undefined): PrismParsersConfig | undefined {
+  if (!project) return project;
+  const { external_isolation, external_time_limit_ms, external_memory_limit_mb, ...rest } = project;
+  const out: PrismParsersConfig = { ...rest };
+  let   relaxed                 = false;
+
+  if (external_isolation === "worker") out.external_isolation = external_isolation;
+  else if (external_isolation !== undefined) relaxed = true;
+
+  const limits = [
+    ["external_time_limit_ms",   external_time_limit_ms],
+    ["external_memory_limit_mb", external_memory_limit_mb],
+  ] as const;
+  for (const [key, value] of limits) {
+    if (value === undefined) continue;
+    const current = base?.[key];
+    if (current === undefined || value <= current) out[key] = value;
+    else relaxed = true;
+  }
+
+  if (relaxed) {
+    process.stderr.write("[parism] WARNING: project config cannot disable external parser isolation or raise its limits; ignored.\n");
+  }
+  return out;
+}
+
 /** 설정 파일을 JSON으로 읽는다. 없으면 undefined, 읽기·파싱 실패는 경고 후 undefined. */
 async function readJsonLayer(filePath: string): Promise<unknown> {
   try {
@@ -306,7 +350,7 @@ export async function loadConfigMultiLayer(opts?: {
       config = mergeConfig(config, layer);
     } else {
       config = {
-        ...mergeConfig(config, { ...layer, guard: undefined }),
+        ...mergeConfig(config, { ...layer, guard: undefined, parsers: narrowParsers(config.parsers, layer.parsers) }),
         guard: narrowGuard(config.guard, (layer.guard ?? {}) as PartialPrismGuardConfig),
       };
     }

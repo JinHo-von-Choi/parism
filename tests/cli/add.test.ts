@@ -35,4 +35,25 @@ describe("addParserPack()", () => {
     const registry = JSON.parse(readFileSync(registryPath, "utf-8"));
     expect(registry).toHaveProperty("myparser");
   });
+
+  it("팩 이름은 워커에서 읽어 모듈 최상위 코드를 CLI 스레드에서 실행하지 않는다", async () => {
+    mkdirSync(join(sourceDir, "marked"), { recursive: true });
+    writeFileSync(join(sourceDir, "marked", "parser.js"), `
+      globalThis.__parismAddTopLevel = true;
+      export default { name: "marked", parse: (raw) => ({ data: raw }), schema: {}, fixtures: [] };
+    `);
+
+    const result = await addParserPack(join(sourceDir, "marked"), homeDir);
+
+    expect(result.name).toBe("marked");
+    expect((globalThis as Record<string, unknown>).__parismAddTopLevel).toBeUndefined();
+  });
+
+  it("ParserPack이 아닌 기본 내보내기는 등록하지 않는다", async () => {
+    mkdirSync(join(sourceDir, "broken"), { recursive: true });
+    writeFileSync(join(sourceDir, "broken", "parser.js"), "export const notDefault = 1;");
+
+    await expect(addParserPack(join(sourceDir, "broken"), homeDir)).rejects.toThrow(/Invalid default export/);
+    expect(existsSync(join(homeDir, "registry.json"))).toBe(false);
+  });
 });

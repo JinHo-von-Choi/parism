@@ -83,6 +83,9 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
   parsers:              {
     fields: {
       strict_schemas:            z.boolean(),
+      external_isolation:        z.enum(["worker", "none"]),
+      external_time_limit_ms:    POSITIVE_LIMIT_SCHEMA,
+      external_memory_limit_mb:  POSITIVE_LIMIT_SCHEMA,
       adaptive_format_threshold: {
         fields: {
           json:        LIMIT_SCHEMA,

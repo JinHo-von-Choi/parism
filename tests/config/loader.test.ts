@@ -798,3 +798,61 @@ describe("실행 자원 설정", () => {
     }
   });
 });
+
+describe("외부 파서 격리 설정", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("기본값은 워커 격리, 시간 상한 500ms, 메모리 상한 128MB다", async () => {
+    const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" });
+    expect(cfg.parsers?.external_isolation).toBe("worker");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(500);
+    expect(cfg.parsers?.external_memory_limit_mb).toBe(128);
+  });
+
+  it("전역 설정은 격리를 끄거나 상한을 바꿀 수 있다", async () => {
+    const globalPath = tmpConfig({ parsers: { external_isolation: "none", external_time_limit_ms: 2000, external_memory_limit_mb: 256 } });
+    const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+    expect(cfg.parsers?.external_isolation).toBe("none");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(2000);
+    expect(cfg.parsers?.external_memory_limit_mb).toBe(256);
+  });
+
+  it("잘못된 값은 경고 후 기본값을 유지한다", async () => {
+    const globalPath = tmpConfig({ parsers: { external_isolation: "process", external_time_limit_ms: 0, external_memory_limit_mb: 1.5 } });
+    const spy        = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg        = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+    const warnings   = spy.mock.calls.map(c => String(c[0]));
+    expect(cfg.parsers?.external_isolation).toBe("worker");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(500);
+    expect(cfg.parsers?.external_memory_limit_mb).toBe(128);
+    for (const key of ["external_isolation", "external_time_limit_ms", "external_memory_limit_mb"]) {
+      expect(warnings.filter(w => w.includes(`parsers.${key}`))).toHaveLength(1);
+    }
+  });
+
+  it("신뢰하지 않는 프로젝트 설정은 격리를 끄거나 상한을 올리지 못한다", async () => {
+    const projectPath = tmpConfig({ parsers: { external_isolation: "none", external_time_limit_ms: 60000, external_memory_limit_mb: 4096 } });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath });
+    expect(cfg.parsers?.external_isolation).toBe("worker");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(500);
+    expect(cfg.parsers?.external_memory_limit_mb).toBe(128);
+  });
+
+  it("신뢰하지 않는 프로젝트 설정도 상한을 낮추거나 격리를 켤 수는 있다", async () => {
+    const globalPath  = tmpConfig({ parsers: { external_isolation: "none" } });
+    const projectPath = tmpConfig({ parsers: { external_isolation: "worker", external_time_limit_ms: 200, external_memory_limit_mb: 64 } });
+    const cfg         = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.parsers?.external_isolation).toBe("worker");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(200);
+    expect(cfg.parsers?.external_memory_limit_mb).toBe(64);
+  });
+
+  it("신뢰하는 프로젝트 설정은 격리 설정을 바꿀 수 있다", async () => {
+    const globalPath  = tmpConfig({ trust_project_config: true });
+    const projectPath = tmpConfig({ parsers: { external_isolation: "none", external_time_limit_ms: 3000 } });
+    const cfg         = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.parsers?.external_isolation).toBe("none");
+    expect(cfg.parsers?.external_time_limit_ms).toBe(3000);
+  });
+});
