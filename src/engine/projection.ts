@@ -49,11 +49,13 @@ export type ProjectionOptions = z.infer<typeof PROJECTION_SCHEMA>;
 
 /** 투영 결과 요약. total은 대상 배열의 행 수, matched는 where를 통과한 행 수, shown은 남긴 행 수다. */
 export interface ProjectionSummary {
-  total:      number;
-  matched:    number;
-  shown:      number;
+  total:             number;
+  matched:           number;
+  shown:             number;
   /** 보이는 행을 guard.max_items 상한으로 잘랐을 때만 true */
-  truncated?: true;
+  truncated?:        true;
+  /** 결과 객체 안에서 대상이 아닌 배열 가운데 guard.max_items 상한으로 자른 배열의 키 */
+  truncated_arrays?: string[];
 }
 
 export type ProjectionErrorReason = "invalid_projection" | "array_not_found" | "array_ambiguous" | "unknown_field" | "type_mismatch";
@@ -207,17 +209,38 @@ function sortRows(rows: Row[], spec: SortSpec): Row[] {
   return keyed.map(k => k.row);
 }
 
+/** 고른 필드만 남긴 행. 프로토타입 없는 객체라 __proto__ 같은 필드 이름도 일반 속성으로 남는다. */
 function selectFields(row: Row, fields: readonly string[]): Row {
-  const out: Row = {};
+  const out = Object.create(null) as Row;
   for (const f of fields) if (Object.hasOwn(row, f)) out[f] = row[f];
   return out;
+}
+
+/**
+ * 결과 객체를 만든다. 대상 배열은 투영한 행으로 바꾸고, 대상이 아닌 최상위 배열은 cap을 넘으면 cap까지 자른다.
+ * 프로토타입 없는 객체에 키를 옮기므로 __proto__ 같은 키도 일반 속성이다. 자른 배열의 키를 돌려준다.
+ */
+function buildResult(parsed: Row, key: string, rows: unknown[], cap: number): { result: Row; cut: string[] } {
+  const result = Object.create(null) as Row;
+  const cut: string[] = [];
+  for (const [k, v] of Object.entries(parsed)) {
+    if (k !== key && Array.isArray(v) && v.length > cap) {
+      result[k] = v.slice(0, cap);
+      cut.push(k);
+    } else {
+      result[k] = v;
+    }
+  }
+  result[key] = rows;
+  return { result, cut };
 }
 
 /**
  * 파싱 결과에 투영을 적용한다. 입력은 바꾸지 않는다.
  * 대상 배열이 결과 객체 안에 있으면 그 배열을 투영한 행으로 바꾸고 같은 객체에 _summary를 둔다.
  * 결과가 최상위 배열이면 투영한 배열을 그대로 돌려주며 요약은 summary로만 전한다.
- * maxItems가 0보다 크면 보이는 행을 그 수로 자르고 summary.truncated를 남긴다.
+ * maxItems가 0보다 크면 보이는 행을 그 수로 자르고 summary.truncated를 남긴다. 결과 객체 안의 대상이 아닌 배열도
+ * 그 수로 자르고 자른 배열의 키를 summary.truncated_arrays에 남긴다.
  */
 export function applyProjection(
   parsed:   unknown,
@@ -242,8 +265,11 @@ export function applyProjection(
 
     const summary: ProjectionSummary = { total: rows.length, matched, shown: out.length };
     if (matched > cap && (options.limit === undefined || options.limit > cap)) summary.truncated = true;
+    if (key === null) return { ok: true, parsed: out, rows: out, summary };
 
-    const result = key === null ? out : { ...(parsed as Row), [key]: out, _summary: summary };
+    const { result, cut } = buildResult(parsed as Row, key, out, cap);
+    if (cut.length > 0) summary.truncated_arrays = cut;
+    result._summary = summary;
     return { ok: true, parsed: result, rows: out, summary };
   } catch (err) {
     if (err instanceof ProjectionError) return { ok: false, reason: err.reason, message: err.message };

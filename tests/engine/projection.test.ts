@@ -287,6 +287,39 @@ describe("applyProjection() 대상 배열", () => {
   });
 });
 
+describe("applyProjection() 결과 객체", () => {
+  it("select는 __proto__라는 이름의 자기 속성도 일반 필드로 남기고 결과 행의 프로토타입은 바꾸지 않는다", () => {
+    const rows   = JSON.parse('[{"name":"a","__proto__":{"extra":true}}]') as unknown[];
+    const result = applyProjection(rows, { select: ["name", "__proto__"] }, undefined, 0);
+    if (!result.ok) throw new Error(result.message);
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(Object.hasOwn(row, "__proto__")).toBe(true);
+    expect(row.extra).toBeUndefined();
+    expect(JSON.stringify(row)).toBe('{"name":"a","__proto__":{"extra":true}}');
+  });
+
+  it("대상이 아닌 배열도 max_items로 자르고 잘린 배열 이름을 요약에 남긴다", () => {
+    const many   = (n: number) => Array.from({ length: n }, (_, i) => ({ i }));
+    const parsed = { entries: many(5), errors: many(4), tags: many(2), label: "x" };
+    const result = applyProjection(parsed, { array: "errors", limit: 1 }, undefined, 3);
+    if (!result.ok) throw new Error(result.message);
+    const out = result.parsed as { entries: unknown[]; errors: unknown[]; tags: unknown[]; label: string };
+    expect(out.entries).toHaveLength(3);
+    expect(out.errors).toHaveLength(1);
+    expect(out.tags).toHaveLength(2);
+    expect(out.label).toBe("x");
+    expect(result.summary).toEqual({ total: 4, matched: 4, shown: 1, truncated_arrays: ["entries"] });
+  });
+
+  it("max_items가 0이면 대상이 아닌 배열을 자르지 않는다", () => {
+    const parsed = { entries: [{ a: 1 }, { a: 2 }], errors: [{ e: 1 }] };
+    const result = applyProjection(parsed, { array: "errors" }, undefined, 0);
+    if (!result.ok) throw new Error(result.message);
+    expect((result.parsed as { entries: unknown[] }).entries).toHaveLength(2);
+    expect(result.summary).toEqual({ total: 1, matched: 1, shown: 1 });
+  });
+});
+
 describe("applyProjection()과 compact", () => {
   it("compact 열은 select 순서다", () => {
     const result = run(sample(), { select: ["size_bytes", "name"], sort_by: { field: "name" }, limit: 2 });
