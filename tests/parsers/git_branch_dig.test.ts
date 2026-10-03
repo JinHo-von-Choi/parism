@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseGitBranch } from "../../src/parsers/git/branch.js";
 import { parseDig }        from "../../src/parsers/network/dig.js";
+import { createRegistry }  from "../../src/parsers/index.js";
 
 describe("parseGitBranch()", () => {
   const raw = [
@@ -199,5 +200,41 @@ describe("parseDig()", () => {
   it("TXT 값의 연속 공백을 보존한다", () => {
     const raw = [";; ANSWER SECTION:", "example.com.\t60\tIN\tTXT\t\"v=spf1  -all\""].join("\n");
     expect(parseDig("dig", ["example.com", "TXT"], raw).answers[0]!.value).toBe("\"v=spf1  -all\"");
+  });
+});
+
+describe("dig 대기와 재시도 옵션", () => {
+  it("+time=N, +tries=N, +retry=N은 출력 형식을 바꾸지 않아 받고, 숫자 값만 받는다", () => {
+    const reg = createRegistry();
+    for (const args of [["+time=2", "example.com"], ["+tries=1", "example.com"], ["+retry=1", "example.com"], ["+time=3", "+tries=2", "example.com", "MX"]]) {
+      expect(reg.parse("dig", args, "").parse_error?.reason).not.toBe("unsupported_format");
+    }
+    for (const args of [["+time", "example.com"], ["+time=x", "example.com"], ["+tries=", "example.com"]]) {
+      expect(reg.parse("dig", args, "").parse_error?.reason).toBe("unsupported_format");
+    }
+  });
+
+  it("+time과 +tries를 준 출력의 답변을 읽는다", () => {
+    const raw = [
+      "",
+      "; <<>> DiG 9.18.39-0ubuntu0.24.04.7-Ubuntu <<>> +time=3 +tries=2 example.com MX",
+      ";; global options: +cmd",
+      ";; Got answer:",
+      ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 65326",
+      ";; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1",
+      "",
+      ";; QUESTION SECTION:",
+      ";example.com.\t\t\tIN\tMX",
+      "",
+      ";; ANSWER SECTION:",
+      "example.com.\t\t300\tIN\tMX\t0 .",
+      "",
+      ";; Query time: 6 msec",
+      ";; SERVER: 127.0.0.53#53(127.0.0.53) (UDP)",
+      "",
+    ].join("\n");
+    const r = createRegistry().parse("dig", ["+time=3", "+tries=2", "example.com", "MX"], raw);
+    expect(r.parse_error).toBeUndefined();
+    expect(r.parsed).toMatchObject({ query: "example.com", query_type: "MX", query_time_ms: 6, answers: [{ name: "example.com", ttl: 300, class: "IN", type: "MX", value: "0 ." }] });
   });
 });

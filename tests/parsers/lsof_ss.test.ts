@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseLsof } from "../../src/parsers/network/lsof.js";
 import { parseSs }   from "../../src/parsers/network/ss.js";
 import { UnrecognizedOutputError } from "../../src/parsers/registry.js";
+import { createRegistry }         from "../../src/parsers/index.js";
 
 describe("parseLsof()", () => {
   const raw = [
@@ -56,6 +57,29 @@ describe("parseLsof() 열 위치", () => {
 
   it("머리 줄이 없으면 예외로 알린다", () => {
     expect(() => parseLsof("lsof", [], "bash 1 root cwd DIR 8,1 4096 2 /\n")).toThrow(UnrecognizedOutputError);
+  });
+});
+
+describe("lsof 사용자 선택(-u)", () => {
+  it("-u는 고르는 프로세스만 바꾸고 열은 같아서 받는다", () => {
+    const reg = createRegistry();
+    for (const args of [["-u", "nirna"], ["-unirna"], ["-u", "^root"], ["-a", "-u", "nirna", "-d", "cwd"], ["-n", "-P", "-a", "-u", "nirna", "-i"]]) {
+      expect(reg.parse("lsof", args, "").parse_error?.reason).not.toBe("unsupported_format");
+    }
+  });
+
+  it("-u 출력의 열을 읽는다", () => {
+    const raw = [
+      "COMMAND       PID  USER   FD      TYPE DEVICE SIZE/OFF     NODE NAME",
+      "systemd      4680 nirna  cwd   unknown                          /proc/4680/cwd (readlink: Permission denied)",
+      "(sd-pam)     4701 nirna  cwd   unknown                          /proc/4701/cwd (readlink: Permission denied)",
+      "hermes       5024 nirna  cwd       DIR   8,16     4096 37509960 /home/nirna/.hermes",
+    ].join("\n") + "\n";
+    const r = createRegistry().parse("lsof", ["-a", "-u", "nirna", "-d", "cwd"], raw);
+    expect(r.parse_error).toBeUndefined();
+    const rows = (r.parsed as { entries: Array<Record<string, unknown>> }).entries;
+    expect(rows.map(e => [e.command, e.pid, e.user, e.fd])).toEqual([["systemd", 4680, "nirna", "cwd"], ["(sd-pam)", 4701, "nirna", "cwd"], ["hermes", 5024, "nirna", "cwd"]]);
+    expect(rows[2]).toMatchObject({ type: "DIR", device: "8,16", name: "/home/nirna/.hermes" });
   });
 });
 

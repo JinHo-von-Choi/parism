@@ -130,7 +130,8 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     rowFields: ["proto", "local_address", "foreign_address", "state"],
   },
   lsof: {
-    acceptedFlags: { ...bools("-n", "-P", "-U", "-a", "-l", "-w", "-b"), ...flags("attached", "-i", "-s"), ...values("-d", "+D", "-p", "-c") },
+    /** -u(사용자 선택)는 고르는 프로세스만 바꾸고 열은 그대로다. */
+    acceptedFlags: { ...bools("-n", "-P", "-U", "-a", "-l", "-w", "-b"), ...flags("attached", "-i", "-s"), ...values("-d", "+D", "-p", "-c", "-u") },
     plusFlags:     true,
     headerLines: 1, rowsKey: "entries", rowFields: LSOF_FIELDS,
   },
@@ -149,7 +150,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     acceptedFlags: {
       ...bools("+tcp", "+stats", "+nostats", "+nocmd", "+noquestion", "+multi", "+multiline", "+noall", "+answer", "-4", "-6", "-m", "-r"),
       ...values("-x", "-t", "-c", "-p", "-q", "-b"),
+      /** 응답 대기 시간과 재시도 횟수는 출력 형식을 바꾸지 않는다. */
+      ...flags("attached", "+time", "+tries", "+retry"),
     },
+    acceptedValues: { "+time": /^\d+$/, "+tries": /^\d+$/, "+retry": /^\d+$/ },
     plusFlags:     true,
     supports:      supportsDig,
     hint:          digHint,
