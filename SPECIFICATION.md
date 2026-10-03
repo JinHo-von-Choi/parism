@@ -136,9 +136,9 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 
   필드 값이 없는 행은 `prefix`, `contains`, 수 비교에 맞지 않고, `null`이 아닌 value의 `ne`에는 맞는다.
 - `sort_by`는 안정 정렬이다. 같은 값의 행은 원래 순서를 지키고, 값이 없는 행은 방향과 관계없이 뒤에 둔다. 값이 있는 행은 수, 문자열(코드 단위 순서), 불리언 가운데 한 형이어야 한다.
-- `select`는 행에 없는 필드를 만들지 않는다.
-- 투영을 요청하면 파서는 `guard.max_items` 없이 전체 행을 내고, `where`와 `sort_by`는 전체 행에 적용한다. 보이는 행은 `limit`과 `guard.max_items` 가운데 작은 값까지이며 `max_items`로 잘렸으면 `_summary.truncated: true`다.
-- 결과 요약 `_summary = { total, matched, shown, truncated? }`(`total`은 대상 배열의 행 수, `matched`는 `where`를 통과한 행 수, `shown`은 남긴 행 수). 대상 배열이 결과 객체 안에 있으면 같은 객체의 `parsed._summary`, 결과가 최상위 배열이면 `stdout._summary`에 둔다.
+- `select`는 행에 없는 필드를 만들지 않는다. 결과 행은 프로토타입 없는 객체라 `__proto__` 같은 이름도 일반 필드로 남는다.
+- 투영을 요청하면 파서는 `guard.max_items` 없이 전체 행을 내고, `where`와 `sort_by`는 전체 행에 적용한다. 보이는 행은 `limit`과 `guard.max_items` 가운데 작은 값까지이며 `max_items`로 잘렸으면 `_summary.truncated: true`다. 결과 객체 안의 대상이 아닌 배열도 `max_items`로 자르고 자른 배열의 키를 `_summary.truncated_arrays`에 남긴다.
+- 결과 요약 `_summary = { total, matched, shown, truncated?, truncated_arrays? }`(`total`은 대상 배열의 행 수, `matched`는 `where`를 통과한 행 수, `shown`은 남긴 행 수). 대상 배열이 결과 객체 안에 있으면 같은 객체의 `parsed._summary`, 결과가 최상위 배열이면 `stdout._summary`에 둔다.
 - 투영에 성공하면 `stdout.raw`를 싣지 않는다(raw는 투영 전 전체 출력이다). `format`의 `compact`와 함께 쓰면 투영한 행을 압축하고, 적응형 형식 임계값(`parsers.adaptive_format_threshold`)은 투영한 행 수로 판정한다.
 - 문법에 맞지 않는 인자는 실행하지 않고 `failure = { kind: "config", reason: "invalid_projection" }`, `exitCode: -1`이다(guard 검사 뒤). MCP 도구는 같은 문법을 입력 스키마로 검사한다.
 - 실행 뒤 투영할 수 없으면 `failure.kind = "config"`이고 `parsed`는 `null`, `stdout.raw`는 남긴다. 사유: `unknown_field`(알려진 필드는 계약의 `rowFields`와 행에 있는 키이며 메시지에 목록이 있다. 행이 객체가 아니면 필드가 없다), `type_mismatch`(필드 값의 형이 연산과 맞지 않음), `array_not_found`, `array_ambiguous`. 파싱 결과가 없으면 투영하지 않고 기존 실패를 그대로 둔다.
@@ -456,7 +456,7 @@ export interface ParserContract {
 
 `registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 서버 스레드에서 실행하는 커스텀 파서와 `parsers.external_isolation: "none"`인 외부 파서가 사용하는 경로다.
 
-`registerIsolated(parser)`: 다른 실행 단위에서 도는 파서(`IsolatedParser`: `name`, `contract`, `parse(args, raw, ctx, strictSchemas)`, `close()`)를 등록한다. 계약 선언은 `parser.contract`를 쓰고, strict 검사는 실행 단위가 수행해 위반 메시지를 결과와 함께 돌려준다. `listPacks()`에는 나타나고 `getPack()`으로는 조회되지 않는다. 같은 이름을 다시 등록하면 이전 실행 단위를 닫는다. `ParserRegistry.close()`는 모든 실행 단위를 끝낸다.
+`registerIsolated(parser)`: 다른 실행 단위에서 도는 파서(`IsolatedParser`: `name`, `contract`, `parse(args, raw, ctx, strictSchemas)`, `close()`, 선택 `withDeadline(task)`)를 등록한다. `withCallDeadline(cmd, task)`는 task 안의 그 명령 실행 단위 호출이 시간 상한 하나를 함께 쓰게 하며 `parse()`가 스스로 이 범위를 쓴다. 계약 선언은 `parser.contract`를 쓰고, strict 검사는 실행 단위가 수행해 위반 메시지를 결과와 함께 돌려준다. `listPacks()`에는 나타나고 `getPack()`으로는 조회되지 않는다. 같은 이름을 다시 등록하면 이전 실행 단위를 닫는다. `ParserRegistry.close()`는 모든 실행 단위를 끝낸다.
 
 계약 함수(`supports`, `hint`)가 예외를 던지면 `parse()`는 예외를 전파하지 않고 `parser_exception`으로 보고한다.
 
@@ -465,12 +465,15 @@ export interface ParserContract {
 `loadExternalParsers`는 기본적으로 외부 팩마다 워커 스레드(`node:worker_threads`) 하나를 띄워 `parser.js`를 그 워커에서만 읽는다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 서버 스레드에서 실행한다.
 
 - 메타데이터: 워커가 계약 선언을 구조화 복제 가능한 값으로 보낸다. `RegExp`는 그대로 전달되고, 함수(`supports`, `hint`, 서브커맨드 계약 안의 함수)는 호출할 때마다 워커에서 평가하는 대리 함수가 된다. 서버 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다.
-- 동기 호출: 서버 스레드는 요청을 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. `parse()`는 동기 API 그대로다. 기다리는 동안 서버 스레드는 막히며 그 길이는 시간 상한을 넘지 않는다.
-- 상한: 호출 한 번(`parse`, 계약 함수) `parsers.external_time_limit_ms`(기본 500ms), 워커 힙 `parsers.external_memory_limit_mb`(기본 128MB, `resourceLimits.maxOldGenerationSizeMb`), 워커 기동과 모듈 로드 5초.
-- 실패: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`이며 메시지가 원인을 밝힌다(`External parser 'x' did not answer within 500 ms; its worker was stopped and restarts on the next call`). 워커를 끝내고 다음 호출 때 다시 띄운다. 스스로 끝난 워커는 종료 신호로 바로 알리고, 메모리 상한으로 멈춘 워커는 시간 상한에서 끝난다. 워커 `error` 이벤트는 stderr 경고(`ERR_WORKER_OUT_OF_MEMORY` 등)로 남는다. 기동 상한 초과와 로드 실패는 그 팩만 건너뛰고 경고한다.
+- 동기 호출: 서버 스레드는 요청을 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. `parse()`는 동기 API 그대로다. 기다리는 동안 서버 스레드는 막힌다. `parse()` 호출 하나의 계약 함수(`supports`, `hint`) 왕복과 `parse` 왕복, 다시 띄운 워커의 기동 대기는 시간 상한 하나를 함께 쓰므로 호출 하나가 서버 스레드를 막는 시간은 시간 상한에 수 ms를 더한 정도다. 엔진의 `run`은 파싱과 투영용 계약 조회(`contractFor`)를 한 호출로 묶는다. 예외는 처음 로드(서버 시작, `parism add`)이며 기동 상한까지 막힐 수 있다.
+- 상한: 호출 하나(계약 함수와 `parse` 왕복 전부) `parsers.external_time_limit_ms`(기본 500ms), 워커 V8 힙의 old generation `parsers.external_memory_limit_mb`(기본 128MB, `resourceLimits.maxOldGenerationSizeMb`. `Buffer`, `ArrayBuffer`처럼 힙 밖에 잡는 메모리는 제한하지 않는다), 워커 기동과 모듈 로드 2초(설정으로 바꾸지 않는다).
+- 실패: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`이며 메시지가 원인과 대기 시간을 밝힌다(`External parser 'x' did not answer within 500 ms; its worker was stopped and restarts after 2000 ms`). 스스로 끝난 워커는 종료 신호로 바로 알리고(호출 사이에 끝난 경우 포함), 메모리 상한으로 멈춘 워커는 시간 상한에서 끝난다. 워커 `error` 이벤트는 stderr 경고(`ERR_WORKER_OUT_OF_MEMORY` 등)로 남는다. 처음 로드할 때의 기동 상한 초과와 로드 실패는 그 팩만 건너뛰고 경고한다.
+- 장애 뒤 대기: 워커 장애(시간 상한 초과, 비정상 종료, 메모리 상한 초과, 다시 띄울 때의 기동 상한 초과와 로드 실패, 호출 밖에서 스스로 끝남) 뒤에는 워커를 끝내고 대기 시간 동안 워커를 띄우지 않고 바로 `parser_exception`(`External parser 'x' is paused for N ms after its worker stopped`)으로 답한다. 대기 시간은 2초에서 시작해 장애가 이어질 때마다 두 배로 늘어 30초에서 멈추며, 워커가 답하고 장애가 없었던 호출 뒤에 2초로 돌아간다. 대기 시간이 지난 뒤의 호출이 워커를 다시 띄운다. 그 호출의 상한 안에 기동이 끝나지 않으면 워커는 그대로 두고 그 호출만 `parser_exception`(`... is still starting; the call stopped at its 500 ms limit`)이며, 다음 호출이 기동을 이어서 기다린다.
+- 계약 조회: `contractFor`와 `formatHint`는 계약 함수가 예외를 던지면(워커 장애와 대기 포함) `undefined`다. 투영은 이때 계약의 `rowsKey`, `rowFields` 없이 대상 배열을 고른다.
 - 반환값: 구조화 복제 가능한 값만 받는다. 함수, Promise, Symbol이 든 값은 `parser_exception`(`Parser returned a value that cannot be passed between threads: ...`)이다. 이름이 `UnrecognizedOutputError`인 예외는 `unrecognized_output`이다.
 - strict 검사: `strict_schemas=true`이면 워커가 팩의 `schema.safeParse`로 검사한다. `safeParse`가 없는 스키마는 검사하지 않는다. 조용한 빈 결과 판정이 스키마 위반보다 먼저다.
-- 출력: 워커 안의 `console`은 stderr로 간다.
+- 출력: 워커 안의 `console`과 `process.stdout.write`는 stderr로 간다(`process.stderr.write`는 그대로). 워커는 보안 경계가 아니므로 파일 기술자 1에 직접 쓰는 출력은 막지 못한다.
+- 팩 이름: `parism add`는 디렉터리를 만들기 전에 팩 이름이 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자인지, 설치 경로가 `parsers/` 바로 아래인지 검사하고 맞지 않으면 설치하지 않는다. 시작 시 로더도 `registry.json`의 항목 이름을 같은 형식으로 검사해 맞지 않는 항목을 경고와 함께 건너뛴다.
 - `parism add`도 팩 이름을 워커에서 읽는다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 팩 객체를 같은 스레드에서 실행하고, `parism inspect`는 내장 파서만 쓴다.
 
 워커 격리는 결함 격리이며 보안 경계가 아니다. 워커는 서버 프로세스의 권한을 그대로 가진다. [SECURITY.md](SECURITY.md)와 `docs/adr/2026-07-21-external-parser-sandbox.md` 참조.
@@ -580,8 +583,8 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 |---|---|---|
 | `strict_schemas` | `false` | `registerPack` 파서 출력 Zod 검증 활성화. 격리 실행 외부 팩은 워커가 검증한다 |
 | `external_isolation` | `"worker"` | 외부 ParserPack 실행 방식. `"worker"`는 팩마다 워커 스레드, `"none"`은 서버 스레드 |
-| `external_time_limit_ms` | `500` | 외부 팩 호출 한 번의 시간 상한. 1 이상 정수 |
-| `external_memory_limit_mb` | `128` | 외부 팩 워커의 힙 상한. 1 이상 정수 |
+| `external_time_limit_ms` | `500` | 외부 팩 호출 하나(계약 함수와 parse 왕복 전부)의 시간 상한. 1 이상 정수 |
+| `external_memory_limit_mb` | `128` | 외부 팩 워커의 V8 힙(old generation) 상한. 힙 밖 메모리는 제한하지 않는다. 1 이상 정수 |
 
 `external_*` 값은 전역 설정에서 정한다. 신뢰하지 않는 프로젝트 설정(전역 `trust_project_config`가 참이 아님)은 격리를 `"worker"`로 켜거나 상한을 기준값 이하로 낮추는 값만 반영하고, 격리를 끄거나 상한을 올리는 값은 stderr 경고 후 버린다. 환경 변수로는 바꿀 수 없다.
 

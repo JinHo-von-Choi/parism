@@ -584,13 +584,14 @@ export default pack;
 
 ### 외부 파서 격리 실행
 
-등록한 팩은 기본적으로 팩마다 하나의 워커 스레드에서 읽고 실행한다(`parsers.external_isolation: "worker"`). 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받으며, `supports`와 `hint` 같은 함수 선언은 호출할 때마다 워커에서 평가한다. `parse()` 한 번이 `external_time_limit_ms`(기본 500ms)를 넘기거나, 워커가 비정상 종료하거나, 힙이 `external_memory_limit_mb`(기본 128MB)를 넘으면 `parse_error.reason = "parser_exception"`으로 보고하고 다음 호출 때 워커를 다시 띄운다. 서버는 계속 응답한다. `strict_schemas` 검사는 워커가 팩 스키마로 수행한다.
+등록한 팩은 기본적으로 팩마다 하나의 워커 스레드에서 읽고 실행한다(`parsers.external_isolation: "worker"`). 서버 스레드는 팩 모듈을 실행하지 않고 계약 선언만 받으며, `supports`와 `hint` 같은 함수 선언은 호출할 때마다 워커에서 평가한다. `parse()` 호출 하나(`supports`, `hint` 왕복 포함)가 `external_time_limit_ms`(기본 500ms)를 넘기거나, 워커가 비정상 종료하거나, V8 힙이 `external_memory_limit_mb`(기본 128MB)를 넘으면 `parse_error.reason = "parser_exception"`으로 보고한다. 그 뒤 대기 시간(2초에서 시작해 장애가 이어지면 두 배씩, 최대 30초) 동안은 워커를 띄우지 않고 바로 실패로 답하고, 대기 시간이 지난 뒤의 호출이 워커를 다시 띄운다. 서버는 계속 응답한다. `strict_schemas` 검사는 워커가 팩 스키마로 수행한다.
 
 - `parse()`의 반환값은 구조화 복제가 가능한 값이어야 한다. 함수, Promise, Symbol이 든 값은 `parser_exception`이다.
-- `parse()`는 서버 스레드의 전역 상태를 볼 수 없다. 팩 안의 `console` 출력은 stderr로 간다.
+- `parse()`는 서버 스레드의 전역 상태를 볼 수 없다. 팩 안의 `console`과 `process.stdout.write` 출력은 stderr로 간다.
+- 힙 상한은 V8 힙만 제한한다. `Buffer`처럼 힙 밖에 잡는 메모리는 제한하지 않는다.
 - 호출마다 입력과 결과를 복제하는 비용이 든다. 20줄 입력에서 호출당 약 0.1ms, 500줄 입력에서 약 1.6ms가 더해진다(`npm run benchmark:external`).
 - 이전처럼 서버 스레드에서 실행하려면 전역 `~/.parism/prism.config.json`에 `"parsers": { "external_isolation": "none" }`을 둔다.
-- `parism add`도 팩 이름을 워커에서 읽는다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 같은 스레드에서 실행한다.
+- `parism add`도 팩 이름을 워커에서 읽는다. 팩 이름은 영문자나 숫자로 시작하고 영문자, 숫자, `.`, `_`, `-`로 된 1~64자여야 한다. fixture replay 도우미(`runFixtureTests`)는 작성자 도구라 같은 스레드에서 실행한다.
 
 워커 격리는 결함 격리이지 보안 샌드박스가 아니다. 워커는 서버 프로세스의 권한(파일, 네트워크, 자식 프로세스, 환경 변수)을 그대로 가진다. 직접 작성했거나 검토한 팩만 등록하고, 신뢰할 수 없는 제3자 팩은 Parism 전체를 컨테이너나 VM 안에서 실행한다. [SECURITY.md](SECURITY.md) 참조.
 
