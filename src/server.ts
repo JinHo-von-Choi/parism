@@ -24,14 +24,14 @@ When to use:
 When NOT to use: Single-line output (pwd, echo) or commands needing pipe/redirect (Guard blocks).
 
 Tools:
-- describe: Show allowed commands, available parsers, guard restrictions, version. Call this first.
+- describe: Show allowed commands, available parsers, guard restrictions, version. Call this first. describe(cmd) returns one command's allowed subcommands and flags, the flags and formats its parser handles, machine-readable alternatives and examples.
 - dry_run: Check if a command would pass the guard WITHOUT executing it.
 - run: Execute command, get structured JSON. format: json|compact|json-no-raw. Optional select/where/sort_by/limit filter the parsed row array on the server; the result then carries _summary {total, matched, shown} and omits stdout.raw.
 - run_paged: Paginated stdout for large output. parsed is always null.
 
 Usage:
 1. Call describe first to understand what commands and parsers are available.
-2. Use dry_run to pre-validate unfamiliar commands before executing.
+2. Use describe(cmd) or dry_run before unfamiliar commands to avoid guard denials and unsupported formats.
 3. Prefer run for small output; format=compact saves tokens.
 4. Large output: run_paged(page=0) first, check page_info.total_lines, fetch needed pages.
 5. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
@@ -154,11 +154,15 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
   server.tool(
     "describe",
     "Describe the current Parism environment: allowed commands, available parsers, guard restrictions, and version. " +
-    "Call this first when using Parism to understand what commands are available and how the guard is configured.",
-    {},
-    async () => {
-      const result = engine.describe();
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    "Call this first when using Parism to understand what commands are available and how the guard is configured. " +
+    "With cmd, returns that command's allowed subcommands and flags, parseable flags and formats, machine-readable alternatives and examples.",
+    {
+      cmd: z.string().optional().describe("Command name to describe in detail (e.g. 'git'). Omit for the environment summary."),
+    },
+    async ({ cmd }) => {
+      /** 명령별 응답은 크기를 줄이려고 들여쓰기 없이 직렬화한다. */
+      const text = cmd === undefined ? JSON.stringify(engine.describe(), null, 2) : JSON.stringify(engine.describe(cmd));
+      return { content: [{ type: "text" as const, text }] };
     },
   );
 

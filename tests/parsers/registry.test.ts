@@ -332,3 +332,20 @@ describe("createRegistry()", () => {
     expect(commands).toContain("git");
   });
 });
+
+describe("ParserRegistry 계약 조회", () => {
+  const reg = createRegistry();
+
+  it("formatHint는 형식 밖 인자에만 대체 인자를 돌려준다", () => {
+    expect(reg.formatHint("ls", ["-l"])).toBeUndefined();
+    expect(reg.formatHint("ls", [])?.args).toEqual(["-l"]);
+    expect(reg.formatHint("cat", ["-A"])).toBeUndefined();
+  });
+
+  it("declaredContract와 hasParser는 등록 상태를 그대로 알린다", () => {
+    expect(reg.declaredContract("git")?.subcommands).toHaveProperty("log");
+    expect(reg.declaredContract("cat")).toBeUndefined();
+    expect(reg.hasParser("cat")).toBe(true);
+    expect(reg.hasParser("echo")).toBe(false);
+  });
+});

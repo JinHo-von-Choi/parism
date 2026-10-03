@@ -25,6 +25,7 @@ import { toCompact }                                                            
 import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
 import { PipelineTimer }                                                            from "../engine/telemetry.js";
+import { describeCommand, type CommandDescription, type CommandDescriptionFailure } from "./capabilities.js";
 import { PROJECTION_SHAPE, applyProjection, hasProjection, parseProjection,
          type ProjectionOptions, type ProjectionSummary }                          from "../engine/projection.js";
 import { PACKAGE_VERSION }                                                          from "../version.js";
@@ -265,8 +266,13 @@ export class ParismEngine {
 
   /**
    * 현재 환경 정보를 반환한다. 에이전트가 사용 가능한 명령, 파서, guard 제한을 파악할 수 있다.
+   * cmd를 주면 그 명령의 유효 정책, 파서 형식, 대체 형식 안내, 예시만 돌려준다(facade/capabilities.ts).
+   * 허용되지 않은 명령이면 예외 대신 failure를 담은 결과다.
    */
-  describe(): DescribeResult {
+  describe(): DescribeResult;
+  describe(cmd: string): CommandDescription | CommandDescriptionFailure;
+  describe(cmd?: string): DescribeResult | CommandDescription | CommandDescriptionFailure {
+    if (cmd !== undefined) return describeCommand(this.config, this.registry, cmd);
     const guard = this.config.guard;
     return {
       version:            PACKAGE_VERSION,
@@ -411,6 +417,8 @@ export async function createEngine(opts?: { configPath?: string }): Promise<Pari
   }
   return new ParismEngine(config, registry);
 }
+
+export type { CommandDescription, CommandDescriptionFailure } from "./capabilities.js";
 
 /** describe() 반환 타입. */
 export interface DescribeResult {

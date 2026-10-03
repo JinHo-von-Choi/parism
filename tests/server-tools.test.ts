@@ -53,3 +53,24 @@ describe("run 도구 투영 인자", () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe("describe 도구 cmd 인자", () => {
+  it("cmd가 있으면 그 명령의 능력을 한 줄 JSON으로 돌려준다", async () => {
+    const result = await call("describe", { cmd: "git" });
+    expect(result.isError).toBe(false);
+    expect(result.text).not.toContain("\n");
+    expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(2048);
+    expect(JSON.parse(result.text).policy.origin).toBe("default");
+  });
+
+  it("허용되지 않은 명령은 failure를 담은 결과다", async () => {
+    const result = await call("describe", { cmd: "rm" });
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.text).failure.reason).toBe("command_not_allowed");
+  });
+
+  it("cmd가 없으면 전체 요약이다", async () => {
+    const result = await call("describe", {});
+    expect(JSON.parse(result.text).allowed_commands).toContain("ls");
+  });
+});

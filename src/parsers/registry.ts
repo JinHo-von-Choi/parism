@@ -192,6 +192,26 @@ export class ParserRegistry {
     return contract ? checkFormat(contract, args).contract : undefined;
   }
 
+  /** cmd에 등록된 계약 선언 그대로. 서브커맨드 계약을 덧씌우지 않는다. */
+  declaredContract(cmd: string): ParserContract | undefined {
+    return this.contracts.get(cmd);
+  }
+
+  /** cmd에 파서가 등록돼 있는지 */
+  hasParser(cmd: string): boolean {
+    return this.parsers.has(cmd);
+  }
+
+  /**
+   * args가 cmd 계약의 형식 밖이면 같은 정보를 얻는 대체 인자 안내를 돌려준다.
+   * 형식 안이거나 계약이 없거나 안내가 없으면 undefined.
+   */
+  formatHint(cmd: string, args: string[]): FormatHint | undefined {
+    const contract = this.contracts.get(cmd);
+    if (!contract || checkFormat(contract, args).accepted) return undefined;
+    return buildHint(contract, args);
+  }
+
   /**
    * 등록된 ParserPack을 이름으로 조회한다.
    */
