@@ -13,7 +13,7 @@ import type { PrismConfig }                                                     
 import { createRegistry }                                                           from "../parsers/index.js";
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
 import type { OutputFormat }                                                        from "../parsers/registry.js";
-import type { FailureInfo, ResponseEnvelope }                                       from "../types/envelope.js";
+import type { FailureInfo, ParseErrorField, ResponseEnvelope }                      from "../types/envelope.js";
 import { execute, truncateUtf8Lines }                                               from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
 import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
@@ -24,7 +24,7 @@ import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }             
 import { toCompact }                                                                from "../parsers/compact.js";
 import { loadExternalParsers }                                                      from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
-import { PipelineTimer }                                                            from "../engine/telemetry.js";
+import { OutcomeStats, PipelineTimer, type CommandOutcomeCounts }                  from "../engine/telemetry.js";
 import { describeCommand, type CommandDescription, type CommandDescriptionFailure } from "./capabilities.js";
 import { PROJECTION_SHAPE, applyProjection, hasProjection, parseProjection,
          type ProjectionOptions, type ProjectionSummary }                          from "../engine/projection.js";
@@ -121,12 +121,15 @@ export class ParismEngine {
   private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
   /** 자식 프로세스 동시 실행 상한. 넘는 요청은 자리가 날 때까지 대기한다. */
   private readonly execSlots: Semaphore;
+  /** 텔레메트리를 켰을 때만 있는 명령별 결과 카운터 */
+  private readonly stats:     OutcomeStats | null;
 
   constructor(
     private readonly config:   PrismConfig,
     private readonly registry: ParserRegistry,
   ) {
     this.execSlots = new Semaphore(concurrencyLimit(config.guard.max_concurrency));
+    this.stats     = config.telemetry?.enabled === true ? new OutcomeStats(config.guard.allowed_commands) : null;
   }
 
   /**
@@ -146,6 +149,7 @@ export class ParismEngine {
       checkGuard(cmd, args, cwd, this.config);
     } catch (err) {
       if (err instanceof GuardError) {
+        this.stats?.record(cmd, "guard", err.reason);
         return buildGuardErrorEnvelope(cmd, args, cwd, err);
       }
       throw err;
@@ -240,6 +244,7 @@ export class ParismEngine {
       parseFailure = { kind: "parse", reason: "parser_not_found", message: `No parser registered for '${cmd}'` };
     }
     if (projectionFailure) parseFailure = projectionFailure;
+    this.recordRun(cmd, envelope.failure, parseError, parsed);
     timer?.markEnd("parse");
 
     let enriched = parseFailure !== undefined
@@ -272,7 +277,10 @@ export class ParismEngine {
   describe(): DescribeResult;
   describe(cmd: string): CommandDescription | CommandDescriptionFailure;
   describe(cmd?: string): DescribeResult | CommandDescription | CommandDescriptionFailure {
-    if (cmd !== undefined) return describeCommand(this.config, this.registry, cmd);
+    if (cmd !== undefined) {
+      const result = describeCommand(this.config, this.registry, cmd);
+      return this.stats && !("failure" in result) ? { ...result, stats: this.stats.forCommand(cmd) } : result;
+    }
     const guard = this.config.guard;
     return {
       version:            PACKAGE_VERSION,
@@ -296,7 +304,20 @@ export class ParismEngine {
         ),
       },
       telemetry_enabled: this.config.telemetry?.enabled === true,
+      ...(this.stats && { stats: this.stats.snapshot() }),
     };
+  }
+
+  /**
+   * run 한 번의 결과를 센다(텔레메트리를 켰을 때만). 실행 실패가 있으면 그 사유를, 없으면 파싱 결과를 센다.
+   * native JSON 폴백이 결과를 냈으면 parsed다. 투영 인자 오류는 파싱 결과와 무관하므로 세지 않는다.
+   */
+  private recordRun(cmd: string, execFailure: FailureInfo | undefined, parseError: ParseErrorField | undefined, parsed: unknown): void {
+    if (!this.stats) return;
+    if (execFailure)         this.stats.record(cmd, "exec", execFailure.reason);
+    else if (parseError)     this.stats.record(cmd, parseError.reason);
+    else if (parsed == null) this.stats.record(cmd, "parser_not_found");
+    else                     this.stats.record(cmd, "parsed");
   }
 
   /**
@@ -339,6 +360,7 @@ export class ParismEngine {
       checkGuard(cmd, args, cwd, this.config);
     } catch (err) {
       if (err instanceof GuardError) {
+        this.stats?.record(cmd, "guard", err.reason);
         return buildGuardErrorEnvelope(cmd, args, cwd, err);
       }
       throw err;
@@ -365,6 +387,8 @@ export class ParismEngine {
       ));
       envelope  = { ...executed, args };
       if (envelope.ok) this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
+      /** run_paged는 파싱하지 않으므로 실행 실패만 센다. */
+      if (envelope.failure) this.stats?.record(cmd, "exec", envelope.failure.reason);
       cacheInfo = { hit: false, age_ms: 0 };
     }
     const { lines, page_info }   = paginateLines(envelope.stdout.raw, page, pageSize);
@@ -435,6 +459,8 @@ export interface DescribeResult {
     policies:                Record<string, { subcommands?: string[]; flags: string[]; positionals: string }>;
   };
   telemetry_enabled:  boolean;
+  /** 텔레메트리를 켰을 때만 있는 명령별 결과 횟수. 프로세스 안에만 있고 재시작하면 비워진다. */
+  stats?:             Record<string, CommandOutcomeCounts>;
 }
 
 /** dryRun() 반환 타입. */

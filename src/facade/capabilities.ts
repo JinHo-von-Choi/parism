@@ -10,6 +10,7 @@ import type { PrismConfig }                       from "../config/loader.js";
 import type { ParserContract, ParserRegistry }    from "../parsers/registry.js";
 import { hasFormatDeclaration, NUMBER_FLAG }      from "../parsers/format.js";
 import type { FailureInfo }                       from "../types/envelope.js";
+import type { CommandOutcomeCounts }              from "../engine/telemetry.js";
 import { checkGuard, GuardError }                 from "../engine/guard.js";
 import { effectiveFlags, policySource, resolvePolicies, type CommandPolicy } from "../engine/policy.js";
 
@@ -136,8 +137,8 @@ export interface CommandDescription {
   parser:       ParserDescription | null;
   alternatives: AlternativeDescription[];
   examples:     string[][];
-  /** 텔레메트리를 켰을 때만 있는 이 명령의 결과 통계 */
-  stats?:       unknown;
+  /** 텔레메트리를 켰을 때만 있는 이 명령의 결과 횟수 */
+  stats?:       CommandOutcomeCounts;
 }
 
 export interface CommandDescriptionFailure {
