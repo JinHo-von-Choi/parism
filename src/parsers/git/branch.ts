@@ -3,9 +3,13 @@ export interface GitBranchEntry {
   name:      string;
   hash:      string;
   upstream:  string | null;
-  ahead:     number;
-  behind:    number;
+  /** 상류보다 앞선 커밋 수. 상류가 사라졌으면(gone) 알 수 없어 null이다. */
+  ahead:     number | null;
+  /** 상류보다 뒤진 커밋 수. 상류가 사라졌으면(gone) 알 수 없어 null이다. */
+  behind:    number | null;
   message:   string;
+  /** 추적하던 상류 브랜치가 원격에서 사라졌으면(git이 [gone]으로 표시) true */
+  upstream_gone?: true;
   /** 다른 작업 트리에서 체크아웃된 브랜치(+ 표시)일 때 true */
   worktree?: true;
   /** 심볼릭 참조(origin/HEAD -> origin/main)가 가리키는 대상 */
@@ -56,7 +60,8 @@ export function parseGitBranch(cmd: string, args: string[], raw: string): { bran
       name = detached[0];
       tail = rest.slice(name.length).trimStart();
     } else {
-      const alias = /^(\S+) -> (\S+)(?:\s+(.*))?$/.exec(rest);
+      /** -v에서는 이름 열을 맞추느라 "->" 앞에 공백이 여럿 온다. 해시는 "->"로 시작할 수 없으므로 모호하지 않다. */
+      const alias = /^(\S+)\s+->\s+(\S+)(?:\s+(.*))?$/.exec(rest);
       if (alias) {
         name     = alias[1]!;
         pointsTo = alias[2];
@@ -82,12 +87,16 @@ export function parseGitBranch(cmd: string, args: string[], raw: string): { bran
     const upstream = track !== null && !STATUS_ONLY.test(track) ? track.split(":")[0]!.trim() : null;
     const status   = track !== null ? track.slice(track.indexOf(":") + 1) : "";
 
+    const gone   = status.trim() === "gone";
     const ahead  = /ahead (\d+)/.exec(status);
     const behind = /behind (\d+)/.exec(status);
 
     branches.push({
-      current, name, hash: hash!, upstream, ahead: ahead ? parseInt(ahead[1]!, 10) : 0, behind: behind ? parseInt(behind[1]!, 10) : 0,
+      current, name, hash: hash!, upstream,
+      ahead:   gone ? null : ahead ? parseInt(ahead[1]!, 10) : 0,
+      behind:  gone ? null : behind ? parseInt(behind[1]!, 10) : 0,
       message: track === null && trackRaw !== undefined ? `[${trackRaw}] ${subject}`.trimEnd() : subject,
+      ...(gone && { upstream_gone: true as const }),
       ...(marker === "+" && { worktree: true as const }),
       ...(pointsTo !== undefined && { points_to: pointsTo }),
       ...(detached && { detached: true as const }),

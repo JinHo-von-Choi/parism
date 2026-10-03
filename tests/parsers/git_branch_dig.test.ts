@@ -37,7 +37,7 @@ describe("parseGitBranch() 항목 모양", () => {
     const raw = ["* main 1111111 [ahead 2, behind 1] work", "  old  2222222 [gone] stale"].join("\n");
     const r = parseGitBranch("git", ["branch", "-v"], raw);
     expect(r.branches[0]).toMatchObject({ upstream: null, ahead: 2, behind: 1, message: "work" });
-    expect(r.branches[1]).toMatchObject({ upstream: null, ahead: 0, behind: 0, message: "stale" });
+    expect(r.branches[1]).toMatchObject({ upstream: null, ahead: null, behind: null, upstream_gone: true, message: "stale" });
   });
 
   it("-v에서 대괄호로 시작하는 제목은 제목으로 둔다", () => {
@@ -55,6 +55,28 @@ describe("parseGitBranch() 항목 모양", () => {
     const r = parseGitBranch("git", ["branch", "-av"], raw);
     expect(r.branches).toHaveLength(3);
     expect(r.branches[1]).toMatchObject({ name: "remotes/origin/HEAD", points_to: "origin/main", hash: "" });
+  });
+
+  it("열을 맞춘 심볼릭 참조 줄(-a -v, -r -v)도 points_to를 담는다", () => {
+    const raw = [
+      "* main                       7434367 [origin/main] fourth",
+      "  remotes/origin/HEAD        -> origin/main",
+      "  remotes/origin/main        7434367 fourth",
+    ].join("\n") + "\n";
+    const r = parseGitBranch("git", ["branch", "-avv"], raw);
+    expect(r.branches).toHaveLength(3);
+    expect(r.branches[1]).toEqual({ current: false, name: "remotes/origin/HEAD", hash: "", upstream: null, ahead: 0, behind: 0, message: "", points_to: "origin/main" });
+    const remote = parseGitBranch("git", ["branch", "-r", "-v"], "  origin/HEAD        -> origin/main\n  origin/kept-branch 7434367 fourth\n");
+    expect(remote.branches.map(b => [b.name, b.points_to ?? null, b.hash])).toEqual([["origin/HEAD", "origin/main", ""], ["origin/kept-branch", null, "7434367"]]);
+  });
+
+  it("사라진 상류(gone)는 upstream_gone이며 앞섬과 뒤짐은 알 수 없어 null이다", () => {
+    const vv = parseGitBranch("git", ["branch", "-vv"], "  gone-branch 7434367 [origin/gone-branch: gone] fourth\n  kept-branch de92e81 [origin/kept-branch: ahead 1] work\n");
+    expect(vv.branches[0]).toEqual({ current: false, name: "gone-branch", hash: "7434367", upstream: "origin/gone-branch", ahead: null, behind: null, upstream_gone: true, message: "fourth" });
+    expect(vv.branches[1]).toMatchObject({ upstream: "origin/kept-branch", ahead: 1, behind: 0 });
+    expect(vv.branches[1]).not.toHaveProperty("upstream_gone");
+    const v = parseGitBranch("git", ["branch", "-v"], "  gone-branch 7434367 [gone] fourth\n");
+    expect(v.branches[0]).toMatchObject({ upstream: null, ahead: null, behind: null, upstream_gone: true, message: "fourth" });
   });
 
   it("다른 작업 트리에서 쓰는 브랜치(+)를 표시한다", () => {

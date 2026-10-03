@@ -309,7 +309,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         acceptedFlags: bools("-v", "--verbose", "--no-abbrev", "--no-color", "--merged", "--no-merged", "--list", "-l", "-a", "--all", "-r", "--remotes"),
         requiredFlags: ["-v", "--verbose"],
         hint:          gitBranchHint,
-        rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message", "worktree", "points_to", "detached"],
+        rowsKey: "branches", rowFields: ["current", "name", "hash", "upstream", "ahead", "behind", "message", "worktree", "points_to", "detached", "upstream_gone"],
       },
       diff: {
         acceptedFlags: {
