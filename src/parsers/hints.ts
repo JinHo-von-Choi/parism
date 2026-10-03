@@ -168,8 +168,67 @@ export function gitLogHint(rest: string[]): HintDraft | null {
 }
 
 export function gitBranchHint(rest: string[]): HintDraft | null {
-  if (hasFlag(rest, "-v", "--verbose")) return null;
-  return { args: [...rest, "-v"], reason: "git branch -v is parsed" };
+  const current = hasFlag(rest, "--show-current");
+  const args    = dropFlags(rest, table("bool", "--show-current"));
+  if (!hasFlag(args, "-v", "--verbose")) args.push("-v");
+  return current
+    ? { args, reason: "git branch -v marks the current branch with current: true (or lists the detached HEAD entry)" }
+    : { args, reason: "git branch -v is parsed" };
+}
+
+/** 패치 대신 요약을 내는 git diff 옵션. 패치에 경로, 변경 종류, 바뀐 줄이 모두 있다. */
+const GIT_DIFF_SUMMARY: FlagTable = {
+  ...table("bool", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "--compact-summary", "-z"),
+  ...table("attached", "--stat", "--dirstat"),
+};
+
+export function gitDiffHint(rest: string[]): HintDraft | null {
+  if (!hasFlag(rest, "--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "--compact-summary", "--dirstat")) return null;
+  return {
+    args:   dropFlags(rest, GIT_DIFF_SUMMARY),
+    reason: "the git diff patch is parsed into files with path, change status, old path and hunks; the changed lines give the per-file counts",
+  };
+}
+
+/* ---------------- systemctl, ps ---------------- */
+
+/** 유닛 종류 접미사. 없으면 systemctl은 .service로 본다. */
+const UNIT_SUFFIX = /\.(service|socket|target|device|mount|automount|swap|timer|path|slice|scope)$/;
+
+/** systemctl status, is-active, is-failed: 이름 붙인 유닛의 상태를 list-units --all로 얻는다. */
+export function systemctlHint(rest: string[]): HintDraft | null {
+  const [verb, ...tail] = rest;
+  if (!["status", "is-active", "is-failed"].includes(verb ?? "")) return null;
+  const units = dropFlags(tail, table("bool", "--no-pager", "--user", "-l", "--full", "-q", "--quiet"));
+  if (units.length === 0 || units.some(u => u.startsWith("-") || /^\d+$/.test(u))) return null;
+  const kept = tail.filter(a => a === "--no-pager" || a === "--user");
+  return {
+    args:   ["list-units", "--all", ...units.map(u => (/[*?[]/.test(u) || UNIT_SUFFIX.test(u) ? u : `${u}.service`)), ...kept],
+    reason: "systemctl list-units --all with the unit names gives their load, active and sub states",
+  };
+}
+
+/** ps aux가 내는 열에 해당하는 -o 열 이름. comm(명령 이름)은 aux의 명령 줄 첫 낱말에 있다. */
+const PS_AUX_COLUMNS = new Set(["pid", "user", "euser", "uname", "%cpu", "pcpu", "%mem", "pmem", "vsz", "vsize", "rss", "rssize", "rsz",
+  "tty", "tt", "tname", "stat", "start", "bsdstart", "time", "cputime", "args", "cmd", "command", "comm", "ucmd", "ucomm"]);
+
+/** ps -e, -A, ax(모든 프로세스)와 aux에 있는 열만 고른 -o: 같은 프로세스를 ps aux로 얻는다. */
+export function psHint(rest: string[]): HintDraft | null {
+  let   all  = false;
+  const keep: string[] = [];
+  const cols: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (["-e", "-A", "ax", "xa"].includes(a)) { all = true; continue; }
+    if (a === "-eo" || a === "-Ao") { all = true; cols.push(...(rest[++i] ?? "").split(/[,\s]+/)); continue; }
+    if (a === "-o" || a === "--format") { cols.push(...(rest[++i] ?? "").split(/[,\s]+/)); continue; }
+    if (a.startsWith("--format=")) { cols.push(...a.slice(9).split(/[,\s]+/)); continue; }
+    if (["--no-headers", "--headers", "-w"].includes(a) || a.startsWith("--sort=") || a.startsWith("--width=")) { keep.push(a); continue; }
+    if ((a === "--sort" || a === "--width") && i + 1 < rest.length) { keep.push(a, rest[++i]!); continue; }
+    return null;
+  }
+  if (!all || cols.some(c => c !== "" && !PS_AUX_COLUMNS.has(c.split("=")[0]!.toLowerCase()))) return null;
+  return { args: ["aux", ...keep], reason: "ps aux lists the same processes with user, pid, CPU, memory, tty, state, start, time and the full command line" };
 }
 
 /* ---------------- docker, kubectl, gh, npm ---------------- */

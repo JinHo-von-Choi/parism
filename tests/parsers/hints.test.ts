@@ -11,6 +11,42 @@ const reg = createRegistry();
 /** 형식 밖의 인자로 parse해 얻은 안내 */
 const hintFor = (cmd: string, args: string[]) => reg.parse(cmd, args, "").parse_error?.hint;
 
+/** 안내 인자(git diff 패치)로 실행했을 때의 출력 */
+const GIT_DIFF_SAMPLE = [
+  "diff --git a/c.txt b/c.txt",
+  "new file mode 100644",
+  "index 0000000..f2ad6c7",
+  "--- /dev/null",
+  "+++ b/c.txt",
+  "@@ -0,0 +1 @@",
+  "+c",
+  "diff --git a/e.txt b/e.txt",
+  "index 1111111..2222222 100644",
+  "--- a/e.txt",
+  "+++ b/e.txt",
+  "@@ -1,2 +1,2 @@",
+  " keep",
+  "-old",
+  "+new",
+].join("\n") + "\n";
+
+/** 안내 인자(systemctl list-units --all <유닛>)로 실행했을 때의 출력 */
+const SYSTEMCTL_SAMPLE = [
+  "  UNIT         LOAD   ACTIVE SUB     DESCRIPTION",
+  "  cron.service loaded active running Regular background program processing daemon",
+  "",
+  "Legend: LOAD   -> Reflects whether the unit definition was properly loaded.",
+  "",
+  "1 loaded units listed.",
+].join("\n") + "\n";
+
+/** 안내 인자(ps aux)로 실행했을 때의 출력 */
+const PS_SAMPLE = [
+  "USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND",
+  "root           1  0.0  0.1 168000 12000 ?        Ss   Oct02   0:05 /sbin/init splash",
+  "nirna      42000  1.5  0.2  20000  3000 pts/0    R+   09:30   0:00 ps aux",
+].join("\n") + "\n";
+
 /**
  * 안내가 있는 경우: [명령, 원래 인자, 안내 인자, 안내 인자로 실행했을 때의 출력].
  * 출력은 손으로 쓴 몇 줄이며 외부 도구를 실행하지 않는다.
@@ -46,6 +82,18 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["gh", ["release", "list"], ["release", "list", "--json", "tagName,name,isLatest,publishedAt"], "[]\n"],
   ["npm", ["ls", "--parseable"], ["ls", "--json"], "{\"name\":\"p\",\"dependencies\":{}}\n"],
   ["npm", ["outdated"], ["outdated", "--json"], "{}\n"],
+  ["git", ["diff", "--stat", "HEAD~2"], ["diff", "HEAD~2"], GIT_DIFF_SAMPLE],
+  ["git", ["diff", "--name-only"], ["diff"], GIT_DIFF_SAMPLE],
+  ["git", ["diff", "--name-status", "--cached"], ["diff", "--cached"], GIT_DIFF_SAMPLE],
+  ["git", ["diff", "--numstat", "HEAD~1", "--", "c.txt"], ["diff", "HEAD~1", "--", "c.txt"], GIT_DIFF_SAMPLE],
+  ["git", ["branch", "--show-current"], ["branch", "-v"], "  feature 3a7ab88 plain third\n* main    7434367 fourth\n"],
+  ["systemctl", ["status", "cron"], ["list-units", "--all", "cron.service"], SYSTEMCTL_SAMPLE],
+  ["systemctl", ["is-active", "cron", "ssh.socket"], ["list-units", "--all", "cron.service", "ssh.socket"], SYSTEMCTL_SAMPLE],
+  ["systemctl", ["is-failed", "app", "--user"], ["list-units", "--all", "app.service", "--user"], SYSTEMCTL_SAMPLE],
+  ["systemctl", ["status", "--no-pager", "-l", "ssh*"], ["list-units", "--all", "ssh*", "--no-pager"], SYSTEMCTL_SAMPLE],
+  ["ps", ["-e"], ["aux"], PS_SAMPLE],
+  ["ps", ["-A", "--no-headers"], ["aux", "--no-headers"], PS_SAMPLE.split("\n").slice(1).join("\n")],
+  ["ps", ["-eo", "pid,user,%cpu,args", "--sort=-%cpu"], ["aux", "--sort=-%cpu"], PS_SAMPLE],
 ];
 
 const POLICY_CONFIG: PrismConfig = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [], profile: "readonly" } };
@@ -76,7 +124,9 @@ describe("failure.hint 안내 인자", () => {
 
   it("같은 정보를 얻을 수 있는 인자가 없으면 안내하지 않는다", () => {
     for (const [cmd, args] of [
-      ["ls", ["-li"]], ["git", ["diff", "--stat"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
+      ["ls", ["-li"]], ["git", ["diff", "--word-diff"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
+      ["ps", ["-ef"]], ["ps", ["-eo", "pid,ppid,comm"]], ["systemctl", ["is-enabled", "cron"]], ["systemctl", ["status"]], ["systemctl", ["status", "1234"]],
+      ["systemctl", ["list-unit-files"]],
       ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["images"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
@@ -87,6 +137,36 @@ describe("failure.hint 안내 인자", () => {
 
   it("안내는 원래 인자와 다르다", () => {
     for (const [cmd, args] of CASES) expect(hintFor(cmd, args)?.args).not.toEqual(args);
+  });
+});
+
+describe("안내 인자로 다시 파싱한 값", () => {
+  const parsed = (cmd: string, args: string[], raw: string): Record<string, unknown> => {
+    const r = reg.parse(cmd, hintFor(cmd, args)!.args, raw);
+    expect(r.parse_error).toBeUndefined();
+    return r.parsed as Record<string, unknown>;
+  };
+
+  it("git diff --stat 계열은 패치로 경로, 변경 종류, 바뀐 줄을 얻는다", () => {
+    const r = parsed("git", ["diff", "--numstat", "HEAD~2"], GIT_DIFF_SAMPLE) as { files_changed: string[]; files: Array<{ path: string; status: string; hunks: Array<{ lines: string[] }> }> };
+    expect(r.files_changed).toEqual(["c.txt", "e.txt"]);
+    expect(r.files.map(f => [f.path, f.status])).toEqual([["c.txt", "added"], ["e.txt", "modified"]]);
+    expect(r.files[1]!.hunks[0]!.lines.filter(l => /^[+-]/.test(l))).toEqual(["-old", "+new"]);
+  });
+
+  it("git branch --show-current는 -v의 current 항목으로 현재 브랜치를 얻는다", () => {
+    const r = parsed("git", ["branch", "--show-current"], "  feature 3a7ab88 plain third\n* main    7434367 fourth\n") as { branches: Array<{ name: string; current: boolean }> };
+    expect(r.branches.filter(b => b.current).map(b => b.name)).toEqual(["main"]);
+  });
+
+  it("systemctl status, is-active는 list-units --all로 유닛 상태를 얻는다", () => {
+    const r = parsed("systemctl", ["is-active", "cron"], SYSTEMCTL_SAMPLE) as { units: Array<Record<string, unknown>> };
+    expect(r.units).toEqual([expect.objectContaining({ name: "cron.service", load: "loaded", active: "active", sub: "running" })]);
+  });
+
+  it("ps -e, -A, -eo(aux에 있는 열)는 aux로 같은 프로세스의 열을 얻는다", () => {
+    const r = parsed("ps", ["-e"], PS_SAMPLE) as { processes: Array<Record<string, unknown>> };
+    expect(r.processes.map(p => [p.user, p.pid, p.tty, p.time, p.command])).toEqual([["root", 1, "?", "0:05", "/sbin/init splash"], ["nirna", 42000, "pts/0", "0:00", "ps aux"]]);
   });
 });
 

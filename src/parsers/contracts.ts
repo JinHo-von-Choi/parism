@@ -14,8 +14,8 @@ import { NUMBER_FLAG }         from "./format.js";
 import { supportsGrep }     from "./text/grep.js";
 import { supportsWc }       from "./text/wc.js";
 import { lsHint, dfHint, digHint, grepHint, freeHint, unameHint, idHint,
-         journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
-         ghPrListHint, npmListHint, npmHint } from "./hints.js";
+         journalctlHint, gitStatusHint, gitLogHint, gitBranchHint, gitDiffHint, dockerPsHint, kubectlHint, kubectlJsonHint, ghHint,
+         ghPrListHint, npmListHint, npmHint, systemctlHint, psHint } from "./hints.js";
 
 /** 이름 목록을 같은 값 방식의 플래그 표로 만든다. */
 function flags(arity: FlagArity, ...names: string[]): Record<string, FlagArity> {
@@ -108,6 +108,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   ps: {
     acceptedFlags:       { ...bools("-w", "--cumulative", "--forest", "--no-headers", "--headers"), ...values("--sort", "--width") },
     acceptedPositionals: { min: 1, max: 1, pattern: /^[axwf]*u[axwf]*$/ },
+    hint:                psHint,
     noise: /^\s*USER\s+PID\s/, rowsKey: "processes", rowFields: PS_FIELDS,
   },
   ping: {
@@ -205,6 +206,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
   },
   systemctl: {
     leadingFlags: bools("--user", "--no-pager"),
+    hint:         systemctlHint,
     subcommands:  {
       "list-units": systemctlListUnits(),
       "":           systemctlListUnits(),
@@ -329,6 +331,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
           ...flags("attached", "-U", "--unified", "--diff-filter", "--find-renames"),
         },
         acceptedValues: { "--diff-filter": /^[ACDMRTUXB*acdmrtuxb]+$/, "--find-renames": /^\d*%?$/ },
+        hint:          gitDiffHint,
         rowsKey: "files", rowLine: /^diff --git /, rowFields: ["path", "hunks", "status", "old_path", "binary"],
       },
     },
