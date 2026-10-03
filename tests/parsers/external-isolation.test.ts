@@ -43,6 +43,27 @@ function timed<T>(fn: () => T): { value: T; ms: number } {
   return { value, ms: performance.now() - start };
 }
 
+/** 이벤트 루프를 돌리며 기다린다. */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** 이벤트 루프를 돌리지 않고 메인 스레드를 붙잡는다. */
+function busyWait(ms: number): void {
+  const end = performance.now() + ms;
+  while (performance.now() < end) { /* 대기 */ }
+}
+
+/** 대기 시간이 지나 워커가 다시 뜰 때까지 같은 호출을 되풀이하고 첫 성공 결과를 돌려준다. */
+async function eventually<T>(fn: () => T, ok: (value: T) => boolean, timeoutMs = 3000): Promise<T> {
+  const end = performance.now() + timeoutMs;
+  for (;;) {
+    const value = fn();
+    if (ok(value) || performance.now() > end) return value;
+    await sleep(25);
+  }
+}
+
 const FAULTY_PACK = `
   export default {
     name: "faulty",
@@ -176,8 +197,8 @@ describe("외부 팩 실행 실패", () => {
     expect(registry.parse("faulty", [], "next").parsed).toEqual({ ok: true, raw: "next" });
   });
 
-  it("끝나지 않는 parse는 시간 상한 안에서 parser_exception으로 끝나고 다음 호출은 새 워커가 처리한다", () => {
-    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, timeLimitMs: 300 });
+  it("끝나지 않는 parse는 시간 상한 안에서 parser_exception으로 끝나고 대기 시간 뒤 호출은 새 워커가 처리한다", async () => {
+    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, timeLimitMs: 300, cooldownMs: 50 });
     const run      = timed(() => registry.parse("faulty", [], "loop"));
 
     expect(run.value.parsed).toBeNull();
@@ -185,23 +206,25 @@ describe("외부 팩 실행 실패", () => {
     expect(run.value.parse_error?.message).toMatch(/did not answer within 300 ms/);
     expect(run.ms).toBeGreaterThanOrEqual(290);
     expect(run.ms).toBeLessThan(2000);
-    expect(registry.parse("faulty", [], "after").parsed).toEqual({ ok: true, raw: "after" });
+    const after = await eventually(() => registry.parse("faulty", [], "after"), r => r.parsed !== null);
+    expect(after.parsed).toEqual({ ok: true, raw: "after" });
   });
 
-  it("워커가 스스로 끝나면 시간 상한을 기다리지 않고 parser_exception이며 두 번째 호출은 다시 띄운 워커가 처리한다", () => {
-    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, timeLimitMs: 5000 });
+  it("워커가 스스로 끝나면 시간 상한을 기다리지 않고 parser_exception이며 대기 시간 뒤 호출은 다시 띄운 워커가 처리한다", async () => {
+    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, timeLimitMs: 5000, cooldownMs: 50 });
     const run      = timed(() => registry.parse("faulty", [], "exit"));
 
     expect(run.value.parse_error?.reason).toBe("parser_exception");
     expect(run.value.parse_error?.message).toMatch(/stopped/);
     expect(run.ms).toBeLessThan(2000);
-    expect(registry.parse("faulty", [], "again").parsed).toEqual({ ok: true, raw: "again" });
+    const again = await eventually(() => registry.parse("faulty", [], "again"), r => r.parsed !== null);
+    expect(again.parsed).toEqual({ ok: true, raw: "again" });
   });
 
-  it("메모리 상한을 넘긴 워커는 멈추고 parser_exception이며 다음 호출은 처리된다", async () => {
+  it("메모리 상한을 넘긴 워커는 멈추고 parser_exception이며 대기 시간 뒤 호출은 처리된다", async () => {
     const writes: string[] = [];
     vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => { writes.push(String(chunk)); return true; });
-    const registry = isolatedRegistry(FAULTY_PACK, { timeLimitMs: 1500, memoryLimitMb: 32 });
+    const registry = isolatedRegistry(FAULTY_PACK, { timeLimitMs: 1500, memoryLimitMb: 32, cooldownMs: 50 });
 
     const result = registry.parse("faulty", [], "oom");
     expect(result.parse_error?.reason).toBe("parser_exception");
@@ -210,7 +233,110 @@ describe("외부 팩 실행 실패", () => {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     expect(writes.some(w => w.includes("ERR_WORKER_OUT_OF_MEMORY"))).toBe(true);
-    expect(registry.parse("faulty", [], "fine").parsed).toEqual({ ok: true, raw: "fine" });
+    const fine = await eventually(() => registry.parse("faulty", [], "fine"), r => r.parsed !== null);
+    expect(fine.parsed).toEqual({ ok: true, raw: "fine" });
+  });
+
+  it("호출 사이에 워커가 끝나면 다음 호출은 시간 상한을 기다리지 않고 parser_exception이다", () => {
+    const registry = isolatedRegistry(`
+      export default {
+        name: "fading",
+        parse(raw) { if (raw === "fade") setTimeout(() => process.exit(4), 0); return { ok: true, raw }; },
+        schema: {},
+        fixtures: [],
+      };
+    `, { ...LIMITS, timeLimitMs: 1500 });
+
+    expect(registry.parse("fading", [], "fade").parsed).toEqual({ ok: true, raw: "fade" });
+    busyWait(300);
+    const next = timed(() => registry.parse("fading", [], "next"));
+    expect(next.value.parse_error?.reason).toBe("parser_exception");
+    expect(next.value.parse_error?.message).toMatch(/stopped unexpectedly/);
+    expect(next.ms).toBeLessThan(500);
+  });
+});
+
+describe("외부 팩 장애 뒤 대기", () => {
+  /** 두 번째 로드부터 모듈 최상위가 1500ms 걸리는 팩. "exit" 입력은 워커를 끝낸다. */
+  const SLOW_RESTART_PACK = `
+    import { existsSync, writeFileSync } from "node:fs";
+    const marker = new URL("./loaded-once", import.meta.url);
+    if (existsSync(marker)) { const end = Date.now() + 1500; while (Date.now() < end) { /* 지연 */ } }
+    else writeFileSync(marker, "");
+    export default {
+      name: "slowstart",
+      parse(raw) { if (raw === "exit") process.exit(3); return { ok: true, raw }; },
+      schema: {},
+      fixtures: [],
+    };
+  `;
+
+  it("대기 시간 동안 호출은 워커를 띄우지 않고 바로 parser_exception이며 다시 띄우는 동안에도 호출 하나는 시간 상한을 넘지 않는다", async () => {
+    const limits   = { ...LIMITS, timeLimitMs: 300, startupTimeoutMs: 1000, cooldownMs: 400, cooldownMaxMs: 5000 };
+    const registry = isolatedRegistry(SLOW_RESTART_PACK, limits);
+
+    expect(registry.parse("slowstart", [], "exit").parse_error?.message).toMatch(/stopped/);
+
+    for (let i = 0; i < 5; i++) {
+      const paused = timed(() => registry.parse("slowstart", [], "x"));
+      expect(paused.value.parse_error?.reason).toBe("parser_exception");
+      expect(paused.value.parse_error?.message).toMatch(/paused/);
+      expect(paused.ms).toBeLessThan(50);
+    }
+
+    await sleep(450);
+    const messages: string[] = [];
+    let   longest            = 0;
+    const end                = performance.now() + 1800;
+    while (performance.now() < end) {
+      const call = timed(() => registry.parse("slowstart", [], "x"));
+      longest    = Math.max(longest, call.ms);
+      messages.push(call.value.parse_error?.message ?? "ok");
+      await sleep(10);
+    }
+
+    expect(longest).toBeLessThan(limits.timeLimitMs + 150);
+    expect(messages.some(m => /still starting/.test(m))).toBe(true);
+    expect(messages.some(m => /did not start within 1000 ms/.test(m))).toBe(true);
+  });
+
+  it("장애가 이어지면 대기 시간이 두 배씩 늘고 최대값에서 멈춘다", async () => {
+    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, cooldownMs: 100, cooldownMaxMs: 300 });
+    const pauses: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const failed = await eventually(() => registry.parse("faulty", [], "exit"), r => !/paused/.test(r.parse_error?.message ?? ""));
+      pauses.push(/restarts after (\d+) ms/.exec(failed.parse_error?.message ?? "")?.[1] ?? "none");
+    }
+    expect(pauses).toEqual(["100", "200", "300", "300"]);
+  });
+
+  it("성공한 호출은 대기 시간을 처음 값으로 되돌린다", async () => {
+    const registry = isolatedRegistry(FAULTY_PACK, { ...LIMITS, cooldownMs: 100, cooldownMaxMs: 1000 });
+    expect(registry.parse("faulty", [], "exit").parse_error?.message).toMatch(/restarts after 100 ms/);
+    const second = await eventually(() => registry.parse("faulty", [], "exit"), r => !/paused/.test(r.parse_error?.message ?? ""));
+    expect(second.parse_error?.message).toMatch(/restarts after 200 ms/);
+
+    const fine = await eventually(() => registry.parse("faulty", [], "fine"), r => r.parsed !== null);
+    expect(fine.parsed).toEqual({ ok: true, raw: "fine" });
+    expect(registry.parse("faulty", [], "exit").parse_error?.message).toMatch(/restarts after 100 ms/);
+  });
+
+  it("호출 하나의 계약 함수와 parse 왕복은 시간 상한 하나를 함께 쓴다", () => {
+    const registry = isolatedRegistry(`
+      function spin(ms) { const end = Date.now() + ms; while (Date.now() < end) { /* 지연 */ } }
+      export default {
+        name: "slowcontract",
+        parse(raw) { spin(200); return { ok: true, raw }; },
+        schema: {},
+        fixtures: [],
+        supports(args) { spin(200); return !args.includes("--bad"); },
+        hint() { spin(200); return { args: ["--good"], reason: "use --good" }; },
+      };
+    `, { ...LIMITS, timeLimitMs: 300, cooldownMs: 10 });
+
+    const accepted = timed(() => registry.parse("slowcontract", [], "x"));
+    expect(accepted.value.parse_error?.reason).toBe("parser_exception");
+    expect(accepted.ms).toBeLessThan(300 + 150);
   });
 });
 
@@ -245,14 +371,39 @@ describe("엔진과 외부 팩 격리", () => {
         schema: {},
         fixtures: [],
       };
-    `, { ...LIMITS, timeLimitMs: 300 });
+    `, { ...LIMITS, timeLimitMs: 300, cooldownMs: 200 });
     const engine = new ParismEngine(DEFAULT_CONFIG, registry);
 
     const stuck = await engine.run("echo", { args: ["loop"] });
     expect(stuck.stdout.parsed).toBeNull();
     expect(stuck.stdout.parse_error?.reason).toBe("parser_exception");
 
-    const next = await engine.run("echo", { args: ["hello"] });
+    const paused = await engine.run("echo", { args: ["hello"] });
+    expect(paused.stdout.parse_error?.message).toMatch(/paused/);
+
+    await sleep(250);
+    let next = await engine.run("echo", { args: ["hello"] });
+    for (let i = 0; i < 40 && next.stdout.parsed === null; i++) {
+      await sleep(25);
+      next = await engine.run("echo", { args: ["hello"] });
+    }
     expect(next.stdout.parsed).toEqual({ text: "hello" });
+  });
+
+  it("투영 단계에서 계약 함수가 실패해도 엔진은 응답 봉투를 돌려준다", async () => {
+    const registry = isolatedRegistry(`
+      let calls = 0;
+      export default {
+        name: "echo",
+        parse: (raw) => ({ rows: [{ text: raw.trim() }] }),
+        schema: {},
+        fixtures: [],
+        supports() { calls++; if (calls % 2 === 0) throw new Error("supports failed"); return true; },
+      };
+    `);
+    const engine = new ParismEngine(DEFAULT_CONFIG, registry);
+
+    const run = await engine.run("echo", { args: ["hello"], select: ["text"] });
+    expect(run.stdout.parsed).toMatchObject({ rows: [{ text: "hello" }] });
   });
 });

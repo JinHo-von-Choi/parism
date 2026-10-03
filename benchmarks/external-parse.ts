@@ -19,9 +19,11 @@ const WARMUP_CALLS   = 200;
 const MEASURED_CALLS = 2000;
 const STARTUP_RUNS   = 10;
 
+/** 재기동 비용을 바로 재도록 장애 뒤 대기 시간은 두지 않는다. 호출 지연에는 영향이 없다. */
 const LIMITS = {
   timeLimitMs:   EXTERNAL_PARSER_DEFAULTS.external_time_limit_ms,
   memoryLimitMb: EXTERNAL_PARSER_DEFAULTS.external_memory_limit_mb,
+  cooldownMs:    0,
 };
 
 /** 공백으로 나눈 열을 이름 붙인 행으로 바꾸는 작은 팩. "stop" 입력은 끝나지 않는다(재기동 측정용). */
@@ -116,9 +118,10 @@ async function main(): Promise<void> {
     const respawns: number[] = [];
     for (let i = 0; i < 3; i++) {
       isolated.parse("bench", [], "stop");
-      const start = performance.now();
-      isolated.parse("bench", [], small);
+      const start  = performance.now();
+      const result = isolated.parse("bench", [], small);
       respawns.push(performance.now() - start);
+      if (result.parsed == null) throw new Error(`respawn call failed: ${result.parse_error?.message ?? "no result"}`);
     }
     console.log(`first call after a time-limit stop (respawn + parse), median of 3: ${median(respawns).toFixed(1)} ms`);
   } finally {

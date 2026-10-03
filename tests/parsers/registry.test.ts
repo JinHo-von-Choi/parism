@@ -405,4 +405,11 @@ describe("격리 실행 파서 등록", () => {
     registry.register("x", () => ({ ok: true }), { supports: () => { throw new Error("supports failed"); } });
     expect(registry.parse("x", [], "data").parse_error).toEqual({ reason: "parser_exception", message: "supports failed" });
   });
+
+  it("계약 함수가 예외를 던지면 contractFor와 formatHint는 계약과 안내 없이 undefined를 돌려준다", () => {
+    const registry = new ParserRegistry();
+    registry.register("x", () => ({ ok: true }), { supports: () => { throw new Error("supports failed"); }, rowsKey: "rows" });
+    expect(registry.contractFor("x", [])).toBeUndefined();
+    expect(registry.formatHint("x", ["--any"])).toBeUndefined();
+  });
 });

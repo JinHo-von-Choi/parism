@@ -178,10 +178,17 @@ export class ParismEngine {
     const parseFormat   = format === "json-no-raw" ? "json" : format;
     const strictSchemas = this.config.parsers?.strict_schemas ?? false;
 
-    /** 투영은 전체 행에 where와 sort_by를 적용해야 하므로 파서 상한을 끄고, 보이는 행을 max_items로 자른다. */
-    const maxItems    = projection ? 0 : this.config.guard.max_items;
-    const parseResult = this.registry.parseWithFallback(cmd, args, envelope.stdout.raw, { maxItems, format: parseFormat }, strictSchemas);
-    const parsed      = parseResult.parsed;
+    /**
+     * 투영은 전체 행에 where와 sort_by를 적용해야 하므로 파서 상한을 끄고, 보이는 행을 max_items로 자른다.
+     * 파싱과 투영용 계약 조회는 외부 파서의 시간 상한 하나를 함께 쓴다.
+     */
+    const maxItems = projection ? 0 : this.config.guard.max_items;
+    const { parseResult, shape } = this.registry.withCallDeadline(cmd, () => {
+      const result = this.registry.parseWithFallback(cmd, args, envelope.stdout.raw, { maxItems, format: parseFormat }, strictSchemas);
+      const needed = projection?.ok === true && result.parsed != null && !result.native;
+      return { parseResult: result, shape: needed ? this.registry.contractFor(cmd, args) : undefined };
+    });
+    const parsed = parseResult.parsed;
 
     /**
      * 투영: where, sort_by, limit, select. 성공하면 raw를 싣지 않는다(raw는 투영 전 전체 출력이다).
@@ -192,8 +199,7 @@ export class ParismEngine {
     let arraySummary: ProjectionSummary | undefined;
     let projectionFailure: FailureInfo | undefined;
     if (projection?.ok && parsed != null) {
-      const shape = parseResult.native ? undefined : this.registry.contractFor(cmd, args);
-      const out   = applyProjection(parsed, projection.options, shape, this.config.guard.max_items);
+      const out = applyProjection(parsed, projection.options, shape, this.config.guard.max_items);
       if (out.ok) {
         projected     = out.parsed;
         projectedRows = out.rows;

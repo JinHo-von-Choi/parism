@@ -158,15 +158,17 @@ export interface IsolatedParseResult {
 
 /**
  * 다른 실행 단위(워커 스레드)에서 실행하는 파서. 외부 ParserPack 격리에 쓴다.
- * contract -- 실행 단위에서 받은 계약 선언. 함수 필드는 실행 단위를 호출하는 대리 함수다.
- * parse    -- 파서를 실행한다. strictSchemas면 실행 단위가 팩 스키마 검사도 한다.
- *             파서 예외는 Error로, 인식 실패는 UnrecognizedOutputError로 던진다.
- * close    -- 실행 단위를 끝낸다.
+ * contract     -- 실행 단위에서 받은 계약 선언. 함수 필드는 실행 단위를 호출하는 대리 함수다.
+ * parse        -- 파서를 실행한다. strictSchemas면 실행 단위가 팩 스키마 검사도 한다.
+ *                 파서 예외는 Error로, 인식 실패는 UnrecognizedOutputError로 던진다.
+ * withDeadline -- task 안의 실행 단위 호출(계약 함수, parse)이 시간 상한 하나를 함께 쓰게 한다. 없으면 호출마다 따로 센다.
+ * close        -- 실행 단위를 끝낸다.
  */
 export interface IsolatedParser {
   readonly name:     string;
   readonly contract: ParserContract;
   parse(args: string[], raw: string, ctx: ParseContext | undefined, strictSchemas: boolean): IsolatedParseResult;
+  withDeadline?<T>(task: () => T): T;
   close(): Promise<void>;
 }
 
@@ -241,12 +243,26 @@ export class ParserRegistry {
   }
 
   /**
+   * cmd에 격리 실행 파서가 있으면 task 안의 실행 단위 호출이 시간 상한 하나를 함께 쓰게 한다.
+   * parse()는 스스로 이 범위를 쓰며, 그 밖의 계약 조회까지 한 호출로 묶을 때 쓴다.
+   */
+  withCallDeadline<T>(cmd: string, task: () => T): T {
+    const isolated = this.isolated.get(cmd);
+    return isolated?.withDeadline ? isolated.withDeadline(task) : task();
+  }
+
+  /**
    * cmd와 args에 적용되는 계약을 반환한다. 서브커맨드 계약과 인자의 출력 모양 플래그(outputFlags)를 덧씌운 결과다.
-   * 등록된 계약이 없으면 undefined.
+   * 등록된 계약이 없거나 계약 함수(supports)가 예외를 던지면 undefined.
    */
   contractFor(cmd: string, args: string[]): ParserContract | undefined {
     const contract = this.contracts.get(cmd);
-    return contract ? checkFormat(contract, args).contract : undefined;
+    if (!contract) return undefined;
+    try {
+      return this.withCallDeadline(cmd, () => checkFormat(contract, args).contract);
+    } catch {
+      return undefined;
+    }
   }
 
   /** cmd에 등록된 계약 선언 그대로. 서브커맨드 계약을 덧씌우지 않는다. */
@@ -261,12 +277,16 @@ export class ParserRegistry {
 
   /**
    * args가 cmd 계약의 형식 밖이면 같은 정보를 얻는 대체 인자 안내를 돌려준다.
-   * 형식 안이거나 계약이 없거나 안내가 없으면 undefined.
+   * 형식 안이거나 계약이 없거나 안내가 없거나 계약 함수(supports, hint)가 예외를 던지면 undefined.
    */
   formatHint(cmd: string, args: string[]): FormatHint | undefined {
     const contract = this.contracts.get(cmd);
-    if (!contract || checkFormat(contract, args).accepted) return undefined;
-    return buildHint(contract, args);
+    if (!contract) return undefined;
+    try {
+      return this.withCallDeadline(cmd, () => checkFormat(contract, args).accepted ? undefined : buildHint(contract, args));
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -298,6 +318,11 @@ export class ParserRegistry {
    * schema 검증 실패 → { parsed: null, parse_error: { reason: "schema_violation" } }.
    */
   parse(cmd: string, args: string[], raw: string, ctx?: ParseContext, strictSchemas = false): ParseResult {
+    return this.withCallDeadline(cmd, () => this.parseOnce(cmd, args, raw, ctx, strictSchemas));
+  }
+
+  /** parse() 본문. 격리 실행 파서의 계약 함수와 parse 호출은 parse()가 연 시간 상한 안에서 돈다. */
+  private parseOnce(cmd: string, args: string[], raw: string, ctx: ParseContext | undefined, strictSchemas: boolean): ParseResult {
     const fn = this.parsers.get(cmd);
     if (!fn) return { parsed: null };
 
