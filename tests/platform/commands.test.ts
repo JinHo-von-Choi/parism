@@ -239,6 +239,8 @@ async function capture(file: string, args: string[], timeoutMs: number): Promise
 const registry = createRegistry();
 const context: CaseContext = { root: REPO_ROOT, httpUrl: "", pid: String(process.pid) };
 let   server: Server | undefined;
+/** 건너뛰지 않고 출력을 받아 검사까지 간 사례 수 */
+let   executed = 0;
 
 beforeAll(async () => {
   server = createServer((_req, res) => res.writeHead(200, { "content-type": "text/plain" }).end("ok"));
@@ -261,6 +263,7 @@ describe(`실제 명령 출력 불변식 (${process.platform})`, () => {
       const run  = c.exec?.(context) ?? { file: c.cmd, args };
       const out  = await capture(run.file, run.args, timeoutMs);
       if (!out.ok) t.skip(out.reason);
+      executed++;
 
       const result = registry.parse(c.cmd, args, out.stdout, { maxItems: 0, format: "json" });
       expect(result.parse_error, JSON.stringify(result.parse_error)).toBeUndefined();
@@ -271,4 +274,9 @@ describe(`실제 명령 출력 불변식 (${process.platform})`, () => {
       c.check(result.parsed as Row, context);
     }, timeoutMs + 5_000);
   }
+
+  /** CI에서는 모든 사례가 건너뛰어진 채 통과하지 않도록 이 OS에서 실제로 실행한 사례가 있어야 한다. */
+  it.runIf(Boolean(process.env.CI))("이 OS에서 실제로 실행한 사례가 하나 이상이다", () => {
+    expect(executed).toBeGreaterThan(0);
+  });
 });
