@@ -309,7 +309,7 @@ if (!result.ok) {
 console.log(result.stdout.parsed);
 ```
 
-RunOptions — `args` / `cwd` / `format` / `includeDiff`. RunPagedOptions — 위 옵션 전체 + `page` / `page_size`.
+RunOptions: `args` / `cwd` / `format` / `includeDiff` / `select` / `where` / `sort_by` / `limit` / `array`. RunPagedOptions: `args` / `cwd` / `format` / `includeDiff` + `page` / `page_size`. `engine.describe("git")`은 한 명령의 능력 요약을 돌려준다.
 
 설계 상세는 [SPECIFICATION.md](SPECIFICATION.md) §1.1 참조.
 
@@ -344,6 +344,7 @@ Parism 은 MCP stdio 프로토콜을 통해 주요 AI CLI/IDE 에 연결할 수 
 - `cwd` — 작업 디렉토리 (기본값: 현재 디렉토리)
 - `format` — 출력 형식 (`"json"` 기본값, `"compact"`, `"json-no-raw"`). compact는 리스트형 출력을 schema+rows 컬럼 기반으로 압축하여 토큰 비용을 절감한다.
 - `includeDiff` — 파일시스템 diff 포함 여부 (기본값: `false`). `false`면 스냅샷 생략으로 지연 감소. MCP 고빈도 호출 시 권장.
+- `select`, `where`, `sort_by`, `limit`, `array`: 서버 측 투영과 필터. 아래 참조.
 
 compact 예시:
 
@@ -353,6 +354,26 @@ compact 예시:
   "rows": [["src", "directory", 4096], ["main.ts", "file", 1200]]
 }
 ```
+
+#### 투영과 필터
+
+`select`(필드 목록), `where`(조건 목록), `sort_by`(`{ field, order }`), `limit`(행 수)은 파싱 결과의 최상위 배열(`ls`의 `entries`, `git log`의 `commits` 등)에만 적용한다. 적용 순서는 `where`, `sort_by`, `limit`, `select`다. 배열이 여럿이면 `array`로 고른다.
+
+```json
+{
+  "cmd": "ls", "args": ["-l"],
+  "where":   [{ "field": "type", "op": "eq", "value": "file" }, { "field": "size_bytes", "op": "gt", "value": 1000 }],
+  "sort_by": { "field": "size_bytes", "order": "desc" },
+  "limit":   10,
+  "select":  ["name", "size_bytes"]
+}
+```
+
+- 조건 연산: `eq`, `ne`(문자열, 수, 불리언, `null`), `prefix`, `contains`(문자열, 대소문자 구분), `gt`, `gte`, `lt`, `lte`(수). 조건은 모두 맞아야 한다.
+- 결과에는 `_summary: { total, matched, shown }`이 붙고 `stdout.raw`는 실리지 않는다. 결과 객체 안의 배열이면 `parsed._summary`, 결과가 배열이면 `stdout._summary`다.
+- 정렬은 안정 정렬이며 값이 없는 행은 뒤에 둔다. `format: "compact"`와 함께 쓸 수 있고 적응형 형식 임계값은 줄어든 행 수를 본다.
+- 없는 필드나 형이 맞지 않는 비교는 `failure.kind = "config"`(`unknown_field`, `type_mismatch`)이며 raw를 남긴다. 문법이 틀린 인자는 실행하지 않는다.
+- 500개 항목 디렉터리의 `ls -l`에서 `select: ["name","size_bytes"], limit: 50`은 응답 토큰을 96% 줄인다(28,609 → 1,066, 기본 설정, gpt-tokenizer).
 
 ### run_paged
 
@@ -384,7 +405,8 @@ compact 예시:
 
 에이전트 온보딩 도구. 현재 환경의 허용 명령, 사용 가능 파서, guard 제한, 버전 정보를 반환한다.
 
-파라미터: 없음.
+파라미터:
+- `cmd`: 선택. 주면 그 명령의 능력 요약만 반환한다(아래).
 
 응답:
 - `version` — Parism 패키지 버전
@@ -392,8 +414,16 @@ compact 예시:
 - `available_parsers` — 등록된 파서 이름 목록
 - `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns`(전체 배열), `allowed_paths`
 - `telemetry_enabled` — 텔레메트리 활성화 여부
+- `stats`: 텔레메트리를 켰을 때만. 명령별 결과 횟수
 
 에이전트가 Parism을 처음 사용할 때 이 도구를 먼저 호출하면 가용 명령과 제한 사항을 한눈에 파악할 수 있다.
+
+`describe({ cmd: "git" })`는 한 명령의 정보를 2KB 이하로 돌려준다. 정책 거부나 형식 미지원으로 재시도하기 전에 확인하는 용도다.
+- `policy`: guard가 허용하는 서브커맨드, 플래그, 위치 인자 규칙과 정책 출처(`origin`: `default`, `build`, `config`, `none`)
+- `parser`: 파서가 처리하는 형식. `requires`(하나 이상 필요한 플래그), `values`(값 패턴), `flags`, `rows_key`, `row_fields`, 서브커맨드별 같은 모양
+- `alternatives`: 형식 밖 인자를 대신할 인자(`{ from, args, reason }`)
+- `examples`: 현재 guard를 통과하는 예시 인자
+- 이름 목록은 공백으로 이은 문자열이다. 허용되지 않은 명령은 `failure`(`command_not_allowed`)를 담은 결과다.
 
 ### dry_run
 
@@ -456,7 +486,7 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `parsers.strict_schemas`를 `true` 로 설정하면 각 파서의 Zod 스키마로 파싱 결과를 검증한다. 스키마 위반 시 `failure.reason === "schema_violation"` 을 반환한다. 기본 `false` 이며 opt-in 방식이다.
 
-`telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다.
+`telemetry.enabled`를 `true`로 설정하면 응답 봉투에 `telemetry` 필드가 추가된다. guard/exec/parse/redact 각 단계의 소요 시간(ms)과 raw 출력 바이트 수를 포함한다. 기본 `false`이며 opt-in 방식이다. 켜면 프로세스 안에 명령별 결과 횟수(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, 사유별 `guard`, `exec`)도 모아 `describe`의 `stats`로 보여 준다. 외부로 보내거나 저장하지 않는다.
 
 > legacy `env_secret_patterns` 는 v2.0.0 에서 제거됐다. 설정에 남아 있으면 stderr 에 경고하고 무시한다.
 

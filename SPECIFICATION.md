@@ -111,9 +111,37 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 | `cwd` | string | `process.cwd()` | 작업 디렉토리 |
 | `format` | `json`\|`compact`\|`json-no-raw` | `json` | 출력 형식 |
 | `includeDiff` | boolean | `false` | 파일시스템 diff 포함 여부. `false`이면 스냅샷 생략으로 지연 감소 |
+| `select` | string[]? | 없음 | 행마다 남길 필드 이름(1~64개, 지정한 순서) |
+| `where` | Condition[]? | 없음 | 행 조건(1~16개). 모두 맞는 행만 남긴다 |
+| `sort_by` | `{ field, order? }`? | 없음 | 정렬 필드와 방향(`asc` 기본, `desc`) |
+| `limit` | int (≥0)? | 없음 | 남길 행 수. `0`이면 행 없이 `_summary`만 남는다 |
+| `array` | string? | 없음 | 대상 배열의 키. 결과에 배열이 여럿일 때 고른다 |
 
 `format=compact`: 파서 결과의 객체 배열 필드를 `{ schema: string[], rows: unknown[][] }` 컬럼 형식으로 압축한다.
 `format=json-no-raw`: `stdout.raw`를 빈 문자열로 치환한다. 파서를 신뢰하는 경우 토큰을 절감한다. 파서 부재 시 디버깅이 불가능하므로 기본값으로 사용하지 말 것.
+
+#### 투영과 필터 (`select`, `where`, `sort_by`, `limit`, `array`)
+
+파싱 결과의 최상위 배열 하나에만 적용하고 `stdout.raw`에는 적용하지 않는다. 구현은 `src/engine/projection.ts`다.
+
+- 대상 배열: `array`를 주면 그 키의 배열, 아니면 파서 계약의 `rowsKey`(5.1), 그것도 없으면 결과의 유일한 배열이다. 결과 자체가 배열(native JSON 배열)이면 그 배열이다.
+- 순서: `where` → `sort_by` → `limit` → `select`. 정렬 필드는 `select`에 없어도 된다.
+- `Condition`은 `{ field, op, value }`이며 알 수 없는 키가 있으면 거부한다.
+
+| op | value | 필드 값 |
+|---|---|---|
+| `eq`, `ne` | 문자열, 유한한 수, 불리언, `null` | `null`이 아닌 value와 같은 형. `eq null`은 값이 없는(null 또는 누락) 행, `ne null`은 값이 있는 행 |
+| `prefix`, `contains` | 문자열 | 문자열. 대소문자를 구분한다 |
+| `gt`, `gte`, `lt`, `lte` | 유한한 수 | 수 |
+
+  필드 값이 없는 행은 `prefix`, `contains`, 수 비교에 맞지 않고, `null`이 아닌 value의 `ne`에는 맞는다.
+- `sort_by`는 안정 정렬이다. 같은 값의 행은 원래 순서를 지키고, 값이 없는 행은 방향과 관계없이 뒤에 둔다. 값이 있는 행은 수, 문자열(코드 단위 순서), 불리언 가운데 한 형이어야 한다.
+- `select`는 행에 없는 필드를 만들지 않는다.
+- 투영을 요청하면 파서는 `guard.max_items` 없이 전체 행을 내고, `where`와 `sort_by`는 전체 행에 적용한다. 보이는 행은 `limit`과 `guard.max_items` 가운데 작은 값까지이며 `max_items`로 잘렸으면 `_summary.truncated: true`다.
+- 결과 요약 `_summary = { total, matched, shown, truncated? }`(`total`은 대상 배열의 행 수, `matched`는 `where`를 통과한 행 수, `shown`은 남긴 행 수). 대상 배열이 결과 객체 안에 있으면 같은 객체의 `parsed._summary`, 결과가 최상위 배열이면 `stdout._summary`에 둔다.
+- 투영에 성공하면 `stdout.raw`를 싣지 않는다(raw는 투영 전 전체 출력이다). `format`의 `compact`와 함께 쓰면 투영한 행을 압축하고, 적응형 형식 임계값(`parsers.adaptive_format_threshold`)은 투영한 행 수로 판정한다.
+- 문법에 맞지 않는 인자는 실행하지 않고 `failure = { kind: "config", reason: "invalid_projection" }`, `exitCode: -1`이다(guard 검사 뒤). MCP 도구는 같은 문법을 입력 스키마로 검사한다.
+- 실행 뒤 투영할 수 없으면 `failure.kind = "config"`이고 `parsed`는 `null`, `stdout.raw`는 남긴다. 사유: `unknown_field`(알려진 필드는 계약의 `rowFields`와 행에 있는 키이며 메시지에 목록이 있다. 행이 객체가 아니면 필드가 없다), `type_mismatch`(필드 값의 형이 연산과 맞지 않음), `array_not_found`, `array_ambiguous`. 파싱 결과가 없으면 투영하지 않고 기존 실패를 그대로 둔다.
 
 ### 2.2 run_paged
 
@@ -142,9 +170,13 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 
 에이전트 온보딩 도구. 현재 환경의 허용 명령, 사용 가능 파서, guard 제한, 버전 정보를 반환한다.
 
-파라미터: 없음.
+파라미터:
 
-응답 (`DescribeResult`):
+| 파라미터 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `cmd` | string? | 없음 | 자세히 볼 명령 이름. 주면 그 명령의 능력 요약(`CommandDescription`)만 반환한다 |
+
+`cmd` 없는 응답 (`DescribeResult`):
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
@@ -153,8 +185,23 @@ src/index.ts        (진입점 — MCP 서버 / CLI 분기)
 | `available_parsers` | string[] | 등록된 파서 이름 목록 |
 | `guard_summary` | object | `timeout_ms`, `max_output_bytes`, `block_patterns`, `allowed_paths`, `command_arg_restrictions`, `profile`(`readonly` 또는 `build`), `policies`(명령별 유효 정책: `subcommands`, `flags`, `positionals`) |
 | `telemetry_enabled` | boolean | 텔레메트리 활성화 여부 |
+| `stats` | object? | `telemetry.enabled=true`일 때만. 명령별 결과 횟수(6.5) |
 
 에이전트가 Parism을 처음 사용하거나 가용 명령을 탐색할 때 호출한다. 실행 파이프라인을 거치지 않는다.
+
+`cmd`를 준 응답 (`CommandDescription`, `src/facade/capabilities.ts`). MCP 도구는 이 응답을 들여쓰기 없이 직렬화하며 기본 명령 40종 모두 2KB 이하다. 이름 목록(서브커맨드, 플래그, 필드)은 공백으로 이은 문자열이다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `cmd` | string | 명령 이름 |
+| `profile` | `readonly`\|`build` | guard 프로필 |
+| `policy` | object | 유효 guard 정책. `origin`(`default`, `build`, `config`, 정책 없이 허용된 명령은 `none`), `subcommands`, `flags`, `positionals`, 있으면 `sub_positionals`, `sub_verbs`, `sub_flags`(기본 표에 없는 서브커맨드 전용 플래그), `leading_flags`, `allowed_values`, `max_positionals`, `positional_chars`, `positional_prefix`, `file_ref_flags`, `blocked_flags`(`command_arg_restrictions`) |
+| `parser` | object\|null | 파서 계약의 형식 선언(5.1). `requires`(하나 이상 필요한 형식 플래그), `values`(허용 값이 정해진 플래그와 전체 일치 패턴), `flags`(그 밖의 처리 플래그), `exclusive`, `positionals`(`min`, `max`, `pattern`), `rows_key`, `row_fields`, `subcommands`(서브커맨드별 같은 모양, 빈 문자열 키는 서브커맨드 없는 실행). 플래그는 guard도 허용하는 것만 싣는다. 형식 선언이 없는 파서는 `{ any_args: true }`, 파서가 없으면 `null` |
+| `alternatives` | `{ from, args, reason }[]` | 형식 밖 대표 인자(`from`)에 대한 대체 인자 안내(3.2의 `failure.hint`와 같은 계산) |
+| `examples` | string[][] | 예시 인자. 현재 설정의 guard를 통과하는 것만 싣는다 |
+| `stats` | object? | `telemetry.enabled=true`일 때만. 이 명령의 결과 횟수 |
+
+`allowed_commands`에 없는 명령은 예외 없이 `{ cmd, failure: { kind: "guard", reason: "command_not_allowed", message } }`를 반환한다.
 
 ### 2.4 dry_run
 
@@ -211,8 +258,10 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 
 `OutputField`:
 ```
-{ raw: string; parsed: unknown | null; parse_error?: ParseErrorField }
+{ raw: string; parsed: unknown | null; parse_error?: ParseErrorField; _summary?: ProjectionSummary }
 ```
+
+`_summary`는 투영(2.1)을 적용했고 파싱 결과가 최상위 배열일 때만 있다. 결과가 객체이면 요약은 `parsed._summary`에 있다.
 
 `raw`는 레덕션이 활성화된 경우를 제외하고 항상 원본을 보존한다.
 
@@ -245,7 +294,8 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 | `parse` | `schema_violation` | `strict_schemas=true`이고 Zod 검증 실패 || true |
 | `parse` | `unsupported_format` | 인자가 파서 계약의 형식 선언(5.1) 밖이거나 `supports(args)`가 거부함 || true |
 | `parse` | `unrecognized_output` | 데이터 줄이 있는데 파서가 어떤 값도 인식하지 못함 || true |
-| `config` | (예약) | v0.6에서 트리거 없음, 향후 확장 | — |
+| `config` | `invalid_projection` | `select`, `where`, `sort_by`, `limit`, `array`가 문법(2.1)에 맞지 않음. 실행하지 않는다 | false |
+| `config` | `unknown_field`, `type_mismatch`, `array_not_found`, `array_ambiguous` | 실행 뒤 투영할 수 없음(2.1). `parsed`는 `null`, `stdout.raw`는 남긴다 | 실행 결과 |
 
 `kind=parse, reason=unsupported_format`이면 파서를 실행하지 않는다. `stdout.raw`는 그대로이고, 출력 전체가 JSON 문서이면 native JSON 폴백이 `parsed`를 채우며 이때는 실패로 노출하지 않는다. 같은 명령에서 같은 정보를 내장 파서나 native JSON 폴백이 처리하는 형식으로 얻는 인자가 있으면 `failure.hint`(같은 값이 `stdout.parse_error.hint`)에 담긴다. `hint.args`는 명령 이름을 뺀 전체 인자이며 readonly 기본 정책을 통과한다. 예: `uname -r` → `["-a"]`, `git log --oneline --graph` → `["log", "--format=%h %s"]`, `git log -n 3` → `["log", "-n", "3", "--format=%h%x09%an%x09%aI%x09%s"]`(작성자, 작성 시각 포함), `git status -s --ignored` → `["status", "--ignored"]`, `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`, `git log --oneline --decorate` → `["log", "--oneline", "--decorate=full"]`, `git diff --stat HEAD~1` → `["diff", "HEAD~1"]`(패치에 경로, 변경 종류, 바뀐 줄이 있다), `git branch --show-current` → `["branch", "-v"]`, `grep -r TODO src` → `["-n", "-r", "TODO", "src"]`, `ps -e` → `["aux"]`, `systemctl status cron` → `["list-units", "--all", "cron.service"]`. 같은 정보를 얻는 인자가 없으면(`ls -li`, `ps -ef` 등) `hint`가 없다.
 
@@ -516,6 +566,8 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | `enabled` | `false` | 파이프라인 단계별 성능 메트릭 활성화 |
 
 `config.telemetry.enabled=true`로 설정하면 `ResponseEnvelope.telemetry` 필드에 `guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`, `raw_bytes`가 포함된다. 기본 비활성이므로 응답 크기에 영향이 없다.
+
+같은 설정이 켜져 있으면 엔진은 프로세스 안에 명령별 결과 횟수를 모으고 `describe`의 `stats`로 보여 준다(`describe(cmd)`는 그 명령의 것만). 외부로 보내거나 파일에 저장하지 않으며 재시작하면 비워진다. `run` 한 번은 결과 하나로 센다. guard 거부는 `guard.<reason>`, 실행 실패는 `exec.<reason>`, 그 밖에는 파싱 결과(`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`)이며 native JSON 폴백이 결과를 냈으면 `parsed`다. `run_paged`는 파싱하지 않으므로 guard 거부와 실행 실패만 센다. 허용 목록 밖의 명령은 `(unlisted)` 한 항목으로 모은다. 예: `{ "ls": { "parsed": 12, "unsupported_format": 1, "guard": { "path_not_allowed": 2 } } }`. 활성 시 `run` 한 번에 더해지는 비용은 1µs 미만이다.
 
 ```json
 {

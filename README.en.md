@@ -305,6 +305,27 @@ Parameters:
 - `cwd` — working directory (default: current directory)
 - `format` — output format (`"json"` default, `"compact"`, `"json-no-raw"`)
 - `includeDiff` — include filesystem diff (default: `false`). `false` skips snapshot for lower latency. Recommended for MCP.
+- `select`, `where`, `sort_by`, `limit`, `array`: server-side projection and filtering, see below.
+
+#### Projection and filtering
+
+`select` (field names), `where` (conditions), `sort_by` (`{ field, order }`) and `limit` (row count) apply only to the top-level array of the parsed result (`entries` for `ls`, `commits` for `git log`, and so on), in the order `where`, `sort_by`, `limit`, `select`. When the result has several arrays, pick one with `array`.
+
+```json
+{
+  "cmd": "ls", "args": ["-l"],
+  "where":   [{ "field": "type", "op": "eq", "value": "file" }, { "field": "size_bytes", "op": "gt", "value": 1000 }],
+  "sort_by": { "field": "size_bytes", "order": "desc" },
+  "limit":   10,
+  "select":  ["name", "size_bytes"]
+}
+```
+
+- Operators: `eq`, `ne` (string, number, boolean or `null`), `prefix`, `contains` (string, case-sensitive), `gt`, `gte`, `lt`, `lte` (number). All conditions must hold.
+- The result carries `_summary: { total, matched, shown }` and omits `stdout.raw`. The summary is `parsed._summary` when the array sits inside the result object, or `stdout._summary` when the result itself is an array.
+- Sorting is stable and rows without the field go last. Works with `format: "compact"`; the adaptive format thresholds see the reduced row count.
+- An unknown field or a comparison on the wrong type returns `failure.kind = "config"` (`unknown_field`, `type_mismatch`) and keeps raw. Malformed arguments are rejected before execution.
+- For `ls -l` on a 500-entry directory, `select: ["name","size_bytes"], limit: 50` cuts the response from 28,609 to 1,066 tokens (96%, default config, gpt-tokenizer).
 
 ### run_paged
 
@@ -327,7 +348,8 @@ Extra fields:
 
 Agent onboarding tool. Returns allowed commands, available parsers, guard limits, and version info.
 
-Parameters: none.
+Parameters:
+- `cmd`: optional. When given, returns only that command's capability summary (below).
 
 Response:
 - `version` — Parism package version
@@ -335,8 +357,16 @@ Response:
 - `available_parsers` — registered parser names
 - `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns` (full array), `allowed_paths`
 - `telemetry_enabled` — whether telemetry is active
+- `stats`: only when telemetry is enabled. Outcome counts per command
 
 Call this first when the agent encounters Parism for the first time.
+
+`describe({ cmd: "git" })` returns one command's details in at most 2 KB, to check before a retry caused by a guard denial or an unsupported format.
+- `policy`: subcommands, flags and positional rule the guard allows, and where the policy comes from (`origin`: `default`, `build`, `config`, `none`)
+- `parser`: formats the parser handles. `requires` (at least one needed), `values` (value patterns), `flags`, `rows_key`, `row_fields`, and the same shape per subcommand
+- `alternatives`: arguments that replace out-of-format ones (`{ from, args, reason }`)
+- `examples`: example arguments that pass the current guard
+- Name lists are space-separated strings. A command that is not allowed returns a result with `failure` (`command_not_allowed`).
 
 ### dry_run
 
@@ -394,7 +424,7 @@ The `prism.config.json` in the repository is an example and is not included in t
 
 `command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
 
-`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in.
+`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in. It also keeps in-process outcome counts per command (`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, `guard` and `exec` by reason), shown as `stats` in `describe`. Nothing is sent or stored.
 
 ### Config Layers and Environment Variables
 
