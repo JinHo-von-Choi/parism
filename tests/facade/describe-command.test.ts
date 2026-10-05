@@ -10,6 +10,7 @@ import { ParismEngine, type CommandDescription } from "../../src/facade/engine.j
 import { ALTERNATIVE_SAMPLES, COMMAND_EXAMPLES } from "../../src/facade/capabilities.js";
 import { DEFAULT_CONFIG, type PrismConfig }      from "../../src/config/loader.js";
 import { createRegistry }                        from "../../src/parsers/index.js";
+import { BUILTIN_CONTRACTS }                     from "../../src/parsers/contracts.js";
 
 const registry = createRegistry();
 
@@ -93,10 +94,25 @@ describe("describe(cmd) 내용", () => {
     expect(result.parser?.leading_flags).toBeUndefined();
   });
 
-  it("파서 플래그 가운데 guard가 막는 것은 싣지 않는다", () => {
+  it("파서가 받겠다고 안내한 플래그는 guard도 통과시킨다", () => {
+    /**
+     * describe 가 안내한 인자를 따라갔다가 guard 에 막히면, 안내가 거짓말이 된다.
+     * 파서 계약과 guard 정책이 어긋나지 않는지 서브커맨드별로 확인한다.
+     */
     const status = described(engine, "git").parser?.subcommands?.status;
     expect(words(status?.flags)).toContain("-b");
-    expect(words(status?.flags)).not.toContain("--branch");
+
+    /**
+     * 이번에 손댄 git status 계약만 판정한다.
+     * 다른 명령에도 파서 계약과 guard 정책이 어긋난 곳이 남아 있다(예: kubectl get pods 의 -n).
+     * 그건 M1 범위를 넘어서는 일이라 여기서 넓게 단정하지 않고, 발견 사실로 따로 남긴다.
+     */
+    const readonly   = engineWith();
+    const statusArgs = BUILTIN_CONTRACTS.git!.subcommands!.status!;
+    for (const [flag, arity] of Object.entries(statusArgs.acceptedFlags ?? {})) {
+      const probe = arity === "value" ? ["status", flag, "1"] : ["status", flag];
+      expect(readonly.dryRun("git", probe, process.cwd()).would_pass, probe.join(" ")).toBe(true);
+    }
   });
 
   it("인자 형식 제한이 없는 파서는 any_args로 알린다", () => {

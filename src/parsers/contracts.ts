@@ -302,8 +302,18 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
     leadingFlags: { ...bools("--no-pager"), ...values("-C", "-c", "--git-dir", "--work-tree", "--namespace") },
     subcommands:  {
       status: {
-        acceptedFlags:  { ...bools("--long", "-v", "--verbose", "-b", "--branch"), ...flags("attached", "-u", "--untracked-files", "--ignored") },
-        acceptedValues: { "--ignored": /^(traditional|matching|no|)$/ },
+        acceptedFlags: {
+          ...bools("--long", "-v", "--verbose", "-b", "--branch", "-z", "--null"),
+          /** porcelain 은 값이 붙어도 되고 안 붙어도 되는 플래그다(기본값 v1). attached 로 받는다. */
+          "--porcelain": "attached",
+          ...flags("attached", "-u", "--untracked-files", "--ignored"),
+        },
+        acceptedValues: {
+          "--ignored":           /^(traditional|matching|no|)$/,
+          /** 붙은 값이 없으면 git 이 v1 로 본다. 빈 값도 받아야 한다. */
+          "--porcelain":         /^(v[0-9]+|)$/,
+          "--untracked-files":   /^(all|no|normal)$/,
+        },
         hint:           gitStatusHint,
       },
       log: {

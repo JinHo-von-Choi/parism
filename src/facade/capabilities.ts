@@ -73,7 +73,11 @@ export const ALTERNATIVE_SAMPLES: Readonly<Record<string, readonly string[][]>> 
   id:         [["-un"]],
   journalctl: [["-o", "verbose"]],
   systemctl:  [["status", "ssh"]],
-  git:        [["status", "--porcelain"], ["diff", "--stat"]],
+  /**
+   * `git status --porcelain` 은 이제 기본 지원 형식이라 '대안 형식'(안내가 필요한 형식) 목록에 없다.
+   * 안내가 필요한 것은 long 형식을 사람이 읽을 때뿐이다.
+   */
+  git:        [["diff", "--stat"]],
   kubectl:    [["get", "deployments"]],
   docker:     [["ps", "--format", "{{.Names}}"]],
   gh:         [["issue", "list"]],

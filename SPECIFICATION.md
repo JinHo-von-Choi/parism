@@ -1,8 +1,8 @@
 # parism SPECIFICATION
 
 작성자: 최진호
-작성일: 2026-04-15
-버전: v1.0.0
+작성일: 2026-10-05
+버전: v2.0.3 (Unreleased 변경 반영)
 
 ---
 
@@ -12,14 +12,18 @@
 
 parism은 두 번째와 세 번째 번역 사이에 개입한다. 셸 없이 명령을 직접 실행하고, 결과를 결정론적 파서로 구조화하여 `ResponseEnvelope`로 반환한다. 에이전트는 `stdout.parsed`를 읽기만 하면 된다. 파서가 없거나 실패해도 `stdout.raw`가 항상 보존된다.
 
-v0.6.0-alpha.1 기준으로 parism은 두 배포 면을 지원한다. FastMCP 기반 stdio 서버로 에이전트와 MCP 프로토콜로 통신하는 방식과, `@nerdvana/parism/engine` 서브패스 export로 Node.js 소비자가 in-process로 직접 사용하는 라이브러리 모드. 두 면 모두 동일한 `ParismEngine` 인스턴스에 위임하므로 비즈니스 로직 drift가 없다.
+두 배포 면(MCP stdio 서버와 `@nerdvana/parism/engine` 라이브러리)은 v2.0.0부터 아래와 같이 지원한다. FastMCP 기반 stdio 서버로 에이전트와 MCP 프로토콜로 통신하는 방식과, `@nerdvana/parism/engine` 서브패스 export로 Node.js 소비자가 in-process로 직접 사용하는 라이브러리 모드. 두 면 모두 동일한 `ParismEngine` 인스턴스에 위임하므로 비즈니스 로직 drift가 없다.
 
 ---
 
-## 변경 이력 (v0.1 → v0.6.0-alpha.1)
+## 변경 이력 (v0.1 → v2.0.x)
 
 | 버전 | 일자 | 결정 | 근거 | 대안 |
 |---|---|---|---|---|
+| Unreleased | 2026-10-05 | 계약 정규식(noise/rowLine/acceptedValues) 평가를 외부 팩 워커 안으로 이동, compact 무손실화, 리댁션 기본 패턴 복구, find/du 공백 보존, kubectl RESTARTS 열 해석 수정 | 같은 입력 전후 실측: 워커 상한 500ms 를 90초 넘게 넘기던 서버 스레드 정지가 사라졌고(전체 1.5초), 리댁션 합성 비밀 5종 전량 유출이 사라졌다. 계획서 4장 결함 수정 | 정규식 패턴 안전성 휴리스틱 / 격리 팩의 정규식 계약 비활성 — 전자는 우회 가능, 후자는 불변식 검사 상실 |
+| Unreleased | 2026-10-05 | 근거 조회(`contract_version: 'next'` + `explain_result`), 토큰 예산(`budget` + `fetch_result`), 의미 diff(`compare_results`), `git status --porcelain` 두 모드 파싱 | 계획서 5~7장. 큰 결과에서 "무엇이 빠졌나"와 "어디서 나왔나"를 실측 가능하게 만들고, 전후 비교에서 거짓 삭제가 0 이어야 한다 | 정밀한 모델 토크나이저 의존 / 지속 감시(워치) 루프 — 전자는 런타임 의존을 늘리고, 후자는 "재실행 없음" 계약과 충돌 |
+| v2.0.2 | 2026-10-03 | 파서 계약의 형식 선언(`acceptedFlags`, `requiredFlags`, `outputFlags` 등), `failure.hint`, 서버 측 투영, `describe(cmd)`, 파서 결과 통계, 외부 팩 워커 격리 실행 | 실측 492건에서 조용히 틀린 파서가 81건(16%)이었고, 재시도 왕복을 줄이려면 기계 판독 형식 안내가 필요했다 | 경쟁 도구와 표 형식 경쟁 / LLM 파싱 — 결정론 깨짐 |
+| v2.0.0 | 2026-10-03 | 가드의 명령별 허용목록(`policy.ts`), 파서 실패 계약(`unsupported_format`/`unrecognized_output`) | 위험 사례 11종 중 10종이 기본 설정으로 통과했다 | 기존 블랙리스트 + 경로 검사 유지 — 위험 쓰기 옵션이 남음 |
 | v1.0.0 | 2026-04-15 | 첫 stable 릴리스 — v0.6.0-alpha 의 모든 개선 통합 | alpha 레이블이 작업 규모에 비해 과보수적이며, API 안정성 공약을 명시화할 필요 | v0.7.0 경유 유지 / v1.0.0-rc.1 경유 |
 | v0.1 | 2026-03-06 | MCP 서버 + `execFile` 게이트웨이 초기 구조 | 셸을 거치지 않는 프로세스 실행으로 인젝션 원천 차단 | `child_process.spawn` + shell 옵션 |
 | v0.2 | 2026-03-07 | Guard 4겹 방어선 도입, compact 포맷, native JSON 패스스루 | Guard 경로 인자 검증 미비 수정; compact로 리스트 출력 토큰 절감 [^1] [^2] | 단일 allowlist 방어만 유지 |
@@ -444,6 +448,14 @@ export interface ParserContract {
 
 `compact` 형식은 객체 배열의 모든 행에서 키를 모아 열을 만든다. 일부 행에만 있는 선택 필드도 열로 남는다.
 
+compact 는 **값을 보존하지 않는다면 압축하지 않는다.**
+
+- 중첩 배열과 객체는 구분자 문자열로 이어 붙이지 않고 원래 값으로 둔다. `["a|b","c"]`를 `"a|b|c"`로 만들면 `["a","b","c"]`와 구별할 수 없어 복원이 불가능해진다.
+- 행 배열에 객체가 아닌 값(null, 문자열 등)이 섞여 있으면 그 배열은 압축하지 않고 그대로 둔다. 첫 항목만 보고 형식을 정하지 않는다.
+- 순환 참조, `BigInt`, 깊이 64를 넘는 중첩은 변환하지 않는다. 프로세스 예외를 내지 않고 `failure = { kind: "parse", reason: "representation_not_lossless" }` 를 내며, 원형 JSON 과 `stdout.raw` 를 모두 남긴다.
+
+복원은 `schema` 와 같은 순서로 행 값을 다시 짝지으면 되므로 `decode(encode(x)) = x` 가 성립한다.
+
 `schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
 
 `fixtures`의 각 항목은 `{ input: string; args: string[]; expected: unknown }` 쌍이다. `parism test` CLI 실행 시 및 내장 테스트의 fixture replay 시 항상 Zod 스키마 검증을 적용한다.
@@ -460,11 +472,141 @@ export interface ParserContract {
 
 계약 함수(`supports`, `hint`)가 예외를 던지면 `parse()`는 예외를 전파하지 않고 `parser_exception`으로 보고한다.
 
+### 5.2.0 근거 조회 (opt-in)
+
+결과는 `contract_version: "next"` 로 요청했을 때만 `review` 를 함께 실는다. 기본값은 `"stable"` 이고 결과에 새 필드가 붙지 않아 기존 소비자는 그대로 동작한다.
+
+`review` 는 기존 봉투 필드의 뜻을 바꾸지 않는다. 들어가는 값:
+
+| 필드 | 뜻 |
+|---|---|
+| `result_id` | 이 결과를 가리키는 식별자. `retained=false` 여도 결과 안에는 남는다 |
+| `parser_id` | 값을 낸 파서. native JSON 폴백이면 `native_json` |
+| `content_hash` | 정규 원문 내용의 해시. 같으면 출처가 같음을 뜻한다(원격 인증이나 서명이 아니다) |
+| `schema_version` | 봉투 스키마 버전 |
+| `source_complete` | 실행 출력이 잘리지 않았는지 |
+| `parse_complete` | 지원한 레코드를 모두 인식했는지 |
+| `representation_lossless` | 표시 변환이 값을 보존했는지 |
+| `privacy_transform` | `none` / `masked` |
+| `retained` | 서버가 결과를 보관했는지. `false` 면 continuation 을 약속하지 않는다 |
+| `warnings` | 판단을 못 한 이유 |
+
+세 완성도 필드는 `true`(확인함), `false`(확인했고 위배됨), **`unknown`(확인하지 못함)** 세 값을 쓴다. 확인하지 못한 것을 거짓으로 말하지 않기 위한 값이다.
+
+**근거는 값이 참이라는 보증이 아니다.** 명령이 거짓을 출력하거나 환경이 바뀌면 근거는 '그 시점 출력의 증거'일 뿐이다. MCP 도구 설명에도 이 문장을 그대로 적었다.
+
+`explain_result(result_id, pointer)` 는 JSON Pointer로 값을 다시 보고 어디서 나왔는지 알려 준다. 결과는 `value`, `source_kind`, `source_spans`, `transform`, `masked`, `quoted` 이다.
+
+- `source_spans` 는 **마스킹된 정규 원문의 UTF-8 바이트 구간** `[start, end)` 이다. 줄 번호를 함께 준다. 문자열 인덱스와 바이트 오프셋을 섞지 않는다.
+- 원문에 그대로 있는 값은 `verbatim`, 계산·변환한 값은 `derived` 로 밝히고 그 변환을 설명한다(`parseInt`, `trim`, `strip_tree_prefix`). 파생값이 원문에 그 대로 있다고 말하지 않는다.
+- 구간이 정말 그 값을 담는지 검증해 맞지 않으면 근거가 아니라 "근거 없음"(`source_kind: "none"`)으로 남긴다.
+- native JSON 폴백이 값을 냈다면 필드 단위 구간을 지어내지 않고 "원문 전체"를 가리킨다.
+
+**저장**은 서버 인스턴스·세션에 묶인 메모리 TTL/LRU다(결과당 2MiB, 합계 32MiB, 16개, TTL 60초). 마스킹된 결과만 보관하며 디스크 영속은 없다. **보관한 결과도 재실행하지 않는다** — 모르는 id, 퇴출된 id, 만료된 id, 보관하지 않은 id 를 구분해 그 사실과 함께 실패를 돌려준다.
+
+근거를 요청한 경우(`evidence` 가 `none` 이 아님)에는 적응형 compact 를 켜지 않는다. compact 는 결과 구조를 바꾸어 근거 포인터가 가리키는 대상을 지우기 때문이다. `format: "compact"` 를 명시하면 그대로 압축하고, 근거가 만들어지지 않은 이유를 `warnings` 에 적는다.
+
+현재 근거를 만드는 파서는 `ps` 와 `git status --porcelain` 둘이다.
+
+`ps` 는 열 위치가 고정이라 정확하다.
+
+`git status --porcelain` 은 **레코드 구분 방식이 두 가지**다. 파서는 `-z`/`--null` 유무로 판별해 레코드 경계·경로 해석·이름 변경 표기를 나눠 처리한다. 한 규칙으로 둘 다 읽으면 둘 중 하나를 반드시 놓친다.
+
+| | `-z` 없음(줄 구분) | `-z` 있음(NUL 레코드) |
+|---|---|---|
+| 레코드 경계 | 개행 | NUL |
+| 경로 표시 | C 이스케이프 + 필요하면 따옴표 | 가공 없음 |
+| 이름 변경 | 한 줄의 `원래 -> 새` | **새 경로가 먼저**, 원래 경로가 다음 레코드 |
+
+- 실측: 개행 구분 `?? "line\nbreak.txt"`, `-z` `?? line<LF>break.txt`(따옴표 없음)
+- 실측: 이름 변경은 `-z` 면 `RM renamed.txt<NUL>keep.txt<NUL>`, 줄 모드면 `R  old.txt -> new.txt`
+- 스테이징 안 됨은 공백으로 온다(`" M src/a.ts"`)
+- 경로 자체에 `' -> '` 가 들어갈 수 있어 화살표는 **오른쪽에서** 찾는다
+
+**두 형식의 `path` 값은 같다** — 원래 파일 이름이다. 줄 모드에서만 항목에 `quoted: true` 가 붙어 출력이 가공되었음을 밝힌다.
+
+근거는 `-z` 레코드 기준으로 **레코드 번호**를 함께 준다(줄 번호가 통하지 않기 때문). 줄 모드에서 이스케이프가 풀린 경로의 근거는 원문의 **따옴표 구간**을 가리키고 `transform: "unescape_c_quotes"` 로 그 변환을 밝힌다 — 근거는 값이 아니라 원문을 가리켜야 한다.
+
+경로에 개행이 있어도 근거 구간이 정확해야 한다. 줄로 나누어 위치를 계산하면 이 자리에서 어긋난다.
+
+다른 파서는 근거가 없음을 `warnings` 로 알린다 — 지어내지 않는다.
+
+### 5.2.2 토큰 예산과 누락 내역
+
+큰 명령 결과를 예산 안에 받으면서 **무엇이 빠졌는지** 알 수 있다. 핵심은 "예산 때문에 사라진 정보"와 "파서 오류 때문에 사라진 정보"를 섞지 않는 것이다. 사용자 정의 필터·필수 필드가 우선이며, 서버가 대신 골라 주지 않는다.
+
+**예산은 실행시간이나 수집량을 줄이는 기능이 아니다.** 이미 얻은 결과를 어디까지 내보낼지 정한다.
+
+`run` 의 새 인자 `budget: { max_tokens, tokenizer, required_fields, overflow: 'page' | 'error' }`
+
+- `required_fields` 는 모든 반환 행에서 보존해야 할 필드다. 내장 파서가 정의한 행 identity 도 생략하지 않는다.
+- 예산이 최소 봉투(약 1,200 토큰)에 못 미치면 **실행 전에** `failure = { kind: "config", reason: "budget_too_small" }` 로 거절한다. 실행해 놓고 나서야 알리면 명령만 돌고 아무 값도 못 받는 결과가 된다.
+- **필수 필드가 없으면 조용히 일부만 내보내지 않는다.** 명시적으로 실패한다 — 부분 성공은 조용한 손실이다.
+
+응답에 `budget` 보고와 `omission` 목록이 실린다.
+
+| 필드 | 뜻 |
+|---|---|
+| `budget.requested` | 요청한 상한과 토크나이저 |
+| `budget.measured_tokens` | 최종 payload 를 실제로 센 수 |
+| `budget.tokenizer_id` / `tokenizer_version` | 어느 토크나이저로 셌는지 |
+| `budget.budget_met` | 상한 안에 들어갔는지 |
+| `budget.tokenizer_exact` | 근사인지, 문자 단위 정확한지 |
+| `budget.tokenizer_scope` | 이 약속이 어디까지 성립하는지 |
+
+`omission` 은 `stage`(`capture`·`parse`·`projection`·`budget`·`privacy`), `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `unknown_counts`, `next_cursor` 를 구분해 담는다. **수집 상한에 걸렸는데 전체 행 수를 안 다고 꾸미지 않는다** — `capture` 단계에 `unknown_counts` 로 남긴다.
+
+**고정 토크나이저**는 `parism/approx`(근사)와 `byte`(문자 단위 정확) 둘이다. ID·버전·적용 범위를 결과에 노출한다. 이 약속은 parism JSON payload 에만 성립하며 **MCP transport·클라이언트·모델 내부 토큰까지 보장하지 않는다.** 미지원 토크나이저는 조용히 대체하지 않고 `tokenizer_unsupported` 로 거절한다 — 추정을 정확한 예산으로 포장하지 않는다.
+
+`fetch_result(result_id, cursor, budget)` 는 저장된 같은 결과의 다음 페이지를 **재실행 없이** 돌려준다. cursor 는 진행 규칙(스냅샷 identity·투영·정책·스키마)과 위치를 함께 묶으므로 클라이언트가 임의 오프셋을 조립할 수 없다. 이미 만료·퇴출된 id 는 그 사실과 함께 거절하고 자동 재실행하지 않는다. 근거 조회에도 같은 예산·마스킹 정책이 적용된다.
+
+적용 순서는 고정이다.
+
+1. 가드·실행·완전성 판정
+2. 파싱과 표준 마스킹
+3. `where` / `sort_by`
+4. 필수 필드 검증
+5. 행·필드를 줄이며 **실제 직렬화한 최종 payload** 로 매번 센다
+6. 누락 메타데이터와 continuation 을 포함한 **최종 크기를 재검증**한다 — 넘으면 한 행씩 더 덜어낸다
+
+마지막 검사를 빠뜨리면 "본문만 예산 안에 들었다"고 잘못 말하게 된다. 표면이 붙으면 크기가 더 늘기 때문이다.
+
+예산을 요청하면 적응형 compact 를 켜지 않는다. compact 는 결과 구조를 바꾸어 필수 필드 검증과 행 계산 대상을 지운다.
+
+### 5.2.3 의미 diff
+
+`compare_results(base_id, current_id, { keys, ignore_fields, strict })` 는 **이미 존재하는 두 결과만** 비교한다. read 단계다 — 새 명령을 실행하지 않고, 원격에 접속하지 않고, 감시 루프를 만들지 않는다. 파일 mtime 을 쓰는 `includeDiff` 와 이름·도구로 노출한다.
+
+결과에 `comparable`, `refusal_reasons`, `added`, `removed`, `changed`, `unchanged_count`, `ignored_fields`, `partial` 을 담고, 필드 변화에는 이전·현재 근거 포인터를 연결한다. 사용자가 무시한 필드는 결과에 그대로 공개한다.
+
+**거짓 삭제가 가장 나쁜 실패다.** compact 가 값을 잃은 상태에서 diff 를 만들면 거짓 변경·거짓 삭제가 생긴다. 그래서 M1 의 저장·identity·마스킹이 선행이다.
+
+- **불완전 결과의 누락 행을 `removed` 로 단정하지 않는다.** 어느 한쪽이라도 수집이 잘렸거나 파서가 놓쳤으면 '보이지 않은 것'과 '사라진 것'을 구별하지 못하고 `partial.withheld_reasons` 에 보류를 남긴다.
+- **identity 를 확정하지 못한 행이 있어도 `added`/`removed` 를 단정하지 않는다.** 못 찾았다고 새로 생긴 것이 아니다.
+- 중복 identity 는 오류다. 조용히 한 행을 버리지 않는다.
+
+**행 identity**
+
+| 도메인 | 규칙 |
+|---|---|
+| git | 저장소 identity(실경로) + 정규 경로. 이름 변경은 확정 정보(원래 경로)가 있을 때만 연결 |
+| kubernetes | context/namespace/resource kind + `metadata.uid`. **uid 없는 표 출력만으로 같은 자원이라고 꾸미지 않는다** |
+| ps | **비교를 보류한다.** PID 만을 identity 로 삼으면 PID 재사용 때문에 다른 프로세스를 같은 것으로 본다 |
+
+**환경 변화 확인(지문)** 에 `cmd`/argv, 실제 작업 디렉터리, 적용된 가드 정책 해시, 파서·스키마·내용 해시, 플랫폼·선택된 도구 버전, 허용한 locale, 사용자가 명시한 문맥을 담는다. **지문은 세계 상태를 캡처한 인증서가 아니다.**
+
+- argv 는 비밀을 담을 수 있으므로 **해시로 식별하고** 표시에는 마스킹한 값을 쓴다.
+- 환경 변수는 **'이름'만 관찰 기록에** 담고 값은 담지 않는다. 관찰 기록은 동일성 비교 키에 들어가지 않는다.
+- OS·파서 버전이 달라졌다고 모든 비교를 막지는 않는다. `same`/`compatible`/`unknown`/`incompatible` 로 나누고 `unknown` 에서는 strict 비교를 거절한다.
+- **Kubernetes context 이름만으로 클러스터 동일성을 완벽히 입증할 수 없다는 한계를 남긴다.**
+
 ### 5.2.1 외부 ParserPack 격리 실행
 
 `loadExternalParsers`는 기본적으로 외부 팩마다 워커 스레드(`node:worker_threads`) 하나를 띄워 `parser.js`를 그 워커에서만 읽는다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 서버 스레드에서 실행한다.
 
-- 메타데이터: 워커가 계약 선언을 구조화 복제 가능한 값으로 보낸다. `RegExp`는 그대로 전달되고, 함수(`supports`, `hint`, 서브커맨드 계약 안의 함수)는 호출할 때마다 워커에서 평가하는 대리 함수가 된다. 서버 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다.
+- 메타데이터: 워커가 계약 선언을 구조화 복제 가능한 값으로 보낸다. 함수(`supports`, `hint`, 서브커맨드 계약 안의 함수)는 호출할 때마다 워커에서 평가하는 대리 함수가 되고, `RegExp` 는 `{ "__parism_regex__": { source, flags } }` 서술자로 전달된다. 서버 스레드는 팩 모듈의 최상위 코드를 실행하지 않는다.
+- **계약 정규식은 워커 안에서만 실행한다.** 서버 스레드는 팩이 보낸 `RegExp` 를 다시 만들어 실행하지 않는다. `noise`, `rowLine` 은 원문 줄 분류를, `acceptedValues` 는 플래그 값 판정을 워커가 수행하고 줄 수와 참/거짓 결과만 돌려준다. 정규식은 워커 밖에서 돌리면 워커의 시간·메모리 상한을 우회해 서버 스레드를 멈출 수 있다(재귀 역추적 패턴은 40자 입력으로 상한 500ms 를 90초 넘게 넘겼다). 판정 결과가 없으면 검증되지 않은 것이므로 형식을 거절한다.
+- Breaking notes: 격리 팩 계약의 `noise`, `rowLine`, `acceptedValues` 를 메인 스레드에서 `RegExp` 로 쓰는 코드는 동작하지 않는다. `source`/`flags` 서술자로 접근하거나, `parse` 가 돌려주는 계산된 줄 수(`facts`)를 쓰면 된다. 이 규칙은 내장 파서에 적용되지 않는다(내장 계약은 소스에 있고 검수가 가능하다).
 - 동기 호출: 서버 스레드는 요청을 보낸 뒤 `SharedArrayBuffer` 신호를 `Atomics.wait`로 기다리고 `receiveMessageOnPort`로 응답을 꺼낸다. `parse()`는 동기 API 그대로다. 기다리는 동안 서버 스레드는 막힌다. `parse()` 호출 하나의 계약 함수(`supports`, `hint`) 왕복과 `parse` 왕복, 다시 띄운 워커의 기동 대기는 시간 상한 하나를 함께 쓰므로 호출 하나가 서버 스레드를 막는 시간은 시간 상한에 수 ms를 더한 정도다. 엔진의 `run`은 파싱과 투영용 계약 조회(`contractFor`)를 한 호출로 묶는다. 예외는 처음 로드(서버 시작, `parism add`)이며 기동 상한까지 막힐 수 있다.
 - 상한: 호출 하나(계약 함수와 `parse` 왕복 전부) `parsers.external_time_limit_ms`(기본 500ms), 워커 V8 힙의 old generation `parsers.external_memory_limit_mb`(기본 128MB, `resourceLimits.maxOldGenerationSizeMb`. `Buffer`, `ArrayBuffer`처럼 힙 밖에 잡는 메모리는 제한하지 않는다), 워커 기동과 모듈 로드 2초(설정으로 바꾸지 않는다).
 - 실패: 시간 상한 초과, 워커의 비정상 종료(`process.exit`, 잡히지 않은 예외), 메모리 상한 초과는 `parse_error.reason = "parser_exception"`이며 메시지가 원인과 대기 시간을 밝힌다(`External parser 'x' did not answer within 500 ms; its worker was stopped and restarts after 2000 ms`). 스스로 끝난 워커는 종료 신호로 바로 알리고(호출 사이에 끝난 경우 포함), 메모리 상한으로 멈춘 워커는 시간 상한에서 끝난다. 워커 `error` 이벤트는 stderr 경고(`ERR_WORKER_OUT_OF_MEMORY` 등)로 남는다. 처음 로드할 때의 기동 상한 초과와 로드 실패는 그 팩만 건너뛰고 경고한다.
@@ -545,7 +687,6 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
   "guard": {
     "secrets": {
       "env_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"],
-      "output_patterns": [],
       "output_redaction_enabled": false
     }
   }
@@ -555,7 +696,7 @@ fixture replay는 `strict_schemas` 설정과 무관하게 항상 Zod 스키마 �
 | 필드 | 기본값 | 설명 |
 |---|---|---|
 | `env_patterns` | 6개 패턴 | 자식 프로세스 환경 변수에서 제거할 변수명 패턴 (대소문자 무관 substring 매칭) |
-| `output_patterns` | `[]` | stdout/stderr 레덕션 패턴. `undefined`이면 7개 DEFAULT 패턴 사용; `[]`이면 레덕션 비활성 |
+| `output_patterns` | 키 없음(`undefined`) | stdout/stderr 레덕션 패턴. 값을 생략하면 7개 DEFAULT 패턴을 쓴다. `[]`를 명시하면 의도적 비활화이므로 아무것도 가리지 않는다. 기본값으로 `[]`를 넣지 않는다 — 넣으면 생략과 의도적 비활화를 구별할 수 없어, 리댁션을 켰는데 아무것도 가려지지 않는 상태가 된다 |
 | `output_redaction_enabled` | `false` | 출력 레덕션 활성화 여부 |
 
 레거시 `guard.env_secret_patterns`는 2.0.0에서 제거됐다. 설정에 남아 있으면 stderr에 경고를 출력하고 무시한다.
@@ -655,6 +796,7 @@ MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일�
 - [CHANGELOG.md](CHANGELOG.md) — 버전별 변경 이력
 - [SECURITY.md](SECURITY.md) — 위협 모델, 4겹 방어선 한계, 취약점 신고 채널
 - [Requirements.md](Requirements.md) — v0.4 피드백 기반 요구사항 원본 (보안·테스트·기능 확장)
+- [docs/failure-cases-2026-10-05.md](docs/failure-cases-2026-10-05.md) — 실측으로 잡은 결함과 **재현하지 못한 주장**. 근거 조회·예산·의미 diff 도입 기간의 측정 기록
 - [docs/plans/2026-03-06-benchmark.md](docs/plans/2026-03-06-benchmark.md) — 토큰 비용·CFR 벤치마크 프레임워크 원본 플랜
 - [docs/plans/2026-03-06-issue-remediation.md](docs/plans/2026-03-06-issue-remediation.md) — Guard 경로 인자 검증, config 깊은 병합, 버전 정합화 플랜
 - [docs/plans/2026-03-07-safe-os-gateway.md](docs/plans/2026-03-07-safe-os-gateway.md) — v0.2 Safe OS Gateway 구현 플랜 (compact 포맷, native JSON 패스스루)

@@ -107,12 +107,74 @@ describe("외부 팩 로드", () => {
     expect((globalThis as Record<string, unknown>).__parismTopLevel).toBeUndefined();
     const contract = registry.declaredContract("meta");
     expect(contract?.headerLines).toBe(1);
-    expect(contract?.noise).toBeInstanceOf(RegExp);
-    expect(contract?.noise?.test("total 12")).toBe(true);
     expect(contract?.acceptedFlags).toEqual({ "-l": "bool", "--sort": "value" });
     expect(contract?.rowFields).toEqual(["name"]);
     expect(registry.hasParser("meta")).toBe(true);
     expect(registry.listPacks()).toContain("meta");
+  });
+
+  it("계약 정규식은 서술자로만 넘어오고 메인 스레드에서 실행되지 않는다", () => {
+    const registry = isolatedRegistry(`
+      export default {
+        name: "guarded",
+        parse: (raw) => ({ lines: raw.split("\\n").filter(Boolean) }),
+        schema: {}, fixtures: [],
+        noise: /^(a+)+b$/,
+        acceptedValues: { "--flag": /^((a+)+b)$/ },
+      };
+    `);
+
+    const contract = registry.declaredContract("guarded");
+    const noise = contract?.noise as unknown as { __parism_regex__?: { source: string; flags: string } };
+    expect(noise).not.toBeInstanceOf(RegExp);
+    expect((noise as { test?: unknown }).test).toBeUndefined();
+    expect(noise.__parism_regex__).toEqual({ source: "^(a+)+b$", flags: "" });
+    const values = contract?.acceptedValues?.["--flag"] as unknown as { __parism_regex__?: { source: string } };
+    expect(values).not.toBeInstanceOf(RegExp);
+    expect(values.__parism_regex__?.source).toBe("^((a+)+b)$");
+  });
+
+  it("catastrophic backtracking 정규식이 있어도 호출 하나는 시간 상한 안에 끝난다", () => {
+    const registry = isolatedRegistry(`
+      export default {
+        name: "redos",
+        parse: (raw) => ({ lines: raw.split("\\n").filter(Boolean) }),
+        schema: {}, fixtures: [],
+        noise: /^(a+)+b$/,
+      };
+    `);
+
+    const started = Date.now();
+    for (const n of [26, 30, 40]) {
+      const r = registry.parse("redos", [], "a".repeat(n));
+      /**
+       * 워커가 시간 상한에 걸리면 정규화된 실패로 끝나야 한다.
+       * 실패가 나도 정해진 오류 형태여야 하고, 프로세스가 예외로 죽지 않아야 한다.
+       */
+      if (r.parsed === null) {
+        expect(r.parse_error?.reason, `입력 ${n}자`).toBe("parser_exception");
+        expect(r.parse_error?.message).toMatch(/worker|paused/);
+      }
+    }
+    /** 수정 전에는 이 호출이 서버 스레드를 90초 넘게 막았다. 이제는 상한 합계 안에 끝난다. */
+    expect(Date.now() - started).toBeLessThan(5000);
+  }, 20000);
+
+  it("정규식 계약이 있어도 noise 필터는 워커 안에서 반영된다", () => {
+    const registry = isolatedRegistry(`
+      export default {
+        name: "noised",
+        parse: (raw) => ({ items: raw.split("\\n").filter(l => l && !l.startsWith("# ")).map(l => ({ name: l })) }),
+        schema: {}, fixtures: [],
+        noise: /^# /,
+        rowsKey: "items",
+        rowFields: ["name"],
+      };
+    `);
+
+    const res = registry.parse("noised", [], "# header\nalpha\nbeta\n");
+    expect(res.parse_error).toBeUndefined();
+    expect(res.parsed).toEqual({ items: [{ name: "alpha" }, { name: "beta" }] });
   });
 
   it("parse는 메인 스레드가 아닌 워커 스레드에서 실행된다", () => {

@@ -44,6 +44,24 @@ export interface OutputField {
 export type StdoutField = OutputField;
 
 /**
+ * 결과의 재검토 정보. contract_version='next' 로 요청했을 때만 채워진다.
+ * 기존 필드의 뜻은 바꾸지 않는다. 삼각 측량(false)이 아니라 '확인하지 못함'(unknown)을 구분해 쓴다.
+ */
+export interface ReviewField {
+  result_id:               string;
+  parser_id:               string;
+  parser_version:          string;
+  content_hash:            string;
+  schema_version:          string;
+  source_complete:         true | false | "unknown";
+  parse_complete:          true | false | "unknown";
+  representation_lossless: true | false | "unknown";
+  privacy_transform:       "none" | "masked" | "unknown";
+  retained:                boolean;
+  warnings:                string[];
+}
+
+/**
  * 파일시스템 변경 diff (Phase 2에서 채워짐).
  */
 export interface DiffField {
@@ -98,6 +116,8 @@ export interface ResponseEnvelope {
   page_info?:  PageInfo;     // run_paged 사용 시에만 채워짐
   failure?:    FailureInfo;  // 정규화된 실패 원인 (선택적, 하위 호환)
   telemetry?:  TelemetryField; // config.telemetry.enabled=true 시에만 포함
+  /** contract_version='next' 로 요청했을 때만 채워진다. 기존 필드에는 손대지 않는다. */
+  review?:     ReviewField;
   /**
    * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v2.0.0 제거 예정.
    * Guard 차단 시에만 존재한다.

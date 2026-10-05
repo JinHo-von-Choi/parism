@@ -30,7 +30,11 @@ export function inspectOutput(
 ): InspectResult {
   const { parsed } = registry.parse(cmd, args, raw);
 
-  const compact = parsed != null ? toCompact(parsed) : null;
+  /**
+   * compact 로 값을 보존할 수 없으면(순환, BigInt, 과도한 깊이) 압축하지 않은 값을 그대로 비교 대상으로 둔다.
+   */
+  const outcome  = parsed != null ? toCompact(parsed) : null;
+  const compact  = outcome === null ? null : outcome.ok ? outcome.value : parsed;
 
   const rawTokens     = estimateTokens(raw);
   const parsedTokens  = parsed != null ? estimateTokens(JSON.stringify(parsed, null, 2)) : 0;

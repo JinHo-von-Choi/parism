@@ -344,7 +344,13 @@ Parism 은 MCP stdio 프로토콜을 통해 주요 AI CLI/IDE 에 연결할 수 
 - `cwd` — 작업 디렉토리 (기본값: 현재 디렉토리)
 - `format` — 출력 형식 (`"json"` 기본값, `"compact"`, `"json-no-raw"`). compact는 리스트형 출력을 schema+rows 컬럼 기반으로 압축하여 토큰 비용을 절감한다.
 - `includeDiff` — 파일시스템 diff 포함 여부 (기본값: `false`). `false`면 스냅샷 생략으로 지연 감소. MCP 고빈도 호출 시 권장.
+- `contract_version` — `"stable"`(기본) 또는 `"next"`. `"next"` 일 때만 `review` 가 붙는다(아래 '근거 조회').
+- `evidence` — `"none"`(기본), `"rows"`, `"fields"`. 필드 근거 계산량. `contract_version: "next"` 와 함께 쓴다.
+- `retain` — 결과를 세션 메모리에 보관해 `explain_result` 로 다시 본다. `contract_version: "next"` 와 함께 쓴다.
+- `budget` — `{ max_tokens, tokenizer, required_fields, overflow }`. 응답을 예산 안에 넣고 무엇이 빠졌는지 밝힌다(아래 '토큰 예산').
 - `select`, `where`, `sort_by`, `limit`, `array`: 서버 측 투영과 필터. 아래 참조.
+
+**아래 네 인자(`contract_version`·`evidence`·`retain`·`budget`)는 모두 opt-in 이다.** 지정하지 않으면 응답에 새 필드가 붙지 않는다.
 
 compact 예시:
 
@@ -440,6 +446,129 @@ guard 사전 검증 도구. 명령을 실행하지 않고 guard 통과 여부만
 - `message` — 차단 시 상세 메시지
 
 예: `dry_run("rm", ["-rf", "/"])` → `{ would_pass: false, reason: "command_not_allowed", message: "..." }`
+
+### 근거 조회 — `run(contract_version: "next")` + `explain_result`
+
+**"이 값이 원문 어디에서 나왔나"를 바이트 구간으로 답한다.** 새 명령을 실행하지 않는다.
+
+`run` 에 세 인자를 추가했다. **모두 opt-in 이며 기본값은 꺼짐이다** — 지정하지 않으면 응답이 이전과 완전히 같다.
+
+- `contract_version` — `"stable"`(기본) 또는 `"next"`. `"next"` 일 때만 `review` 가 붙는다.
+- `evidence` — `"none"`(기본), `"rows"`, `"fields"`. `"none"` 이 아니면 `contract_version: "next"` 도 필요하다.
+- `retain` — 결과를 세션 메모리에 보관해 `explain_result` 로 다시 본다. `retain: true` 도 `contract_version: "next"` 필요.
+
+`review` 는 기존 봉투 필드의 뜻을 바꾸지 않고 옆에 붙는다.
+
+| 필드 | 뜻 |
+|---|---|
+| `result_id` | `explain_result`·`compare_results`·`fetch_result` 에 넘기는 id |
+| `parser_id` / `parser_version` / `schema_version` | 이 결과를 만든 파서와 스키마 |
+| `content_hash` | 원문 해시. 같은 실행을 반복했는지 판별 |
+| `source_complete` | 수집이 끝났는가 (3. `parse_complete` 는 파싱이 끝났는가, 4. `representation_lossless` 는 압축·변환이 값을 잃지 않았는가) |
+| `privacy_transform` | `"none"` / `"masked"` / `"unknown"` |
+| `retained` | `explain_result` 로 다시 볼 수 있는가 |
+| `warnings` | 왜 불완전하거나 근거가 없는지 |
+
+**완성도는 `true`/`false`/`unknown` 세 값이다.** 확인하지 못한 것을 거짓으로 말하지 않기 위해 `unknown` 을 쓴다. 수집 상한에 걸리면 `source_complete: false` 이고 `warnings` 에 그 사실이 적힌다 — 근거는 보존된 앞부분만 덮는다.
+
+`explain_result(result_id, pointer)` 는 JSON Pointer(예: `"/processes/0/pid"`)로 값과 근거를 돌려준다.
+
+```json
+{
+  "ok": true, "result_id": "r_...", "pointer": "/processes/0/pid",
+  "value": 1,
+  "source_kind": "derived", "source_spans": [{ "source": "stdout", "start": 90, "end": 91, "line": 2, "transform": "parseInt" }],
+  "transform": "parseInt", "age_ms": 12
+}
+```
+
+- 구간은 **마스킹된 정규 원문의 UTF-8 바이트 오프셋** `[start, end)` 다. 파서가 값을 변환했다면 `derived` 로 밝히고 그 변환을 함께 준다.
+- **근거는 그 순간 명령이 무엇을 출력했는지에 대한 링크다. 값이 참이라는 증명이 아니다.**
+- 모르는 포인터는 `unknown_pointer`, 만료·퇴출된 id 는 그 사실과 함께 실패한다. **자동으로 재실행하지 않는다.**
+
+근거를 만드는 파서는 `ps` 와 `git status --porcelain` 이다. 다른 파서는 근거가 없음을 `warnings` 로 알린다 — 지어내지 않는다.
+
+**근거와 예산을 요청하면 적응형 compact 를 끈다.** 둘 다 결과 구조를 바꿔 근거 포인터와 필수 필드 계산 대상을 지우기 때문이다. `format: "compact"` 를 명시하면 그대로 압축하고 이유를 `warnings` 에 적는다.
+
+### 토큰 예산 — `run(budget)` + `fetch_result`
+
+**큰 결과를 예산 안에 받으면서 무엇이 빠졌는지 알 수 있다.** 핵심은 "예산 때문에 사라진 정보"와 "파서 오류 때문에 사라진 정보"를 섞지 않는 것이다.
+
+```json
+{ "max_tokens": 2000, "required_fields": ["path"], "overflow": "page" }
+```
+
+- **예산은 실행시간이나 수집량을 줄이는 기능이 아니다.** 이미 얻은 결과를 어디까지 내보낼지 정한다.
+- `required_fields` 는 어떤 행에서도 빠지지 않는다. 파서가 선언한 행 identity 도 남는다. **필수 필드가 없으면 조용히 일부만 내보내지 않고 명시적으로 실패한다** — 부분 성공은 조용한 손실이다.
+- 예산이 최소 봉투(약 1,200 토큰)에 못 미치면 **실행 전에** `budget_too_small` 로 거절한다.
+
+응답에 `budget` 보고와 `omission` 목록이 붙는다.
+
+- `budget` — `requested`, `measured_tokens`, `tokenizer_id`, `tokenizer_version`, `budget_met`, `tokenizer_exact`, `tokenizer_scope`
+- `omission[]` — `stage`(`capture`/`parse`/`projection`/`budget`/`privacy`)와 `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `next_cursor`
+
+**고정 토크나이저**는 `parism/approx`(근사)와 `byte`(문자 단위 정확) 둘이다. 새 런타임 의존성이 없다. 미지원 토크나이저는 조용히 대체하지 않고 `tokenizer_unsupported` 로 거절한다 — 추정을 정확한 예산으로 포장하지 않는다. 이 약속은 parism JSON payload 에만 성립하며 **전송·클라이언트·모델 내부 토큰은 포함하지 않는다**(`tokenizer_scope` 에 밝힌다).
+
+`fetch_result(result_id, cursor, budget)` 는 저장된 같은 결과의 다음 페이지를 **재실행 없이** 돌려준다. `continuation.cursor` 를 그대로 넘긴다. cursor 는 진행 규칙(스냅샷 identity·투영·정책·스키마)과 위치를 함께 묶으므로 **클라이언트가 임의 오프셋을 조립할 수 없다.** 다른 결과의 cursor 는 `cursor_mismatch`, 조작한 cursor 는 `cursor_invalid` 로 거절한다. 만료·퇴출된 id 는 재실행하지 않고 그 사실만 알린다.
+
+```
+1. run(cmd, { budget: { max_tokens: 2000, overflow: "page" }, retain: true })
+2. budget.budget_met 확인, omission 으로 무엇이 빠졌는지 확인
+3. continuation.cursor 가 있으면 fetch_result(result_id, cursor) 반복
+4. 다 읽을 때까지 가거나, omission 이 남았다면 그 사실을 사용자에게 알린다
+```
+
+### 의미 diff — `compare_results`
+
+**이미 존재하는 두 결과만 비교한다.** 새 명령을 실행하지 않고, 원격에 접속하지 않고, 감시 루프를 만들지 않는다.
+
+파라미터: `base_id`, `current_id`(`run(retain=true)` 의 `review.result_id`), 선택으로 `keys`·`ignore_fields`·`strict`.
+
+응답: `comparable`, `refusals`, `added`/`removed`/`changed`/`unchanged_count`, `ignored_fields`, `partial`, `key_conflicts`. 필드 변화에는 이전·현재 근거 포인터가 붙는다.
+
+**거짓 삭제 0** — 어느 한쪽이라도 불완전하면(수집 잘림·파서 실패·표현 손실) 없는 행을 '삭제'로 단정하지 않고 `partial.withheld_reasons` 에 보류를 남긴다. identity 를 확정하지 못한 행이 있어도 '추가'나 '삭제'를 단정하지 않는다 — 못 찾았다고 새로 생긴 것이 아니다. 중복 identity 는 조용히 한 행을 버리지 않고 `duplicate_identity` 로 멈춘다.
+
+- 행 identity 규칙: git 은 저장소 identity(실경로) + 정규 경로. kubernetes 는 context/namespace/kind + `metadata.uid` 이며 **uid 없는 표 출력으로는 같은 자원이라고 말하지 않는다.** **ps 는 PID 만을 identity 로 삼지 않고 비교를 보류한다**(PID 재사용).
+- **지문은 세계 상태를 캡처한 인증서가 아니다.** 같은 지문이어도 그 사이 파일이 바뀌었을 수 있다.
+- 비밀 유출 방지: **argv 는 해시로 식별하고 표시에는 마스킹한 값만** 쓴다. **환경 변수는 '이름'만 관찰 기록에 남기고 값은 담지 않는다.**
+
+### MCP 도구 목록 요약
+
+| 도구 | 새 명령 실행 | 언제 쓰나 |
+|---|---|---|
+| `run` | O | 기본. `contract_version`·`evidence`·`retain`·`budget` 옵션 포함 |
+| `run_paged` | O | 출력이 클 때 페이지 단위 |
+| `explain_result` | **X** | 값의 출처를 확인할 때 (보관본만) |
+| `fetch_result` | **X** | 예산으로 잘린 결과를 이어 읽을 때 |
+| `compare_results` | **X** | 전후 차이를 볼 때 (두 보관본만) |
+| `describe` | X | 처음 쓸 때 환경 파악 |
+| `dry_run` | X | 실행 전 가드 확인 |
+
+**세 도구(`explain_result`·`fetch_result`·`compare_results`)는 어떤 경우에도 명령을 다시 실행하지 않는다.** 모르는 id·만료·퇴출이면 그것을 알리고 끝낸다. 저장은 세션 메모리 TTL/LRU 다(결과당 2MiB, 합계 32MiB, 16개, 60초). 디스크에 남지 않는다.
+
+---
+
+## 마이그레이션 — 2.0.2에서
+
+2.x 는 **기존 봉투 필드의 의미를 바꾸지 않는다.** `contract_version` 의 기본값이 `"stable"` 이므로 인자를 추가하지 않은 기존 소비자는 응답이 이전과 완전히 같다. 새 기능을 쓰려면 **opt-in 인자를 명시해야 한다.**
+
+**파일을 바꿔야 하는 경우(breaking)**
+
+| 대상 | 이전 | 지금 | 되돌리는 법 |
+|---|---|---|---|
+| 외부 ParserPack 작성자 | `contract.noise`/`rowLine`/`acceptedValues` 가 메인 스레드의 `RegExp` | 워커가 계산한 서술자와 `facts`. 메인 스레드에서 `RegExp` 가 아니다 | 전역 설정에 `parsers.external_isolation: "none"` |
+| `toCompact()` / `parism inspect` 호출자 | `unknown` 반환 | `CompactOutcome`(`{ok:true,value}` \| `{ok:false,reason,message}`) | — (되돌리는 게 아니다. `representation_not_lossless` 를 처리해야 한다) |
+| `guard.secrets.output_patterns` 를 생략한 설정 | 기본값이 `[]` 라서 기본 패턴 7개를 안 씀 | 기본값 없음. 생략하면 기본 패턴을 쓴다 | 설정에 `output_patterns: []` 을 명시 |
+| `git status --porcelain` 을 쓰는 소비자 | `failure.hint` 의 '대안 형식 안내' 대상 | 지원 형식. `entries` 행 배열 | — |
+| porcelain 항목을 통째로 직렬화해 저장한 코드 | 항목에 `xy`/`index`/`worktree`/`path`/`orig_path` | 같은 필드에 `quoted` 추가(줄 모드에서만 채워짐). **경로 값의 뜻은 두 모드에서 같다** | — |
+
+**`output_patterns` 기본값 변경은 보안 관련이다.** 이전에는 사용자가 아무것도 쓰지 않아도(키를 생략해도) 기본 패턴이 **비활성**이 되어, 리댁션을 켠 상태에서 합성 비밀 5종(sk-, ghp_, AKIA, xoxb-, glpat-)이 전량 그대로 반환됐다. 생략하면 기본 패턴을 쓰고 `[]` 를 명시하면 비활성으로 구별된다.
+
+**마이그레이션할 필요 없는 것**
+
+- MCP 클라이언트 설정 — 도구 이름이 안 바뀌었다. 세 도구가 추가됐을 뿐이다.
+- 기존 `run` 호출 — 새 인자를 주지 않으면 응답이 이전과 같다.
+- 내부 파서 44종의 응답 — `git status --porcelain` 을 제외하고 그대로다.
 
 ---
 
@@ -604,6 +733,14 @@ export default pack;
 Parism은 새로운 셸이 아니다. bash를 대체하지 않는다. bash 위에 앉아서 출력을 받아 구조화할 뿐이다.
 
 Parism은 AI를 위한 운영체제가 아니다. 관심사는 하나다. 에이전트가 명령을 내렸을 때, 에이전트가 이해할 수 있는 형태로 결과를 돌려주는 것.
+
+Parism은 **근거를 만들어내지 않는다.** 이 값이 원문 어디에서 나왔는지는 바이트 구간으로 답할 수 있지만, 그 값이 참이라는 증명은 아니다. 확인하지 못한 완성도는 `false` 가 아니라 `unknown` 이다.
+
+Parism은 **근거 조회·예산·비교를 해도 같은 명령을 다시 실행하지 않는다.** 저장본을 보거나, 잘린 결과를 이어 읽거나, 전후를 비교하는 것까지다. 사라진 결과를 대신 실행해 주는 도구는 아니다.
+
+Parism은 **감시 루프가 아니다.** 비교는 이미 있는 두 결과를 놓고 이루어진다. 언제 다시 확인할지는 호출자가 정한다.
+
+Parism은 **정확한 모델 토큰 수를 약속하지 않는다.** 고정 토크나이저(`parism/approx`·`byte`)의 약속은 parism JSON payload 에만 성립한다. 전송·클라이언트·모델 내부 토큰은 포함하지 않는다.
 
 Unix 철학은 "하나의 일을 잘 하라"였다. Parism은 그것을 이해한다.
 

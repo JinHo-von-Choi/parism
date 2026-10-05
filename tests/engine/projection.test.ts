@@ -324,7 +324,9 @@ describe("applyProjection()과 compact", () => {
   it("compact 열은 select 순서다", () => {
     const result = run(sample(), { select: ["size_bytes", "name"], sort_by: { field: "name" }, limit: 2 });
     if (!result.ok) throw new Error(result.message);
-    expect(toCompact(result.parsed)).toEqual({
+    const compact = toCompact(result.parsed);
+    if (!compact.ok) throw new Error(compact.message);
+    expect(compact.value).toEqual({
       entries:  { schema: ["size_bytes", "name"], rows: [[10, "a.txt"], [30, "b.txt"]] },
       _summary: { total: 5, matched: 5, shown: 2 },
     });

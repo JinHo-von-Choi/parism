@@ -46,10 +46,13 @@ export function parseDu(cmd: string, args: string[], raw: string): { entries: Du
     if (!line.trim()) continue;
     const cols = line.split("\t");
     if (cols.length < 2 || !cols[0]) continue;
+    /**
+     * 크기와 시각만 다듬는다. 경로는 그대로 둔다 — 이름에 앞뒤 공백이 있어도 보존해야 한다.
+     */
     if (timed && cols.length >= 3) {
-      entries.push({ size: cols[0].trim(), modified_at: cols[1]!.trim(), path: cols.slice(2).join("\t").trim() });
+      entries.push({ size: cols[0].trim(), modified_at: cols[1]!.trim(), path: cols.slice(2).join("\t") });
     } else {
-      entries.push({ size: cols[0].trim(), path: cols.slice(1).join("\t").trim() });
+      entries.push({ size: cols[0].trim(), path: cols.slice(1).join("\t") });
     }
   }
 

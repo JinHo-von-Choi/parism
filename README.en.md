@@ -287,9 +287,9 @@ Claude Code (Linux):
 }
 ```
 
-Once connected, four tools are exposed: `run`, `run_paged`, `describe`, and `dry_run`.
+Once connected, seven tools are exposed: `run`, `run_paged`, `describe`, `dry_run`, `explain_result`, `fetch_result`, and `compare_results`.
 
-The agent should call `describe` first to discover allowed commands and available parsers, then use `dry_run` to pre-check guard compliance before executing with `run` or `run_paged`.
+The agent should call `describe` first to discover allowed commands and available parsers, then use `dry_run` to pre-check guard compliance before executing with `run` or `run_paged`. The last three tools never run a command.
 
 ---
 
@@ -305,7 +305,13 @@ Parameters:
 - `cwd` — working directory (default: current directory)
 - `format` — output format (`"json"` default, `"compact"`, `"json-no-raw"`)
 - `includeDiff` — include filesystem diff (default: `false`). `false` skips snapshot for lower latency. Recommended for MCP.
+- `contract_version` — `"stable"` (default) or `"next"`. Only `"next"` adds a `review` object (see Field evidence).
+- `evidence` — `"none"` (default), `"rows"`, `"fields"`. How much field evidence to compute. Use with `contract_version: "next"`.
+- `retain` — keep the result in session memory so `explain_result` can revisit it. Use with `contract_version: "next"`.
+- `budget` — `{ max_tokens, tokenizer, required_fields, overflow }`. Fits the response into a budget and reports what was dropped (see Token budget).
 - `select`, `where`, `sort_by`, `limit`, `array`: server-side projection and filtering, see below.
+
+**The four new arguments (`contract_version`, `evidence`, `retain`, `budget`) are all opt-in.** Without them the response carries no new fields.
 
 #### Projection and filtering
 
@@ -383,6 +389,129 @@ Response:
 - `message` — detailed block message or `null`
 
 Example: `dry_run("rm", ["-rf", "/"])` → `{ would_pass: false, reason: "command_not_allowed", message: "..." }`
+
+### Field evidence — `run(contract_version: "next")` + `explain_result`
+
+**Answers "where in the raw output did this value come from" as a byte span.** It never runs a command.
+
+Three new `run` arguments. **All opt-in, all off by default** — without them the response is exactly what it was.
+
+- `contract_version` — `"stable"` (default) or `"next"`. Only `"next"` attaches `review`.
+- `evidence` — `"none"` (default), `"rows"`, `"fields"`. Anything other than `"none"` also needs `contract_version: "next"`.
+- `retain` — keep the result in session memory so `explain_result` can revisit it. Also needs `contract_version: "next"`.
+
+`review` sits beside the existing envelope fields and changes none of their meanings.
+
+| Field | Meaning |
+|---|---|
+| `result_id` | the id you pass to `explain_result`, `compare_results`, `fetch_result` |
+| `parser_id` / `parser_version` / `schema_version` | which parser and schema produced this |
+| `content_hash` | hash of the raw output, to tell repeats apart |
+| `source_complete` | did capture finish (1. `parse_complete`: did parsing finish. 2. `representation_lossless`: did compression or conversion lose values) |
+| `privacy_transform` | `"none"` / `"masked"` / `"unknown"` |
+| `retained` | can `explain_result` still see it |
+| `warnings` | why it is incomplete, or why there is no evidence |
+
+**Completeness takes three values: `true`, `false`, and `unknown`.** `unknown` exists so that "not confirmed" is not reported as "false". When the capture limit is hit, `source_complete` is `false` and `warnings` says so — evidence covers the retained prefix only.
+
+`explain_result(result_id, pointer)` takes a JSON Pointer such as `"/processes/0/pid"` and returns the value plus its evidence.
+
+```json
+{
+  "ok": true, "result_id": "r_...", "pointer": "/processes/0/pid",
+  "value": 1,
+  "source_kind": "derived", "source_spans": [{ "source": "stdout", "start": 90, "end": 91, "line": 2, "transform": "parseInt" }],
+  "transform": "parseInt", "age_ms": 12
+}
+```
+
+- Spans are UTF-8 byte offsets `[start, end)` into the **masked canonical output**. When the parser converted the value, `source_kind` is `derived` and the conversion is named.
+- **Evidence links to what the command printed at that moment. It is not proof that the value is true.**
+- An unknown pointer returns `unknown_pointer`; an expired or evicted id fails saying so. **Nothing is re-executed automatically.**
+
+`ps` and `git status --porcelain` produce evidence. Other parsers report the absence in `warnings` rather than inventing it.
+
+**Asking for evidence or a budget turns adaptive compact off.** Both rewrite the result shape, which would erase what evidence pointers and required fields refer to. If you set `format: "compact"` explicitly it still compresses, and the reason is listed in `warnings`.
+
+### Token budget — `run(budget)` + `fetch_result`
+
+**Get a large result inside a budget and still know what was dropped.** The point is to keep "dropped for budget reasons" separate from "dropped because the parser failed".
+
+```json
+{ "max_tokens": 2000, "required_fields": ["path"], "overflow": "page" }
+```
+
+- **A budget does not reduce execution time or how much is captured.** It decides how much of what you already have to send out.
+- `required_fields` survives in every returned row, as do the row identity fields the parser declares. **If a required field cannot fit, parism fails explicitly instead of quietly sending a partial result** — partial success is silent loss.
+- A budget too small for the minimal envelope (about 1,200 tokens) is refused **before execution** with `budget_too_small`.
+
+The response gains a `budget` report and an `omission` list.
+
+- `budget` — `requested`, `measured_tokens`, `tokenizer_id`, `tokenizer_version`, `budget_met`, `tokenizer_exact`, `tokenizer_scope`
+- `omission[]` — `stage` (`capture`/`parse`/`projection`/`budget`/`privacy`) with `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `next_cursor`
+
+The **fixed tokenizers** are `parism/approx` (an estimate) and `byte` (exact by character count). No new runtime dependency. An unsupported tokenizer is refused with `tokenizer_unsupported` rather than silently substituted — an estimate is never packaged as an exact budget. This promise holds for the parism JSON payload only; it does **not** cover transport, client, or model-internal tokens (`tokenizer_scope` says so).
+
+`fetch_result(result_id, cursor, budget)` returns the next page of a retained result **without re-running the command**. Pass the `continuation.cursor` through unchanged. The cursor binds the snapshot, projection, and policy, so **a client cannot assemble an arbitrary offset** — another result's cursor gives `cursor_mismatch`, a tampered one gives `cursor_invalid`. An expired or evicted id says so and is never re-run.
+
+```
+1. run(cmd, { budget: { max_tokens: 2000, overflow: "page" }, retain: true })
+2. check budget.budget_met, read omission to see what was dropped
+3. while continuation.cursor: fetch_result(result_id, cursor)
+4. stop when done, or tell the user what omission still reports
+```
+
+### Semantic diff — `compare_results`
+
+**Compares two results that already exist.** It never runs a command, never connects anywhere, never polls.
+
+Parameters: `base_id`, `current_id` (from `run(retain=true)`), optionally `keys`, `ignore_fields`, `strict`.
+
+Response: `comparable`, `refusals`, `added`/`removed`/`changed`/`unchanged_count`, `ignored_fields`, `partial`, `key_conflicts`. Field changes carry the before and after evidence pointers.
+
+**Zero false deletions** — when either side is incomplete (capture truncated, parser failed, representation lossy) a missing row is never called a deletion; it becomes a hold in `partial.withheld_reasons`. Rows whose identity could not be established do not become "added" or "removed" either: not finding something is not evidence that it appeared. Duplicate identity stops the comparison with `duplicate_identity` instead of quietly dropping a row.
+
+- Row identity rules: git uses repository identity (real path) plus normalized path. Kubernetes uses context/namespace/kind plus `metadata.uid`, and **a table without uid is not enough to call it the same resource**. **ps is withheld rather than compared on PID alone** (PIDs get reused).
+- **A fingerprint is not a certificate of world state.** The same fingerprint does not mean nothing changed in between.
+- Secret safety: **argv is identified by hash and only masked values are shown**. **Environment variables are recorded by name only — never their values** — and names are not part of the identity key.
+
+### Tool summary
+
+| Tool | Runs a command | When |
+|---|---|---|
+| `run` | yes | default; takes `contract_version`, `evidence`, `retain`, `budget` |
+| `run_paged` | yes | large output, page by page |
+| `explain_result` | **no** | check where a value came from (retained copy only) |
+| `fetch_result` | **no** | continue a budget-truncated result (retained copy only) |
+| `compare_results` | **no** | see what changed between two retained results |
+| `describe` | no | learn the environment first |
+| `dry_run` | no | check guard compliance before running |
+
+**`explain_result`, `fetch_result`, and `compare_results` never re-run a command under any circumstance.** An unknown, expired, or evicted id is reported and that is all. Storage is session-memory TTL/LRU (2MiB per result, 32MiB total, 16 results, 60s). Nothing is written to disk.
+
+---
+
+## Migration from 2.0.2
+
+2.x **does not change the meaning of any existing envelope field.** `contract_version` defaults to `"stable"`, so a consumer that passes none of the new arguments gets exactly the previous response. New features require explicitly opting in.
+
+**Cases that need a code change (breaking)**
+
+| Audience | Before | Now | How to keep the old behaviour |
+|---|---|---|---|
+| External ParserPack authors | `contract.noise`/`rowLine`/`acceptedValues` are `RegExp` on the main thread | descriptors and `facts` computed in the worker. No `RegExp` on the main thread | set `parsers.external_isolation: "none"` in global config |
+| `toCompact()` / `parism inspect` callers | returns `unknown` | returns `CompactOutcome` (`{ok:true,value}` \| `{ok:false,reason,message}`) | — (reverting is not the fix; handle `representation_not_lossless`) |
+| Configs that omitted `guard.secrets.output_patterns` | default `[]`, so the 7 default patterns were never used | no default; omitting uses the default patterns | set `output_patterns: []` explicitly |
+| Consumers of `git status --porcelain` | an `failure.hint` "try this format instead" target | a supported format, parsed into an `entries` row array | — |
+| Code serializing porcelain entries wholesale | `xy`/`index`/`worktree`/`path`/`orig_path` | same fields plus `quoted` (only set in line mode). **The meaning of `path` is identical in both modes** | — |
+
+**The `output_patterns` default change is security-relevant.** Previously, leaving the key out made redaction effectively off, so with redaction enabled all five synthetic secrets (`sk-`, `ghp_`, `AKIA`, `xoxb-`, `glpat-`) came back untouched. Now omitting the key uses the default patterns, and only an explicit `[]` disables them.
+
+**What does not need migrating**
+
+- MCP client configuration — no tool was renamed. Three tools were added.
+- Existing `run` calls — without the new arguments the response is unchanged.
+- The 44 built-in parsers — unchanged except `git status --porcelain`.
 
 ---
 
@@ -532,6 +661,14 @@ Running `parism` without arguments starts the MCP server as before.
 Parism is not a new shell. It does not replace bash. It sits above bash, receives output, and structures it.
 
 Parism is not an operating system for AI. Its concern is singular: when an agent issues a command, return the result in a form the agent can understand.
+
+Parism does **not** invent evidence. It can answer where a value came from as a byte span, but that is not proof the value is true. Completeness that was never confirmed is `unknown`, not `false`.
+
+Parism does **not** re-run the same command to answer evidence, budget, or comparison questions. It reads a retained copy, continues a truncated result, or compares two stored results. It will not execute a command on your behalf to fill a gap.
+
+Parism is **not** a watch loop. Comparison is between two results that already exist. When to look again is the caller's decision.
+
+Parism does **not** promise an exact model token count. The fixed tokenizers (`parism/approx`, `byte`) hold for the parism JSON payload only — not transport, client, or model-internal tokens.
 
 The Unix philosophy was "do one thing well." Parism understands that.
 

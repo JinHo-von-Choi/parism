@@ -179,10 +179,24 @@ function tokenize(contract: ParserContract, args: string[]): Tokens {
 }
 
 /**
+ * args에서 플래그 이름과 값을 모은다. 정규식은 건드리지 않으므로 외부 팩 계약에도 안전하다.
+ * 격리 팩의 acceptedValues 판정을 워커에 넘길 때 쓴다.
+ */
+export function collectFlagValues(contract: ParserContract, args: string[]): Record<string, string> {
+  const eff = resolveContract(contract, args).contract;
+  if (!hasFormatDeclaration(eff)) return {};
+  const tokens = tokenize(eff, resolveContract(contract, args).rest);
+  const out: Record<string, string> = {};
+  for (const f of tokens.flags) out[f.name] = f.value ?? "";
+  return out;
+}
+
+/**
  * args가 계약이 선언한 출력 형식 범위 안인지 검사한다.
  * 선언(acceptedFlags, acceptedPositionals, subcommands)이 없으면 받는다. supports가 있으면 선언 검사를 통과한 뒤 추가로 적용한다.
+ * valueVerdicts는 격리 팩이 워커 안에서 미리 판정한 acceptedValues 결과다. 있으면 정규식을 실행하지 않고 그 결과를 쓴다.
  */
-export function checkFormat(contract: ParserContract, args: string[]): FormatVerdict {
+export function checkFormat(contract: ParserContract, args: string[], valueVerdicts?: Record<string, boolean>): FormatVerdict {
   const resolved = resolveContract(contract, args);
   const eff      = resolved.contract;
   const reject   = (reason: string): FormatVerdict => ({ accepted: false, contract: eff, reason });
@@ -197,7 +211,16 @@ export function checkFormat(contract: ParserContract, args: string[]): FormatVer
 
     for (const f of tokens.flags) {
       const pattern = eff.acceptedValues && Object.hasOwn(eff.acceptedValues, f.name) ? eff.acceptedValues[f.name] : undefined;
-      if (pattern && !pattern.test(f.value ?? "")) return reject(`value '${f.value ?? ""}' of '${f.name}' is not in the accepted set`);
+      if (!pattern) continue;
+      const value = f.value ?? "";
+      if (valueVerdicts) {
+        /**
+         * 외부 팩의 정규식은 워커 안에서만 실행된다. 판정 결과가 없으면 검증이 되지 않은 것이므로 거절한다.
+         */
+        if (valueVerdicts[f.name] !== true) return reject(`value '${value}' of '${f.name}' is not in the accepted set`);
+      } else if (!(pattern as RegExp).test(value)) {
+        return reject(`value '${value}' of '${f.name}' is not in the accepted set`);
+      }
     }
     const seen = new Set(tokens.flags.map(f => f.name));
     if (eff.requiredFlags && !eff.requiredFlags.some(n => seen.has(n))) {
@@ -237,12 +260,12 @@ function withOutputFlags(contract: ParserContract, flags: readonly FlagUse[]): P
  * 앞쪽 전역 옵션과 서브커맨드를 다시 붙인다. 초안이 native JSON이 아니면 같은 계약의 형식 검사를 통과해야 하고,
  * 원래 args와 같으면 안내하지 않는다.
  */
-export function buildHint(contract: ParserContract, args: string[]): FormatHint | undefined {
+export function buildHint(contract: ParserContract, args: string[], valueVerdicts?: Record<string, boolean>): FormatHint | undefined {
   const resolved = resolveContract(contract, args);
   const draft    = resolved.contract.hint?.(resolved.rest);
   if (!draft) return undefined;
   const full = [...resolved.prefix, ...draft.args];
   if (full.length === args.length && full.every((a, i) => a === args[i])) return undefined;
-  if (!draft.native && !checkFormat(contract, full).accepted) return undefined;
+  if (!draft.native && !checkFormat(contract, full, valueVerdicts).accepted) return undefined;
   return { args: full, reason: draft.reason };
 }

@@ -430,11 +430,18 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
     flags: {
       "--no-pager": "bool", "--oneline": "bool", "-n": "value", "--max-count": "value",
       "--stat": "bool", "--name-only": "bool", "--name-status": "bool", "--cached": "bool",
-      "--staged": "bool", "-s": "bool", "-b": "bool", "--short": "bool", "--porcelain": "bool",
+      "--staged": "bool", "-s": "bool", "-b": "bool", "--short": "bool",
+      /**
+       * porcelain 은 버전이 붙는 형식(`--porcelain=v1`)이라 attached 로 받는다.
+       * `-z`/`--null` 은 NUL 로 레코드를 나눠 경로를 가공 없이 내는 형식이다(계획서 5장 근거 조회).
+       */
+      "--porcelain": "attached", "-z": "bool", "--null": "bool", "--branch": "bool",
       "-v": "bool", "-vv": "bool", "-a": "bool", "-r": "bool", "--all": "bool", "--graph": "bool",
       "--decorate": "bool", "--format": "attached", "--pretty": "attached", "--since": "value",
       "--until": "value", "--author": "value", "-p": "bool", "--patch": "bool", "-U": "attached",
-      "--unified": "attached", "--abbrev-commit": "bool", "--no-color": "bool", "--show-current": "bool",
+      "--unified": "attached", "--abbrev-commit": "bool", "--no-color": "bool", "--verbose": "bool",
+      /** git status 의 추적 안 됨 표시 필터. 읽기 전용이다(저장소를 고치지 않는다). */
+      "-u": "value", "--untracked-files": "attached", "--show-current": "bool",
       "-L": "value", "--merged": "bool", "--no-merged": "bool", "-l": "bool", "--list": "bool",
       "--abbrev-ref": "bool", "--show-toplevel": "bool", "-w": "bool", "--numstat": "bool",
       "--shortstat": "bool", "--reverse": "bool", "--first-parent": "bool", "--no-merges": "bool", "--tags": "bool", "--always": "bool", "--long": "bool",

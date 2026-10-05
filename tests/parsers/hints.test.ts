@@ -65,7 +65,8 @@ const CASES: Array<[string, string[], string[], string]> = [
   ["id", ["-un"], [], "uid=1000(u) gid=1000(u) groups=1000(u)\n"],
   ["journalctl", ["-o", "json", "-n", "5"], ["-n", "5", "-o", "short-iso"], "2026-10-03T06:00:00+0900 host cron[12]: started\n"],
   ["git", ["status", "-s"], ["status"], "On branch main\nChanges not staged for commit:\n\tmodified:   a.txt\n"],
-  ["git", ["--no-pager", "status", "--porcelain"], ["--no-pager", "status"], "On branch main\nnothing to commit, working tree clean\n"],
+  /** porcelain 과 -z 는 이제 기본 지원 형식이므로 힌트 대상에서 빠졌다(입력 표에도 둘 이유가 없다). */
+  ["git", ["--no-pager", "status", "--column"], ["--no-pager", "status"], "On branch main\nnothing to commit, working tree clean\n"],
   ["git", ["log", "--oneline", "--graph"], ["log", "--format=%h %s"], "abc1234 first\n"],
   ["git", ["status", "--short", "--ignored"], ["status", "--ignored"], "On branch main\nIgnored files:\n  (use \"git add -f <file>...\" to include in what will be committed)\n\tbuild/\n"],
   ["git", ["status", "-s", "--ignored=matching"], ["status", "--ignored=matching"], "On branch main\nIgnored files:\n\tbuild/a.o\n"],

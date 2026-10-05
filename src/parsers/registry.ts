@@ -1,8 +1,9 @@
 import { z }                  from "zod";
 import { zodToJsonSchema }      from "zod-to-json-schema";
 import { tryParseNativeJson }   from "./json-passthrough.js";
-import { countDataLines, isSilentEmpty } from "./invariants.js";
-import { checkFormat, buildHint,
+import { countDataLines, isSilentEmpty, type ContractFacts } from "./invariants.js";
+import type { RawEvidence } from "../engine/evidence.js";
+import { checkFormat, buildHint, collectFlagValues,
          type FlagArity, type PositionalRule, type FormatHint, type HintDraft } from "./format.js";
 
 /**
@@ -154,6 +155,8 @@ export type ParseErrorReason = "parser_exception" | "schema_violation" | "unsupp
 export interface IsolatedParseResult {
   parsed:           unknown;
   schemaViolation?: string;
+  /** 실행 단위가 워커 안에서 계약 정규식을 평가해 돌려준 줄 수. 없으면 계산하지 않은 것으로 본다. */
+  facts?:           ContractFacts;
 }
 
 /**
@@ -168,6 +171,11 @@ export interface IsolatedParser {
   readonly name:     string;
   readonly contract: ParserContract;
   parse(args: string[], raw: string, ctx: ParseContext | undefined, strictSchemas: boolean): IsolatedParseResult;
+  /**
+   * 실행 단위 안에서 acceptedValues 를 판정한다. 외부 팩의 정규식은 실행 단위 밖에서 돌릴 수 없다.
+   * flagValues는 실행 단위가 정규식을 쓰지 않고 메인 스레드에서 모은 '플래그 이름 -> 값' 이다.
+   */
+  evalValues?(args: string[], flagValues: Record<string, string>): Record<string, boolean>;
   withDeadline?<T>(task: () => T): T;
   close(): Promise<void>;
 }
@@ -194,6 +202,8 @@ export class ParserRegistry {
   private readonly parsers = new Map<string, ParserFn>();
   private readonly packs     = new Map<string, ParserPack>();
   private readonly contracts = new Map<string, ParserContract>();
+  /** 근거를 만들어 주는 파서. 없는 파서는 근거 표를 비운다. */
+  private readonly evidenceParsers = new Map<string, (args: string[], raw: string, ctx: ParseContext | undefined) => RawEvidence>();
   private readonly isolated  = new Map<string, IsolatedParser>();
 
   register(cmd: string, fn: ParserFn, contract?: ParserContract): void {
@@ -252,6 +262,54 @@ export class ParserRegistry {
   }
 
   /**
+   * 근거를 만들어 주는 파서를 등록한다.
+   * 계약으로 형식이 확인된 경우에만 호출된다. 확인되지 않은 형식에는 근거를 지어내지 않고 빈 표를 돌린다.
+   */
+  registerWithEvidence(cmd: string, fn: (args: string[], raw: string, ctx: ParseContext | undefined) => RawEvidence): void {
+    this.evidenceParsers.set(cmd, fn);
+  }
+
+  /**
+   * 파싱 결과와 함께 필드별 원문 근거를 돌려준다.
+   * 근거를 만들 수 없는 파서이거나 계약이 형식을 받지 않는 인자면 근거 표는 비어 있다.
+   */
+  parseWithEvidence(cmd: string, args: string[], raw: string, ctx?: ParseContext): { parsed: unknown; evidence: RawEvidence } {
+    const builder = this.evidenceParsers.get(cmd);
+    if (!builder) return { parsed: this.parse(cmd, args, raw, ctx).parsed, evidence: {} };
+    const contract = this.contracts.get(cmd);
+    if (contract) {
+      try {
+        if (!checkFormat(contract, args, this.valueVerdicts(cmd, contract, args)).accepted) {
+          return { parsed: this.parse(cmd, args, raw, ctx).parsed, evidence: {} };
+        }
+      } catch {
+        return { parsed: this.parse(cmd, args, raw, ctx).parsed, evidence: {} };
+      }
+    }
+    const parsed = this.parse(cmd, args, raw, ctx);
+    try {
+      return { parsed: parsed.parsed, evidence: builder(args, raw, ctx) };
+    } catch {
+      /** 근거를 만드는 중 예외가 나면 값은 그대로 두고 근거만 비운다. */
+      return { parsed: parsed.parsed, evidence: {} };
+    }
+  }
+
+  /**
+   * 격리 팩의 acceptedValues 판정을 실행 단위에서 받아 온다.
+   * 격리 팩이 아니라면 undefined를 돌려 메인 스레드가 정규식을 직접 판정하게 한다.
+   */
+  private valueVerdicts(cmd: string, contract: ParserContract, args: string[]): Record<string, boolean> | undefined {
+    const isolated = this.isolated.get(cmd);
+    if (!isolated?.evalValues) return undefined;
+    try {
+      return this.withCallDeadline(cmd, () => isolated.evalValues!(args, collectFlagValues(contract, args)));
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * cmd와 args에 적용되는 계약을 반환한다. 서브커맨드 계약과 인자의 출력 모양 플래그(outputFlags)를 덧씌운 결과다.
    * 등록된 계약이 없거나 계약 함수(supports)가 예외를 던지면 undefined.
    */
@@ -259,7 +317,7 @@ export class ParserRegistry {
     const contract = this.contracts.get(cmd);
     if (!contract) return undefined;
     try {
-      return this.withCallDeadline(cmd, () => checkFormat(contract, args).contract);
+      return this.withCallDeadline(cmd, () => checkFormat(contract, args, this.valueVerdicts(cmd, contract, args)).contract);
     } catch {
       return undefined;
     }
@@ -283,7 +341,10 @@ export class ParserRegistry {
     const contract = this.contracts.get(cmd);
     if (!contract) return undefined;
     try {
-      return this.withCallDeadline(cmd, () => checkFormat(contract, args).accepted ? undefined : buildHint(contract, args));
+      return this.withCallDeadline(cmd, () => {
+        const verdicts = this.valueVerdicts(cmd, contract, args);
+        return checkFormat(contract, args, verdicts).accepted ? undefined : buildHint(contract, args, verdicts);
+      });
     } catch {
       return undefined;
     }
@@ -350,8 +411,9 @@ export class ParserRegistry {
     const isolated = this.isolated.get(cmd);
     let parsed:          unknown;
     let schemaViolation: string | undefined;
+    let facts:           ContractFacts | undefined;
     try {
-      if (isolated) ({ parsed, schemaViolation } = isolated.parse(args, raw, ctx, strictSchemas));
+      if (isolated) ({ parsed, schemaViolation, facts } = isolated.parse(args, raw, ctx, strictSchemas));
       else parsed = fn(cmd, args, raw, ctx);
     } catch (err) {
       return failureOf(err);
@@ -359,8 +421,8 @@ export class ParserRegistry {
 
     if (parsed == null) return { parsed: null };
 
-    if (isSilentEmpty(parsed, raw, contract) && tryParseNativeJson(raw) === null) {
-      const dataLines = countDataLines(raw, contract);
+    if (isSilentEmpty(parsed, raw, contract, facts) && tryParseNativeJson(raw) === null) {
+      const dataLines = countDataLines(raw, contract, facts);
       return {
         parsed:      null,
         parse_error: { reason: "unrecognized_output", message: `The '${cmd}' parser recognized nothing in ${dataLines} output line(s)` },
@@ -393,7 +455,39 @@ export class ParserRegistry {
    * 폴백이 성공하면 unsupported_format 실패와 안내는 결과에 남기지 않는다.
    */
   parseWithFallback(cmd: string, args: string[], raw: string, ctx?: ParseContext, strictSchemas = false): FallbackParseResult {
-    const result = this.parse(cmd, args, raw, ctx, strictSchemas);
+    return this.fallback(this.parse(cmd, args, raw, ctx, strictSchemas) as FallbackParseResult, raw);
+  }
+
+  /**
+   * native JSON 폴백까지 포함한 파싱과 함께 필드 근거를 돌려준다.
+   * native JSON 이 값을 냈다면 필드 단위 근거는 "원문 전체"를 가리킨다 — 정체가 아닌 출처임을 밝힌다.
+   */
+  parseWithFallbackWithEvidence(
+    cmd: string, args: string[], raw: string, ctx?: ParseContext, strictSchemas = false,
+  ): FallbackParseResult & { evidence: RawEvidence; evidenceReason?: string } {
+    const parsed = this.parseWithEvidence(cmd, args, raw, ctx);
+    const result = this.fallback(
+      this.parse(cmd, args, raw, ctx, strictSchemas) as FallbackParseResult,
+      raw,
+    );
+    /** 파서가 근거를 냈으면 그 표를 쓴다 */
+    if (Object.keys(parsed.evidence).length > 0) return { ...result, evidence: parsed.evidence };
+    /**
+     * native JSON 폴백이 값을 냈다면 필드 단위 구간을 지어낼 수 없다.
+     * 근거는 "원문 전체"로만 준다 — 값이 어디서 왔는지는 원문이 답한다.
+     */
+    if (result.native) {
+      return {
+        ...result,
+        evidence:       { "": [{ source: "stdout", line: 1, start: 0, end: raw.length }] },
+        evidenceReason: "native_json_document",
+      };
+    }
+    return { ...result, evidence: {} };
+  }
+
+  /** 파싱 결과를 native JSON 폴백까지 확정한 결과로 만든다. */
+  private fallback(result: FallbackParseResult, raw: string): FallbackParseResult {
     if (result.parsed != null) return { ...result, native: false };
     const native = tryParseNativeJson(raw);
     if (native === null) return { ...result, native: false };

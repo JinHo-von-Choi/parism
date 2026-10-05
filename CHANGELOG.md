@@ -7,6 +7,66 @@
 
 ## [Unreleased]
 
+### Added — M1 근거 조회
+- **근거 조회(`contract_version: 'next'` + `explain_result`)** — 계획서 5장 M1. `run` 에 `contract_version`, `evidence`, `retain` 인자를 추가했다. `review` 는 기존 봉투 필드의 뜻을 바꾸지 않고 옆에 붙는다: `result_id`, `parser_id`, `content_hash`, `schema_version`, `source_complete`, `parse_complete`, `representation_lossless`, `privacy_transform`, `retained`, `warnings`. 완성도는 `true`/`false`/**`unknown`** 세 값을 쓴다 — 확인하지 못한 것을 거짓으로 말하지 않기 위해 `unknown` 을 도입했다.
+- 필드 근거는 **마스킹된 정규 원문의 UTF-8 바이트 구간**으로 준다. 원문에 그대로 있는 값은 `verbatim`, 변환이 끼면 `derived` 로 밝히고 그 변환(`parseInt`, `trim`, `strip_tree_prefix`)을 함께 준다. 구간이 정말 그 값을 담는지 검증해 맞지 않으면 근거가 아니라 "근거 없음"으로 남긴다.
+- 결과 저장은 서버 인스턴스·세션에 묶인 메모리 TTL/LRU 이다(결과당 2MiB, 합계 32MiB, 16개, 60초). **보관한 결과도 재실행하지 않는다** — 모르는 id 나 만료된 id 는 그 사실과 함께 실패를 돌려준다.
+- MCP 도구 `explain_result(result_id, pointer)` 추가. `run` 에 `retain: true` 와 함께 쓸 때만 작동한다.
+- `ps` 파서가 근거를 만든다(열 위치가 고정이라 정확하다). 근거는 V8 정규식 `d` 플래그로 얻은 캡처 그룹 위치에서 나온다.
+- **`git status --porcelain` 파서와 근거.** 계획서 5장 근거 조회 MVP 의 두 번째. `-z` 는 경로를 가공 없이 내고 NUL 로 레코드를 나누지만, **`-z` 없이 쓰면 줄 구분 + C 스타일 이스케이프 + 따옴표**로 온다. 실측 그대로: 개행 구분 `?? "line\nbreak.txt"`, `-z` `?? line<LF>break.txt`(따옴표 없음). 두 형식을 같은 파서가 읽되 레코드 경계·경로 해석·이름 변경 표기를 나눠 처리한다. 줄 모드에서만 항목에 `quoted: true` 가 붙어 **출력이 가공되었음을 값으로 밝힌다.**
+- porcelain 결과는 행 배열(`entries`)로 파싱한다. 각 항목은 `xy`(두 자리 상태), `index`, `worktree`, `path`, 이름 변경·복사 시 `orig_path`. 이름 변경 표기는 형식마다 다르다 — **새 경로가 먼저**이고 원래 경로가 뒤다: `-z` 는 다음 NUL 레코드(`RM renamed.txt<NUL>keep.txt<NUL>`), 줄 모드는 한 줄의 ` -> `(실측: `R  old.txt -> new.txt`). 경로 자체에 `' -> '` 가 들어갈 수 있어 화살표는 **오른쪽에서** 찾는다. 스테이징 안 됨은 공백으로 오므로(`" M src/a.ts"`) 상태 문자 인식에 공백을 넣어야 한다.
+- 이 형식의 근거는 **레코드 번호**를 함께 준다. 레코드가 NUL 로 나뉘므로 줄 번호가 통하지 않기 때문이다. 경로에 개행이 있어도 근거 구간이 정확하다 — 줄로 나누어 계산하면 어긋나는 자리다. 줄 모드에서 이스케이프가 풀린 경로는 근거가 원문의 **따옴표 구간**을 가리키고 `transform: 'unescape_c_quotes'` 로 그 변환을 밝힌다.
+- `git` 에 `-z`, `--null`, `--branch`, `--verbose`, `-u`, `--untracked-files` 를 가드 정책에 열었다. 파서 계약이 받겠다고 안내하던 인자를 가드가 막아 안내가 거짓말이 되던 곳이다.
+
+### Added — M2 토큰 예산
+- **토큰 예산과 누락 내역(`budget`)** — 계획서 6장 M2. 큰 명령 결과를 예산 안에 받으면서 **무엇이 빠졌는지** 알 수 있다. 핵심은 "예산 때문에 사라진 정보"와 "파서 오류 때문에 사라진 정보"를 섞지 않는 것이다. `budget: { max_tokens, tokenizer, required_fields, overflow: 'page' | 'error' }`.
+- 응답에 `budget` 보고(`requested`, `measured_tokens`, `tokenizer_id`, `tokenizer_version`, `budget_met`, `tokenizer_exact`, `tokenizer_scope`)와 `omission` 목록이 실린다. omission 은 `stage`('capture'|'parse'|'projection'|'budget'|'privacy')와 `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `unknown_counts`, `next_cursor` 를 구분해 담는다.
+- **고정 토크나이저**(`parism/approx`)를 제품 계약으로 넣고 ID·버전·적용 범위를 결과에 노출한다. 새 런타임 의존성은 없다. `byte` 모드는 문자 수로 재 문자 단위로 정확하다. **지원하지 않는 토크나이저는 조용히 대체하지 않고 `tokenizer_unsupported` 로 거절한다** — 추정을 정확한 예산으로 포장하지 않는다. 이 약속은 parism JSON payload 에만 성립하며 전송·클라이언트·모델 내부 토큰은 포함하지 않는다(`tokenizer_scope` 에 밝힌다).
+- `fetch_result(result_id, cursor, budget)` 추가 — 재실행 없이 같은 결과의 다음 페이지를 돌려준다. cursor 는 진행 규칙(스냅샷 identity·투영·정책·스키마)과 위치를 함께 묶고 서명된 형태로 실려 **클라이언트가 임의 오프셋을 조립할 수 없다**. 이미 만료·퇴출된 id 는 그 사실과 함께 거절하고 자동 재실행하지 않는다.
+- 필수 필드(`required_fields`)는 예산이 빡빡해도 남는다. 파서가 선언한 행 identity 도 생략하지 않는다. **필수 필드가 없으면 조용히 일부만 내보내지 않고 명시적으로 실패한다** — 부분 성공은 조용한 손실이다.
+- 예산이 최소 봉투(약 1,200 토큰)에 못 미치면 **실행 전에** `budget_too_small` 로 거절한다. 실행해 놓고 나서야 알리면 명령만 돌고 아무 값도 못 받는 결과가 된다.
+
+### Added — M3 의미 diff
+- **의미 diff(`compare_results`)** — 계획서 7장 M3. **이미 존재하는 두 결과만 비교한다.** 새 명령을 실행하지 않고, 원격에 접속하지 않고, 감시 루프를 만들지 않는다. 결과에 `comparable`, `refusals`(사유·무시한 차이), `added`, `removed`, `changed`, `unchanged_count`, `ignored_fields`, `partial`, `key_conflicts` 를 담고, 필드 변화에는 이전·현재 근거 포인터를 붙인다.
+- **실행 환경 지문(fingerprint)** — `cmd`, argv 해시, 실제 작업 디렉터리, 가드 정책 해시, 파서·스키마·내용 해시, 플랫폼·선택된 도구 버전, locale, 사용자가 명시한 문맥. **지문은 세계 상태를 캡처한 인증서가 아니다** — 같은 지문이어도 그 사이 파일이 바뀌었을 수 있다.
+- 비밀 유출을 막는 두 장치를 분리했다. **argv 는 해시로 식별하고 표시에는 마스킹한 값만** 쓴다. **환경 변수는 '이름'만 관찰 기록에 남기고 값은 담지 않는다** — 관찰 기록은 동일성 비교 키에 들어가지 않는다.
+- 지문 호환성을 `same`/`compatible`/`unknown`/`incompatible` 네 등급으로 나눈다. OS 나 파서 버전이 달라졌다고 모든 비교를 막지 않되, **판단할 수 없으면 `unknown` 이고 strict 비교는 거절한다.**
+- 행 identity 규칙: git 은 저장소 identity(실경로) + 정규 경로, 이름 변경은 확정 정보(원래 경로)가 있을 때만 연결. kubernetes 는 context/namespace/kind + `metadata.uid` 이며 **uid 없는 표 출력으로는 같은 자원이라고 말하지 않는다**(재생성된 같은 이름과 구분이 안 된다). **ps 는 PID 만을 identity 로 삼지 않고 비교를 보류한다**(PID 재사용).
+- **거짓 삭제 0**: 어느 한쪽이라도 불완전하면(수집 잘림·파서 실패·표현 손실) 없는 행을 '삭제'로 단정하지 않고 `partial.withheld_reasons` 에 보류를 남긴다. identity 를 확정하지 못한 행이 있어도 '추가'나 '삭제'를 단정하지 않는다 — 못 찾았다고 새로 생긴 것이 아니다.
+- 중복 identity 는 오류다. 조용히 한 행을 버리지 않는다(`duplicate_identity`).
+
+### Changed — M1 · M2 · M3
+- Breaking notes: `git status --porcelain` 은 이제 **지원 형식**이므로 더 이상 `failure.hint` 의 '대안 형식 안내' 대상이 아니다. long 형식을 사람이 읽으려 할 때의 안내로만 남았다.
+- Breaking notes: `ps` 파서에 `--forest` 트리 접두사 제거가 `depth` 뿐 아니라 근거에서도 드러난다(`strip_tree_prefix`).
+- 근거를 요청한 경우(`evidence` 가 `none` 이 아님)에는 적응형 compact 를 켜지 않는다. compact 는 표로 접어 결과 구조를 바꾸므로 근거 포인터가 가리키는 대상이 사라진다. 근거는 '어디서 나왔나'를 묻는 요청이므로 구조 훼손을 감수하지 않는다. `format: 'compact'` 를 명시하면 그대로 압축하고, 근거가 안 만들어진 이유를 `warnings` 로 알린다.
+- 결과 원문이 적응형 포맷으로 응답에서 빠져도 보관본과 `content_hash` 는 실제 출력을 가리킨다. 근거 구간이 가리키는 대상이 사라지지 않게 하는 것이 목적이다.
+- Breaking notes: `git status --porcelain` 항목에 `quoted` 필드가 추가된다. 줄 모드에서만 값이 채워지며(`-z` 는 가공이 없어 `undefined`), **경로 값의 뜻은 두 모드에서 같다** — 원래 파일 이름이다. 줄 모드의 표시와 원래 이름이 다를 때 그 사실을 알려 주는 것이 이 필드의 목적이다.
+
+### Changed — M0 안정화
+- Breaking notes: `toCompact()` 는 `unknown` 대신 `CompactOutcome`(`{ ok: true, value }` | `{ ok: false, reason, message }`)을 돌린다. `parism inspect` 도 이 계약을 따른다.
+- Breaking notes: 격리 실행 외부 ParserPack 의 `contract.noise`, `contract.rowLine`, `contract.acceptedValues` 는 메인 스레드에서 `RegExp` 가 아니다. `source`/`flags` 서술자로 접근하거나 워커가 계산한 줄 수(`facts`)를 써야 한다. 이전 동작을 되돌리려면 `parsers.external_isolation: "none"` 을 전역 설정에 둔다. 이 규칙은 내장 파서(44종)에 적용되지 않는다.
+- Breaking notes: `DEFAULT_CONFIG.guard.secrets.output_patterns` 의 기본값 `[]` 을 제거했다. 키를 생략하면 기본 패턴 7개를 쓰고, `[]` 를 명시하면 의도적 비활화로 구별된다. 이전처럼 `[]` 를 기본값으로 두려면 설정 파일에 `output_patterns: []` 을 적어야 한다.
+- `guard.secrets` 는 이제 하위 키로 병합한다. `output_redaction_enabled` 하나만 켜도 `env_patterns` 기본값이 남는다.
+
+### Fixed
+- **마스킹이 근거 구간을 어긋나게 만들 수 있던 문제**를 미리 막았다. 근거 바이트 오프셋은 마스킹된 정규 원문 기준이라 마스킹 전 위치를 그대로 쓰면 어긋난다. 마스킹 전후 대응표(`src/engine/mask-map.ts`)를 만들어 정확히 옮기고, 가려진 구간 안의 값은 치환 토큰을 가리키며 `masked` 로 드러난다.
+- `ps` 근거의 숫자 대조를 문자열이 아니라 수치로 하였다. `"0.0"` 과 `0`, `"1.20"` 과 `1.2` 처럼 표기가 달라도 값이 같으면 근거다. 문자열 비교로는 같은 값을 다른 값으로 판단해 근거를 버리고 있었다.
+- **외부 ParserPack 계약 정규식이 서버 스레드에서 실행되던 결함(서버 정지 위험)**. 워커가 보낸 `noise`/`rowLine`/`acceptedValues` 의 `RegExp` 를 메인 스레드가 그대로 만들어 실행해, 외부 팩이 선언한 재귀 역추적 패턴 하나(소스 `^(a+)+b$`)이 워커 시간 상한 500ms 를 무시하고 서버 스레드를 90초 넘게 막았다(실측: 40자 입력에서 호출이 종료되지 않음). 이제 계약 정규식은 워커 안에서만 실행한다. `noise`/`rowLine` 은 원문 줄 분류를, `acceptedValues` 는 플래그 값 판정을 워커가 수행해 줄 수와 참/거짓만 돌려준다. 메인 스레드에는 `{ __parism_regex__: { source, flags } }` 서술자만 전달된다. 판정 결과가 없으면 형식을 거절한다(검증 없는 통과를 막는다). 같은 실측 입력은 이제 상한에 걸려 `parser_exception` 으로 끝나고, 메인 스레드는 0.99ms 안에 다른 요청에 응답한다.
+- **리댁션을 켜도 기본 패턴이 적용되지 않던 결함**. 설정 로더가 `guard.secrets.output_patterns` 기본값을 `[]` 로 만들어, 사용자가 패턴을 생략하면 "값이 없다"는 뜻이 아니라 "의도적으로 비활성"이 되어 기본 패턴 7개가 전혀 쓰이지 않았다. 합성 비밀 5종(sk-, ghp_, AKIA, xoxb-, glpat-)이 모두 그대로 반환됐다. 기본값을 두지 않게 바꿔 이제 생략하면 기본 패턴을 쓰고, `[]` 를 명시하면 의도적 비활화로 구별된다. SPECIFICATION이 원래 문서화하던 계약("`undefined` 이면 7개 DEFAULT 패턴, `[]` 이면 레덕션 비활성")에 코드가 맞지 않았다.
+- **`guard.secrets` 를 하위 키로 병합하지 않아 기본값이 조용히 사라지던 결함**. `output_redaction_enabled` 하나만 켜면 `secrets` 객체가 통째로 갈아끼워져 `env_patterns` 기본값 6개가 사라지고, 자식 프로세스 환경 변수 시크릿 제거가 통째로 꺼졌다. 이제 `env_patterns`와 `output_patterns`는 사용자가 명시한 값만 덮어쓴다.
+- **compact 가 값을 조용히 잃고 있던 결함**. 중첩 배열을 구분자 문자열로 이어 붙여 `["a|b","c"]`와 `["a","b","c"]`가 모두 `"a|b|c"` 가 되었고(복원 불가), 배열 안의 `null`은 문자열 `"null"` 이 되고 객체는 `"[object Object]"` 이 되었다.
+- **compact 가 프로세스 예외를 내던 결함**. 객체 뒤에 `null` 이 섞인 행 배열(예: 49개 객체 + `null`)에서 `TypeError: Cannot read properties of null` 로 죽었고, 순환 참조와 `BigInt` 값도 `TypeError` 를 냈다. 헤더가 하는 포맷 변환이 실행 전체를 중단시킬 수 있었다. 이제 `toCompact` 는 예외를 내지 않고 `CompactOutcome` 을 돌리며, 값이 섞인 배열은 압축하지 않고 그대로 두고, 순환/`BigInt`/깊이 64 초과 는 `representation_not_lossless` 로 보고한다. 엔진은 그 경우 압축을 적용하지 않고 원형 JSON 과 `stdout.raw` 를 모두 남긴다.
+- **compact 가 첫 항목만 보고 형식을 정하던 결함**. `[{a:1},"str"]` 에서 두 번째 행이 `[null]` 이 되어 조용히 사라졌다. 이제 모든 행의 유형을 확인하고, 섞여 있으면 그 배열을 압축하지 않는다.
+- **`find`/`du` 가 파일명 끝의 공백을 지우던 결함**. 줄 구분자로 나눈 뒤 경로에 `trim()` 을 적용해 `report ` 가 `report` 로, `dir /inner  ` 가 `dir /inner` 로 바뀌었다 — 다른 경로로 오인될 수 있는 손실이었다. `find -print0` 경로는 원래 정확했으나 줄바꿈 경로가 아니었다. 이제 두 경로가 같은 값을 낸다.
+- **`kubectl get pods` 의 RESTARTS 열 밀림**. 재시작 횟수가 0이 아니면 kubectl 이 `2 (5d ago)` 처럼 괄호 표기를 RESTARTS 뒤에 붙이는데, 이를 한 열로 세어 `age: "(5d"`, `ip: "ago)"`, `node: "8d"` 로 읽었다. 닫는 괄호까지를 RESTARTS 값으로 묶고 그 다음 칸을 AGE 로 읽으며, 괄호 표기를 `last_restart` 로도 보존한다.
+- **`git status --porcelain` 에 `-z` 없이 주면 모든 항목이 하나로 뭉치던 결함**. NUL 레코드 전용 파서가 줄 구분 출력을 통째로 한 레코드로 읽었다. 실측: 미추적 파일 4개 + 수정한 파일 1개 + 이름 변경 1건(6건)이 **항목 하나로** 합쳐지고 `path` 에 개행과 ` -> ` 표기가 그대로 남았다. `-z` 여부를 판별해 레코드 경계(NUL vs 개행)·경로 해석(가공 없음 vs C 이스케이프 해제)·이름 변경 표기(다음 레코드 vs ` -> `)를 나눠 처리한다. 두 형식의 항목 수와 경로 집합이 같은지 실제 저장소로 대조했다.
+
+### Verified
+- **tarball 소비 smoke test** — `npm pack` 한 tarball 을 클린 디렉터리에 설치하고 **설치본만** import 해서 12개 항목 31개 검사를 돌렸다. 통과: bin 버전, 환경변수·설정 파일의 `allowed_paths` 반영, 리댁션 켬/끔 양쪽 계약, porcelain 두 형식의 경로 집합 일치, `-z` 근거 바이트 구간이 원문을 정확히 가리킴, 근거 구간이 원문 범위 안, 수집 절단 시 `review` 가 근거 범위를 알림, 잘못된 포인터 거절, 예산 상한 준수, 미지원 토크나이저 실행 전 거절, 120행을 이어 읽기로 누락·중복 없이 복원, 위조 cursor 거절, 동일 fixture diff 0, 스테이징 전환이 그 행만 변경, 보관 안 된 결과 거절(재실행 없음), 외부 팩 격리가 메인 스레드를 장악하지 않음(13ms), `contract_version` 생략 시 새 필드 없음, 기존 봉투 필드 유지, 허용 밖 cwd·명령 거절.
+- 발견(패키지 결함이 아니라 사용 방식): `createEngine({ configPath })` 는 다층 설정 대신 `loadConfig` 단일 층을 쓴다. 그래서 `PARISM_ALLOWED_PATHS` 같은 **환경변수 레이어가 반영되지 않는다** — 허용 경로를 설정 파일에 직접 적어야 한다. 기본 `allowed_paths` 는 프로세스 cwd 이므로 임시 디렉터리에서 시험하려면 명시적으로 지정해야 한다.
+- 발견(사용자 놀람 여부): `package.json` 의 `exports` 맵에 `./package.json` 과 `require` 조건이 없다. ESM 전용 패키지이므로 `require` 해석이 막히는 것은 의도된 것으로 보고 **보고만 한다**(패키징 결함으로 단정하지 않음). 다만 소비자가 버전 확인을 위해 `require.resolve('@nerdvana/parism/package.json')` 을 쓰는 패턴은 막힌다.
+- 회귀 시험 10건 추가(`tests/parsers/git-status-porcelain.test.ts`), 전체 시험 **59 파일 / 1,392 통과 / 9 생략**, `tsc --noEmit`·`eslint`(경고 0)·`npm run build` 통과.
+
 ## [2.0.2] - 2026-10-03
 
 ### Added

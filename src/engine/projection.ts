@@ -43,6 +43,15 @@ export const PROJECTION_SHAPE = {
 
 export const PROJECTION_SCHEMA = z.object(PROJECTION_SHAPE).strict();
 
+/** run 도구와 RunOptions 가 함께 쓰는 토큰 예산 인자 모양 */
+export const BUDGET_SHAPE = z.object({
+  max_tokens:      z.number().int().min(1),
+  tokenizer:       z.enum(["parism/approx", "byte"]).optional(),
+  required_fields: z.array(FIELD_NAME).min(1).max(64).optional(),
+  overflow:        z.enum(["page", "error"]).optional(),
+}).strict();
+
+
 export type WhereCondition    = z.infer<typeof WHERE_CONDITION_SCHEMA>;
 export type SortSpec          = z.infer<typeof SORT_SCHEMA>;
 export type ProjectionOptions = z.infer<typeof PROJECTION_SCHEMA>;

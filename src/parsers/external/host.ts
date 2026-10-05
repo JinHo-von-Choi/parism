@@ -15,6 +15,7 @@
 import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
 import { UnrecognizedOutputError, type IsolatedParser, type IsolatedParseResult,
          type ParseContext, type ParserContract } from "../registry.js";
+import { collectFlagValues } from "../format.js";
 
 /** 격리 실행 상한 */
 export interface IsolationLimits {
@@ -46,13 +47,22 @@ const SIGNAL_EXITED  = 2;
 const FN_MARKER = "__parism_fn__";
 
 type Request =
-  | { op: "parse"; args: string[]; raw: string; ctx?: ParseContext; strict: boolean }
-  | { op: "call";  path: (string | number)[]; args: unknown[] };
+  | { op: "parse";  args: string[]; raw: string; ctx?: ParseContext; strict: boolean; flagValues?: Record<string, string> }
+  | { op: "values"; args: string[]; flagValues: Record<string, string> }
+  | { op: "call";   path: (string | number)[]; args: unknown[] };
+
+/** 워커가 계약 정규식을 워커 안에서 평가해 돌려준 결과 */
+interface ContractFactsWire {
+  dataLines?: number;
+  rowLines?: number;
+  values?:  Record<string, boolean>;
+}
 
 interface Reply {
   id:               number;
   ok:               boolean;
   value?:           unknown;
+  facts?:           ContractFactsWire;
   schemaViolation?: string;
   error?:           { name: string; message: string };
 }
@@ -170,8 +180,36 @@ class IsolatedPackHost implements IsolatedParser {
   }
 
   parse(args: string[], raw: string, ctx: ParseContext | undefined, strictSchemas: boolean): IsolatedParseResult {
-    const reply = this.request({ op: "parse", args, raw, ...(ctx && { ctx }), strict: strictSchemas });
-    return { parsed: reply.value, ...(reply.schemaViolation !== undefined && { schemaViolation: reply.schemaViolation }) };
+    /**
+     * acceptedValues 판정에 쓸 '플래그 이름 -> 값' 은 정규식을 쓰지 않는 토크나이저로 메인 스레드에서 모은다.
+     * 판정 자체는 워커 안에서 한다(외부 팩 정규식을 메인 스레드에서 돌리면 시간 상한을 우회한다).
+     */
+    const flagValues = collectFlagValues(this.contract, args);
+    const reply = this.request({ op: "parse", args, raw, ...(ctx && { ctx }), strict: strictSchemas, flagValues });
+    const facts = reply.facts;
+    return {
+      parsed: reply.value,
+      ...(reply.schemaViolation !== undefined && { schemaViolation: reply.schemaViolation }),
+      ...(facts && {
+        facts: {
+          ...(facts.dataLines !== undefined && { dataLines: facts.dataLines }),
+          ...(facts.rowLines !== undefined && { rowLines: facts.rowLines }),
+        },
+      }),
+    };
+  }
+
+  /**
+   * 계약의 acceptedValues 판정을 워커 안에서 수행해 '플래그 이름 -> 판정' 을 돌려준다.
+   * 워커가 멈췄거나 기동 중이면 빈 판정(모두 거절)을 돌려 검증 없이 통과하는 일을 막는다.
+   */
+  evalValues(args: string[], flagValues: Record<string, string>): Record<string, boolean> {
+    try {
+      const reply = this.request({ op: "values", args, flagValues });
+      return (reply.value as Record<string, boolean> | undefined) ?? {};
+    } catch {
+      return {};
+    }
   }
 
   /**

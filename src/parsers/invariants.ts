@@ -51,18 +51,30 @@ function isNumericRecord(value: unknown): boolean {
 }
 
 /**
+ * 계약 정규식을 실행한 뒤 얻는 줄 수. 격리 팩의 정규식은 워커에서만 실행되므로,
+ * 그 결과는 워커가 돌려준 값을 그대로 쓴다(contract에 정규식 객체를 만들지 않는다).
+ */
+export interface ContractFacts {
+  dataLines?: number;
+  rowLines?: number;
+}
+
+/**
  * 머리 줄과 noise 패턴을 제외한 비공백 줄. nulRecords면 NUL로 끝나는 레코드를 줄로 본다.
  * blankRecords면 빈 줄도 데이터 줄이며 마지막 종결 문자 뒤의 빈 조각만 뺀다.
+ * 정규식 계약이 격리 팩에서 왔으면 noise는 서술자이므로 실행하지 않고 줄을 그대로 둔다.
  */
 function dataLines(raw: string, contract: OutputContract | undefined): string[] {
   const records = raw.split(contract?.nulRecords ? "\0" : /\r?\n/);
   if (contract?.blankRecords && records[records.length - 1] === "") records.pop();
   const lines = (contract?.blankRecords ? records : records.filter(l => l.trim())).slice(contract?.headerLines ?? 0);
-  return contract?.noise ? lines.filter(l => !contract.noise!.test(l)) : lines;
+  const noise = contract?.noise;
+  return noise instanceof RegExp ? lines.filter(l => !noise.test(l)) : lines;
 }
 
 /** 머리 줄과 noise 패턴을 제외하고 남는 비공백 줄 수 */
-export function countDataLines(raw: string, contract: OutputContract | undefined): number {
+export function countDataLines(raw: string, contract: OutputContract | undefined, facts?: ContractFacts): number {
+  if (facts?.dataLines !== undefined) return facts.dataLines;
   return dataLines(raw, contract).length;
 }
 
@@ -70,19 +82,21 @@ export function countDataLines(raw: string, contract: OutputContract | undefined
  * 데이터 줄 가운데 행이 되는 줄 수. rowLine이 없으면 모든 데이터 줄이 행이다.
  * 출력 전체가 JSON 배열 문서이면(gh --json) 줄 수가 아니라 원소 수가 행 수다.
  */
-export function countRowLines(raw: string, contract: OutputContract | undefined): number {
+export function countRowLines(raw: string, contract: OutputContract | undefined, facts?: ContractFacts): number {
+  if (facts?.rowLines !== undefined) return facts.rowLines;
   const json = tryParseNativeJson(raw);
   if (Array.isArray(json)) return json.length;
-  const lines = dataLines(raw, contract);
-  return contract?.rowLine ? lines.filter(l => contract.rowLine!.test(l)).length : lines.length;
+  const lines   = dataLines(raw, contract);
+  const rowLine = contract?.rowLine;
+  return rowLine instanceof RegExp ? lines.filter(l => rowLine.test(l)).length : lines.length;
 }
 
 /**
  * 데이터 줄이 있는데 결과가 아무 값도 담지 않은 경우(조용한 빈 결과)인지 판정한다.
  * 숫자만 있는 결과의 0은 인식한 값으로 본다.
  */
-export function isSilentEmpty(parsed: unknown, raw: string, contract: OutputContract | undefined): boolean {
-  return countDataLines(raw, contract) > 0 && isDefaultValue(parsed, true) && !isNumericRecord(parsed);
+export function isSilentEmpty(parsed: unknown, raw: string, contract: OutputContract | undefined, facts?: ContractFacts): boolean {
+  return countDataLines(raw, contract, facts) > 0 && isDefaultValue(parsed, true) && !isNumericRecord(parsed);
 }
 
 /** 값 안의 유한하지 않은 숫자 위치(최대 limit개) */
@@ -116,7 +130,7 @@ function totalBeforeTruncation(parsed: Record<string, unknown>): number | null {
  * - field_names:  rowFields 밖의 필드 이름을 가진 행이 있다.
  * 시간 복잡도는 원본 줄 수와 결과 크기에 선형이다.
  */
-export function checkInvariants(parsed: unknown, raw: string, contract: OutputContract | undefined): InvariantViolation[] {
+export function checkInvariants(parsed: unknown, raw: string, contract: OutputContract | undefined, facts?: ContractFacts): InvariantViolation[] {
   const violations: InvariantViolation[] = [];
 
   const bad = nonFinitePaths(parsed, "$", []);
@@ -124,13 +138,13 @@ export function checkInvariants(parsed: unknown, raw: string, contract: OutputCo
 
   const rows = contract?.rowsKey && isRecord(parsed) ? parsed[contract.rowsKey] : undefined;
   if (!Array.isArray(rows)) {
-    if (isSilentEmpty(parsed, raw, contract)) {
-      violations.push({ rule: "silent_empty", message: `nothing recognized in ${countDataLines(raw, contract)} data line(s)` });
+    if (isSilentEmpty(parsed, raw, contract, facts)) {
+      violations.push({ rule: "silent_empty", message: `nothing recognized in ${countDataLines(raw, contract, facts)} data line(s)` });
     }
     return violations;
   }
 
-  const expected = countRowLines(raw, contract);
+  const expected = countRowLines(raw, contract, facts);
   const actual   = totalBeforeTruncation(parsed as Record<string, unknown>) ?? rows.length;
   if (expected > 0 && rows.length === 0) {
     violations.push({ rule: "silent_empty", message: `'${contract!.rowsKey}' is empty but ${expected} row line(s) exist` });

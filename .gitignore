@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# npm pack 산출물
+*.tgz
+
 # Environment variables
 .env
 .env.local

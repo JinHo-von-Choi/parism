@@ -5,7 +5,7 @@ import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
 import { PACKAGE_VERSION }     from "./version.js";
-import { PROJECTION_SHAPE }    from "./engine/projection.js";
+import { PROJECTION_SHAPE, BUDGET_SHAPE } from "./engine/projection.js";
 
 export { PACKAGE_VERSION };
 
@@ -121,12 +121,78 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
                    .describe("Maximum rows to return. 0 returns only _summary."),
       array:       PROJECTION_SHAPE.array
                    .describe("Key of the array to project when the result has several. Default: the parser's row array."),
+      contract_version: z.enum(["stable", "next"]).default("stable")
+                   .describe("Response contract version. 'next' adds a review object (completeness, content hash, warnings). Default 'stable' returns exactly the previous fields."),
+      evidence:   z.enum(["none", "rows", "fields"]).default("none")
+                   .describe("How much field evidence to compute. 'none'=none, 'rows'=per-row pointers. Field evidence is only available for parsers that record it; others say so rather than guess."),
+      retain:     z.boolean().default(false)
+                   .describe("Keep the result in this session so explain_result can revisit it. Held in memory with a TTL; not written to disk, and never re-executed automatically."),
+      budget:     BUDGET_SHAPE.optional()
+                   .describe("Token budget for the response. Shrinks what is returned to fit; does NOT reduce command time or capture. Returns a budget report and an omission list saying which stage dropped what."),
     },
-    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array }) => {
-      const result = await engine.run(cmd, { args, cwd, format, includeDiff, select, where, sort_by, limit, array });
+    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget }) => {
+      const result = await engine.run(cmd, { args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, ...(budget && { budget }) });
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
+    },
+  );
+
+  server.tool(
+    "compare_results",
+    "Compare two ALREADY-STORED results and show what actually changed. " +
+    "Never runs a command, never connects anywhere, never polls. " +
+    "Only git file status and Kubernetes resources with metadata.uid are compared; " +
+    "ps is withheld because PID alone is not identity. " +
+    "Refuses when the two results are of different subjects, and refuses a missing row in an " +
+    "incomplete result instead of calling it a deletion. " +
+    "Returns comparable plus refusal_reasons when it declines to compare.",
+    {
+      base_id:       z.string().describe("Earlier result_id from run(retain=true)"),
+      current_id:    z.string().describe("Later result_id from run(retain=true)"),
+      keys:          z.array(z.string()).optional().describe("Fields that identify a row. Default follows the domain rules (git: path; kubernetes: uid)."),
+      ignore_fields: z.array(z.string()).optional().describe("Fields to leave out of the change list. Reported back so nothing disappears quietly."),
+      strict:        z.boolean().default(false).describe("Refuse when only a weak guarantee (like tool version equality) is missing."),
+    },
+    async ({ base_id, current_id, keys, ignore_fields, strict }) => {
+      const result = engine.compare(base_id, current_id, {
+        ...(keys && { keys }), ...(ignore_fields && { ignore_fields }), strict,
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "fetch_result",
+    "Return the next page of a retained result WITHOUT re-running the command. " +
+    "Use the continuation.cursor from a run() that had a budget. " +
+    "The cursor binds the snapshot, projection and policy, so it cannot be used on a different result. " +
+    "An expired or evicted result returns result_expired and is never re-executed automatically.",
+    {
+      result_id: z.string().describe("Result id from run()"),
+      cursor:    z.string().describe("continuation.cursor from the previous page"),
+      budget:    BUDGET_SHAPE.optional().describe("Optional budget for this page."),
+    },
+    async ({ result_id, cursor, budget }) => {
+      const result = engine.fetchResult(result_id, cursor, budget);
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "explain_result",
+    "Show where a value in a retained result came from. " +
+    "Give result_id from run(retain=true) and a JSON Pointer such as '/processes/0/pid'. " +
+    "Returns the value plus the byte span in the masked canonical output, and says 'none' with a reason when no evidence exists. " +
+    "Evidence is a link to what the command printed at that moment, NOT proof the value is true. " +
+    "Never re-executes the command: an unknown or expired id returns an error saying so.",
+    {
+      result_id: z.string().describe("Result id from run(review.result_id)"),
+      pointer:   z.string().default("").describe("JSON Pointer into the result, e.g. '/processes/0/pid'. Empty string returns the whole result."),
+    },
+    async ({ result_id, pointer }) => {
+      const result = engine.explainResult(result_id, pointer);
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     },
   );
 

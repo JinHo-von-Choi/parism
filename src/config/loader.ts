@@ -117,9 +117,12 @@ export const DEFAULT_CONFIG: PrismConfig = {
         ],
       },
     },
+    /**
+     * output_patterns는 기본값을 두지 않는다. 키가 없으면 '생략'이라 보고 엔진이 기본 패턴을 쓴다.
+     * [] 를 기본값으로 두면 생략과 의도적 비활화를 구별할 수 없어, 리댁션을 켰는데 아무것도 가려지지 않았다.
+     */
     secrets: {
       env_patterns:             DEFAULT_ENV_SECRET_PATTERNS,
-      output_patterns:          [],
       output_redaction_enabled: false,
     },
   },
@@ -135,7 +138,15 @@ function mergeGuardConfig(userGuard: PartialPrismGuardConfig): PrismGuardConfig 
     ...DEFAULT_CONFIG.guard.command_arg_restrictions,
     ...(userGuard.command_arg_restrictions ?? {}),
   };
-  const merged = { ...DEFAULT_CONFIG.guard, ...userGuard };
+  /**
+   * secrets도 하위 키로 병합한다. 그래야 output_redaction_enabled 하나만 켜도 env_patterns 기본값이 남는다.
+   * 사용자가 명시한 값(빈 배열 포함)은 그대로 이긴다.
+   */
+  const mergedSecrets = {
+    ...DEFAULT_CONFIG.guard.secrets,
+    ...(userGuard.secrets ?? {}),
+  };
+  const merged = { ...DEFAULT_CONFIG.guard, ...userGuard, secrets: mergedSecrets };
 
   return {
     ...merged,
