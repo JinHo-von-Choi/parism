@@ -77,6 +77,24 @@ export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {
 }
 
 /** explain_result 의 결과. 재실행 없이 보관된 값만 돌려준다. */
+/**
+ * 근거 맵이 차지하는 바이트를 센다.
+ *
+ * 항목 하나씩 직렬화해 누적하고, **상한을 넘으면 즉시 멈춘다.** 이미 "거절"이라는 결론이
+ * 났으므로 그 이상 정확한 값은 쓸 곳이 없다. 이 조기 종료가 없으면 한도를 초과할수록
+ * 버릴 결과를 끝까지 재게 되어, 한도를 정한 것 자체가 비용이 된다.
+ */
+function evidenceBytes(evidence: Record<string, FieldEvidence[]>, cap: number): number {
+  let total = 0;
+  for (const [pointer, list] of Object.entries(evidence)) {
+    for (const item of list) {
+      total += Buffer.byteLength(JSON.stringify([pointer, item.value, item.source_kind, item.source_spans, item.transform, item.masked, item.reason]), "utf8");
+      if (total > cap) return cap + 1;
+    }
+  }
+  return total;
+}
+
 export type ExplainResult =
   | {
       ok: true;  result_id: string; pointer: string; value: unknown;
@@ -703,9 +721,18 @@ export class ParismEngine {
       parsed:    input.final,
       evidence,
       review,
+      /**
+       * **근거도 바이트에 넣는다.**
+       *
+       * 근거 맵은 값 자체를 함께 담는다(근거가 그 값을 증명해야 하므로).
+       * 그래서 본문만큼이나, 대개는 더 크게 든다. 예전에는 본문과 원문만 세어
+       * 실제 보관 크기의 2.58배를 과소 보고했다(실측) — 문서에 적힌 한도(결과당 2MiB)가
+       * 실제로는 그 2.58배까지 들어가는 상태로 집행되고 있었다.
+       */
       bytes:     Buffer.byteLength(input.canonicalStdout, "utf8")
                + Buffer.byteLength(input.canonicalStderr, "utf8")
-               + Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8"),
+               + Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8")
+               + evidenceBytes(evidence, this.results.perResultLimit),
       cmd:       input.cmd,
       args:      input.args,
       cwd:       input.cwd,

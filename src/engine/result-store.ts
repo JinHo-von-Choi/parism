@@ -77,6 +77,12 @@ export class ResultStore {
   get bytes(): number { return this.totalBytes; }
 
   /**
+   * 결과 하나가 넘을 수 있는 바이트 상한.
+   * 결과를 보관하기 **전에** 크기를 재는 쪽이 이 값을 사용해 계산을 멈춘다.
+   */
+  get perResultLimit(): number { return this.limits.maxBytesPerResult; }
+
+  /**
    * 결과를 보관한다. 한도를 넘는 결과는 보관하지 않고 retained=false 사유를 돌려준다.
    * 가장 오래 쓰이지 않은 것부터 비운 뒤에도 안 들어가면 그 결과만 포기한다.
    */

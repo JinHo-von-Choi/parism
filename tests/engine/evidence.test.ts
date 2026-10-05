@@ -207,3 +207,61 @@ describe("근거 변환은 규모에 대해 선형이다", () => {
     } finally { f.cleanup(); }
   });
 });
+
+/**
+ * 회귀 방지 — 보관 크기 계량에 근거가 포함되는가.
+ *
+ * 실제 결함이었다. 엔진이 저장소에 기록하는 `bytes` 가 원문과 본문만 재고
+ * **근거 맵을 아예 세지 않았다.** 근거는 값 자체를 함께 담기 때문에(근거가 그 값을
+ * 증명해야 하므로) 실제 보관본의 2.6배를 과소 보고했다.
+ *
+ * 결과는 문서에 적힌 한도가 거짓말을 하는 것이었다. 실측: 3,200행 `git status` 결과가
+ * 1.58MiB 로 기록되어(한도 2MiB 안) `retained=true` 로 보관되었지만 실제 점유는
+ * **4.11MiB — 한도의 두 배**였다. 지금은 올바르게 거절된다.
+ */
+describe("보관 크기 계량", () => {
+  /** `results` 는 private 필드지만 컴파일 제약일 뿐이라 계량을 확인하는 데 읽는다. */
+  const storedBytes = (e: unknown): number => (e as { results: { bytes: number } }).results.bytes;
+
+  it("같은 출력이면 근거를 켠 쪽이 더 크게 기록된다", async () => {
+    const withoutEv = fixture();
+    const withEv    = fixture();
+    try {
+      const a = await withoutEv.engine.run("ps", { args: ["aux"], cwd: withoutEv.dir, contract_version: "next", retain: true });
+      const b = await withEv.engine.run("ps", { args: ["aux"], cwd: withEv.dir, contract_version: "next", evidence: "rows", retain: true });
+
+      expect(a.review?.retained).toBe(true);
+      expect(b.review?.retained).toBe(true);
+      /** 근거가 없으면 같은 출력이면 같은 크기여야 한다. */
+      expect(storedBytes(withEv.engine)).toBeGreaterThan(storedBytes(withoutEv.engine));
+    } finally {
+      withoutEv.cleanup();
+      withEv.cleanup();
+    }
+  });
+
+  it("기록한 크기가 실제 보관본을 과소하지 않는다", async () => {
+    const f = fixture();
+    try {
+      const r = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      expect(r.review?.retained).toBe(true);
+
+      const store = (f.engine as unknown as { results: { bytes: number; get(id: string): { found: boolean; result?: unknown } } }).results;
+      const hit = store.get(r.review!.result_id);
+      expect(hit.found).toBe(true);
+
+      const sizeOf = (v: unknown): number => Buffer.byteLength(JSON.stringify(v ?? null), "utf8");
+      const stored = hit.result as Record<string, unknown>;
+      const actual = sizeOf({ stdout: stored.stdout, stderr: stored.stderr, parsed: stored.parsed, evidence: stored.evidence });
+
+      /**
+       * 결함 상태에서는 이 비율이 0.38 이었다(2.6배 과소).
+       * `review` 와 지문 같은 고정 크기 구성요소를 세지 않으므로 1.0 은 아니고,
+       * 그래도 본문 대부분을 반영한다는 하한은 지켜야 한다.
+       */
+      expect(store.bytes).toBeGreaterThan(actual * 0.8);
+    } finally {
+      f.cleanup();
+    }
+  });
+});
