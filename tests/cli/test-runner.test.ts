@@ -90,4 +90,47 @@ describe("runFixtureTests()", () => {
     expect(results.details[0].status).toBe("fail");
     expect(results.details[0].schema_errors?.actual).toBeDefined();
   });
+
+  /**
+   * 회귀 방지 — 비교가 **구조적**인가.
+   *
+   * 계획서 4.5장: "JSON.stringify 의 키 순서 의존 비교를 구조적 비교로 바꾼다."
+   * 예전 비교(`JSON.stringify(actual) === JSON.stringify(expected)`)는 파서가 객체 키
+   * 순서만 바꿔도 실패로 fell 했다. 키 순서는 계약이 아니다.
+   * 배열 순서는 값이므로 여전히 변화로 본다 — 그 구분이 이 수정의 전부다.
+   */
+  it("객체 키 순서만 달라도 통과한다 (구조적 비교)", () => {
+    const pack = {
+      name:  "order",
+      parse: () => ({ b: 2, a: 1 }),
+      schema: z.object({ a: z.number(), b: z.number() }),
+      fixtures: [{ input: "x", args: [] as string[], expected: { a: 1, b: 2 } }],
+    };
+    const r = runFixtureTests(pack);
+    expect(r.failed).toBe(0);
+    expect(r.details[0].status).toBe("pass");
+  });
+
+  it("배열 순서가 다르면 실패한다 (순서는 값이다)", () => {
+    const pack = {
+      name:  "seq",
+      parse: () => ({ xs: [1, 2] }),
+      schema: z.object({ xs: z.array(z.number()) }),
+      fixtures: [{ input: "x", args: [] as string[], expected: { xs: [2, 1] } }],
+    };
+    expect(runFixtureTests(pack).failed).toBe(1);
+  });
+
+  it("실패하면 어디가 달라졌는지 경로를 남긴다", () => {
+    const pack = {
+      name:  "where",
+      parse: () => ({ rows: [{ name: "a", size: 1 }] }),
+      schema: z.object({ rows: z.array(z.object({ name: z.string(), size: z.number() })) }),
+      fixtures: [{ input: "x", args: [] as string[], expected: { rows: [{ name: "a", size: 2 }] } }],
+    };
+    const d = runFixtureTests(pack).details[0];
+    expect(d.status).toBe("fail");
+    expect(d.changes?.length).toBeGreaterThan(0);
+    expect(d.changes?.some(c => c.path === "/rows/0/size")).toBe(true);
+  });
 });

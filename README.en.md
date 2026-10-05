@@ -700,7 +700,7 @@ parism test ~/.parism/fixtures
 | `parism init-parser <name>` | Scaffold a TypeScript parser pack (parser.ts + schema.json + fixtures/) |
 | `parism test [dir]` | Replay a fixture set offline and report **which paths changed** (exit 1 on a broken fixture) |
 | `parism add <path>` | Register a local parser pack permanently to ~/.parism/parsers/ |
-| `parism inspect "<command>"` | Compare raw / parsed / compact output + token counts |
+| `parism inspect <command> [args...]` | Compare raw / parsed / compact output + token counts |
 
 ### ParserPack Interface
 

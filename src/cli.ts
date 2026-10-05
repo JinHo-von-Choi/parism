@@ -7,6 +7,31 @@ import { parismHome }     from "./cli/paths.js";
 /**
  * CLI 프로그램을 생성한다. 명령어 핸들러는 각 모듈에서 등록.
  */
+/**
+ * 명령 문자열을 argv 로 바꾼다.
+ *
+ * ## 두 모드가 있고, 차이가 있다
+ *
+ *   `parism inspect ls -l /path`      → argv 를 **그대로** 쓴다. 공백·따옴표를 따로따로 지킨다.
+ *   `parism inspect "ls -l /path"`    → 공백으로 **나눈다.** 따옴표를 지킨다는 보장이 없다.
+ *
+ * 두 번째 모드에서 `parism inspect 'echo "hello   world"'` 를 주면 따옴표가
+ * **문자 그대로** 자식 프로세스에 전달된다(실측: 출력이 `"hello world"` 로 quotes 를 달고 나온다).
+ * 사용자 의도는 `hello   world` 한 개의 인자였지만 되지 않는다.
+ *
+ * 그래서 **인자를 여러 개로 주면 argv 모드로 판단하고 안내를 낸다.**
+ * 조용히 잘못된 인자를 실행하는 것보다 "지금 이렇게 호출했다"고 말하는 편이 낫다.
+ */
+function splitCommand(parts: string[]): { args: string[]; stringMode: boolean } {
+  return { args: parts, stringMode: false };
+}
+
+/** 한 토큰 안에 공백이 있으면 문자열 모드이고, 그 한계를 먼저 말한다. */
+function splitSingleCommand(token: string): { args: string[]; stringMode: boolean } {
+  if (!/\s/.test(token)) return { args: [token], stringMode: false };
+  return { args: token.split(/\s+/), stringMode: true };
+}
+
 export function createCli(): Command {
   const program = new Command();
 
@@ -58,15 +83,44 @@ export function createCli(): Command {
         console.log("Capture one first: parism capture \"git status --porcelain\"");
         process.exit(1);
       }
-      const { replayDirectory, formatReport } = await import("./fixtures/run.js");
-      const limit  = Number(options.limit ?? "20");
+      const limit = Number(options.limit ?? "20");
+      const cap   = Number.isFinite(limit) && limit > 0 ? limit : 20;
+
+      /**
+       * 두 가지를 **한 명령**에서 되짚는다 — 계획서 4.5장
+       * "runFixtureTests helper 를 CLI test 과 연결" 의 요구다.
+       * manifest fixture(사람이 캡처해 기대값을 적은 것)와 팩 fixture(팩 안의 fixtures)를
+       * 따로 돌리면 어느 한쪽의 회귀가 안 보인다. 회귀 고리가 하나여야 한다.
+       */
+      const { replayDirectory, formatReport, replayRegisteredPacks } = await import("./fixtures/run.js");
+      const { loadParserPack } = await import("./cli/loader.js");
+      const paths = await import("./cli/paths.js");
+
+      const packs = await replayRegisteredPacks(loadParserPack, paths.parismHome());
+      if (packs.results.length > 0) {
+        console.log("등록된 파서 팩의 fixture:");
+        for (const r of packs.results) {
+          const head = `  ${r.name.padEnd(16)} `;
+          if (r.status === "replayed") {
+            const mark = r.failed > 0 ? "✗" : "✓";
+            console.log(`${head}${mark} ${r.passed}/${r.total} 통과${r.errored > 0 ? ` (오류 ${r.errored})` : ""}`);
+          } else {
+            console.log(`${head}— ${r.reason}`);
+          }
+        }
+        if (packs.failed > 0) {
+          console.log(`\n  실패한 팩 fixture ${packs.failed}건 — 위 줄에서 어느 팩인지 볼 수 있다.`);
+        }
+        console.log("");
+      }
+
       const report = replayDirectory(dir, {});
-      console.log(formatReport(report, Number.isFinite(limit) && limit > 0 ? limit : 20));
+      console.log(formatReport(report, cap));
       /**
        * 판정: 깨진 fixture 와 계약 변화가 있으면 실패다.
        * 미검토 기대값은 실패로 세지 않는다 — 그것은 '틀렸다'가 아니라 '아직 보지 않았다' 다.
        */
-      if (report.invalid > 0 || report.contractChanges > 0) process.exit(1);
+      if (report.invalid > 0 || report.contractChanges > 0 || packs.failed > 0) process.exit(1);
     });
 
   program
@@ -79,18 +133,28 @@ export function createCli(): Command {
     });
 
   program
-    .command("inspect <command>")
+    .command("inspect <command...>")
     .description("Show raw / parsed / compact output comparison")
-    .action(async (command: string) => {
+    .action(async (commandParts: string[]) => {
       const { inspectOutput }  = await import("./cli/inspect.js");
       const { createRegistry } = await import("./parsers/index.js");
       const { execFile }       = await import("node:child_process");
       const { promisify }      = await import("node:util");
       const execFileAsync = promisify(execFile);
 
-      const parts    = command.split(/\s+/);
-      const cmd      = parts[0];
-      const args     = parts.slice(1);
+      /**
+       * 한 토큰이면 공백으로 나눈다(문자열 모드), 여러 개면 argv 그대로 쓴다.
+       * 어느 쪽인지 사용자에게 밝힌다 — 조용히 다른 인자를 실행하지 않는다.
+       */
+      const parts = commandParts.length === 1
+        ? splitSingleCommand(commandParts[0]!)
+        : splitCommand(commandParts);
+      const cmd  = parts.args[0]!;
+      const args = parts.args.slice(1);
+      if (parts.stringMode) {
+        console.error("[parism] 문자열 모드: 공백으로 나눴습니다. 따옴표로 묶은 인자는 보존되지 않습니다.");
+        console.error("[parism] 정확히 넘기려면 인자를 따로 주십시오: parism inspect <cmd> [args...]");
+      }
       const registry = createRegistry();
 
       let raw: string;

@@ -11,11 +11,13 @@
  * 같은 도구가 각각 되짚을 뿐, 판정 방식(변화 경로 목록)은 `replay.ts` 가 하나로 통일한다.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createRegistry } from "../parsers/index.js";
+import type { ParserPack } from "../parsers/registry.js";
 import { validateManifest, type FixtureManifest } from "./manifest.js";
 import { formatChanges, replayManifest, type ReplayOptions, type ReplayResult } from "./replay.js";
+import { runFixtureTests } from "../cli/test-runner.js";
 
 export interface LoadedFixture {
   file: string;
@@ -123,4 +125,82 @@ export function formatReport(report: ReplayReport, limit = 20): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * 등록된 **파서 팩** 안의 fixture 를 되짚는다 — `parism test` 가 이 경로도 함께 돌린다.
+ *
+ * ## 왜 둘인가
+ *
+ * manifest fixture 는 사람이 캡처해 기대값을 적은 것이고, 팩 fixture 는 팩 안의 `fixtures` 배열이다.
+ * 계획서 4.5장: "`runFixtureTests` helper 를 CLI test 과 연결" — 둘을 **한 명령**에서 돌려야
+ * 회귀 고리가 하나다. 어느 한쪽만 돌면 한쪽의 회귀는 눈에 보이지 않는다.
+ *
+ * ## 격리를 건드리지 않는다
+ *
+ * 워커 격리(`loadIsolatedPack`)로 등록된 팩은 팩 객체 자체를 메인 스레드로 가져올 수 없다 —
+ * `schema`(Zod 객체)와 `fixtures`(함수 포함)는 구조 복제 대상이 아니다.
+ * 그래도 **격리를 풀어 되짚으면 안 된다.** 대신 **"이 경로로 되짚을 수 없다" 고 밝히고 건너뛴다.**
+ * 조용히 통과시키면 회귀 0건이라는 거짓말이 된다.
+ */
+export interface PackReplayResult {
+  name:     string;
+  status:   "replayed" | "not_replayable" | "no_fixtures";
+  total:    number;
+  passed:   number;
+  failed:   number;
+  errored:  number;
+  reason?:  string;
+}
+
+export interface PackReplayReport {
+  results: PackReplayResult[];
+  failed:  number;
+  /** 되짚지 못한 팩이 있는지 — 있으면 실패로 세야 한다. 조용히 넘어가면 안 된다. */
+  skipped: number;
+}
+
+/** 등록된 팩 이름과 경로. 레지스트리가 없거나 깨졌으면 그 사실 자체를 드러낸다. */
+function readRegistry(home: string): Record<string, { path: string; isolation?: string }> {
+  const path = join(home, "registry.json");
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    return parsed !== null && typeof parsed === "object" ? parsed as Record<string, { path: string }> : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function replayRegisteredPacks(
+  loadPack: (path: string) => Promise<ParserPack>,
+  home: string,
+): Promise<PackReplayReport> {
+  const entries = readRegistry(home);
+  const results: PackReplayResult[] = [];
+
+  for (const [name, entry] of Object.entries(entries)) {
+    const isolation = (entry as { isolation?: string }).isolation;
+    if (isolation === "worker") {
+      /** 격리를 풀면 안 된다 — 대신 왜 못 돌렸는지 말한다. */
+      results.push({ name, status: "not_replayable", total: 0, passed: 0, failed: 0, errored: 0, reason: "워커 격리로 등록되어 이 경로에서 팩 객체를 가져올 수 없다 (격리를 풀지 않는다)" });
+      continue;
+    }
+    try {
+      const pack = await loadPack(entry.path);
+      if (!Array.isArray(pack.fixtures) || pack.fixtures.length === 0) {
+        results.push({ name, status: "no_fixtures", total: 0, passed: 0, failed: 0, errored: 0, reason: "팩 안에 fixture 가 없다" });
+        continue;
+      }
+      const r = runFixtureTests(pack);
+      results.push({ name, status: "replayed", total: r.total, passed: r.passed, failed: r.failed, errored: r.errored });
+    } catch (err) {
+      results.push({ name, status: "not_replayable", total: 0, passed: 0, failed: 0, errored: 0, reason: `팩을 읽지 못했다: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
+  return {
+    results,
+    failed:  results.reduce((n, r) => n + r.failed, 0),
+    skipped: results.filter(r => r.status !== "replayed").length,
+  };
 }

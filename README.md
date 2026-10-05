@@ -708,6 +708,18 @@ MCP 서버와 라이브러리 모드(`createEngine()`) 모두 동일한 3레이�
 
 ### 5분 안에 파서 만들기
 
+**스캐폴드는 그 자체로 컴파일되지 않는다.** 두 가지가 먼저 필요하다.
+
+```bash
+# zod 3 이 맞다 (parism 의 ParserPack.schema 가 zod 3 타입이다. 버전 없이 npm install zod 하면 4 가 깔린다)
+# 프로젝트가 ESM 이어야 한다 (parism 은 ESM 전용)
+npm install @nerdvana/parism zod@^3
+# package.json 에 { "type": "module" }
+```
+
+둘 다 적어 두지 않으면 사용자가 첫 컴파일 오류를 만난다 — 실제로 그랬다.
+`parism init-parser` 가 만든 `README.md` 에도 같은 조건이 들어 있다.
+
 ```bash
 # 1. 명령어 출력을 캡처한다
 parism capture "htop -b -n 1"
@@ -730,6 +742,17 @@ parism inspect "htop -b -n 1"
 ```
 
 등록된 파서는 `~/.parism/parsers/`에 저장되고, MCP 서버 시작 시 자동으로 로드된다.
+
+### 인자를 넘기는 두 가지 방법 — 차이가 있다
+
+| 호출 | 처리 | 따옴표·공백 |
+|---|---|---|
+| `parism inspect ls -l /path` | **argv 모드** — 준 그대로 넘긴다 | 보존된다 |
+| `parism inspect "ls -l /path"` | **문자열 모드** — 공백으로 나눈다 | **보존되지 않는다** |
+
+문자열 모드에서 `parism inspect 'echo "hello   world"'` 를 주면 따옴표가 **문자 그대로**
+자식에게 전달된다(출력이 `"hello world"` 로 따옴표를 달고 나온다). 그래서 문자열 모드는
+호출할 때 경고로 먼저 말한다. 정확히 넘기려면 인자를 따로 준다.
 
 ### fixture 로 회귀를 재현하는 닫힌 고리
 
@@ -776,7 +799,7 @@ parism test ~/.parism/fixtures
 | `parism init-parser <name>` | TypeScript 파서 팩 스캐폴드 생성 (parser.ts + schema.json + fixtures/) |
 | `parism test [dir]` | fixture 집합을 오프라인으로 되짚고 **변화된 경로**를 보고 (깨진 fixture 가 있으면 exit 1) |
 | `parism add <path>` | 로컬 파서 팩을 ~/.parism/parsers/에 영구 등록 |
-| `parism inspect "<command>"` | raw / parsed / compact 출력 비교 + 토큰 수 |
+| `parism inspect <command> [args...]` | raw / parsed / compact 출력 비교 + 토큰 수 |
 
 ### ParserPack 인터페이스
 
