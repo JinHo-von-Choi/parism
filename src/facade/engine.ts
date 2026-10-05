@@ -78,6 +78,29 @@ export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {
 
 /** explain_result 의 결과. 재실행 없이 보관된 값만 돌려준다. */
 /**
+ * 보관본이 차지하는 바이트를 센다.
+ *
+ * **이미 한도를 넘었으면 계산을 멈춘다.** 원문만으로 한도를 넘긴 결과는
+ * 그 뒤를 재어도 '버려질 결과' 라는 사실이 바뀌지 않는다. 그런데 1MB 출력을
+ * 파싱한 본문 전체를 직렬화해 재는 비용은 크고, 그 결과는 아무것도 바꾸지 못한다.
+ *
+ * 순서도 의미가 있다 — 싼 것(문자열 길이)부터 재고, 비싼 것(직렬화)을 마지막에 본다.
+ */
+function storedBytesOf(
+  input: { canonicalStdout: string; canonicalStderr: string; final: unknown },
+  evidence: Record<string, FieldEvidence[]>,
+  cap: number,
+): number {
+  let total = Buffer.byteLength(input.canonicalStdout, "utf8") + Buffer.byteLength(input.canonicalStderr, "utf8");
+  if (total > cap) return cap + 1;
+
+  total += Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8");
+  if (total > cap) return cap + 1;
+
+  return total + evidenceBytes(evidence, cap - total);
+}
+
+/**
  * 근거 맵이 차지하는 바이트를 센다.
  *
  * 항목 하나씩 직렬화해 누적하고, **상한을 넘으면 즉시 멈춘다.** 이미 "거절"이라는 결론이
@@ -729,10 +752,7 @@ export class ParismEngine {
        * 실제 보관 크기의 2.58배를 과소 보고했다(실측) — 문서에 적힌 한도(결과당 2MiB)가
        * 실제로는 그 2.58배까지 들어가는 상태로 집행되고 있었다.
        */
-      bytes:     Buffer.byteLength(input.canonicalStdout, "utf8")
-               + Buffer.byteLength(input.canonicalStderr, "utf8")
-               + Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8")
-               + evidenceBytes(evidence, this.results.perResultLimit),
+      bytes:     storedBytesOf(input, evidence, this.results.perResultLimit),
       cmd:       input.cmd,
       args:      input.args,
       cwd:       input.cwd,
