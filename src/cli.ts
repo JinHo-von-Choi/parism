@@ -177,26 +177,59 @@ export function createCli(): Command {
 
   program
     .command("eval [scenario]")
-    .description("Run benchmark suite: parse-error, retry-rate, completion (default: all)")
-    .option("-v, --verbose", "Show detailed output for each test case")
+    .description("Run the eval suite. Results are judged separately at three levels: execution, parse, task")
+    .option("-v, --verbose", "Show every case with its observation and any mismatch")
     .action(async (scenario: string | undefined, options: { verbose?: boolean }) => {
-      const { runEvalSuite } = await import("./cli/eval.js");
-      const results = await runEvalSuite(scenario, options.verbose);
-      
-      console.log("\n=== Eval Suite Results ===");
-      console.log(`Scenario          | Runs | Success | Fail | Rate`);
-      console.log(`-------------------|------|----------|------|------`);
-      
-      for (const [name, data] of Object.entries(results)) {
-        const r = data as { total: number; success: number; fail: number };
-        const rate = r.total > 0 ? ((r.success / r.total) * 100).toFixed(1) + "%" : "N/A";
-        console.log(`${name.padEnd(17)}| ${String(r.total).padStart(4)} | ${String(r.success).padStart(8)} | ${String(r.fail).padStart(4)} | ${rate}`);
+      const { runEvalSuite, SCENARIO_NAMES } = await import("./cli/eval.js");
+
+      if (scenario && !SCENARIO_NAMES.includes(scenario)) {
+        console.error(`[parism eval] 알 수 없는 시나리오 '${scenario}'. 있는 것: ${SCENARIO_NAMES.join(", ")}`);
+        process.exitCode = 1;
+        return;
       }
-      
-      const totalRuns = Object.values(results).reduce((sum: number, r: unknown) => sum + (r as { total: number }).total, 0);
-      const totalSuccess = Object.values(results).reduce((sum: number, r: unknown) => sum + (r as { success: number }).success, 0);
-      console.log(`-------------------|------|----------|------|------`);
-      console.log(`Overall           | ${String(totalRuns).padStart(4)} | ${String(totalSuccess).padStart(8)} | ${String(totalRuns - totalSuccess).padStart(4)} | ${totalRuns > 0 ? ((totalSuccess / totalRuns) * 100).toFixed(1) + "%" : "N/A"}`);
+
+      const report = await runEvalSuite(scenario ? [scenario] : undefined);
+
+      console.log("\n=== parism eval ===");
+      console.log("판정은 세 층으로 따로 본다. 섞지 않는다.\n");
+
+      for (const [name, s] of Object.entries(report.scenarios)) {
+        console.log(`── ${name} ` + "─".repeat(Math.max(0, 58 - name.length)));
+        console.log(`  층        기대있음  일치    관측`);
+        for (const [layer, stats] of Object.entries({ execution: s.execution, parse: s.parse, task: s.task })) {
+          const rate = stats.judged > 0 ? `${stats.matched}/${stats.judged}` : "판정 안 함";
+          const seen = Object.entries(stats.observed).map(([k, v]) => `${k} ${v}`).join(", ") || "—";
+          console.log(`  ${layer.padEnd(9)} ${String(stats.judged).padStart(7)}  ${rate.padStart(6)}    ${seen}`);
+        }
+
+        const bad = s.cases.filter(c => c.mismatches.length > 0);
+        if (bad.length > 0) {
+          console.log(`\n  기대와 어긋난 항목 ${bad.length}건:`);
+          for (const c of bad) {
+            console.log(`    ✗ ${c.id} (${c.cmd} ${c.args.join(" ")})`);
+            for (const m of c.mismatches) console.log(`        ${m}`);
+          }
+        }
+        if (options.verbose) {
+          console.log("\n  관측 전부:");
+          for (const c of s.cases) {
+            const mark = c.mismatches.length > 0 ? "✗" : "·";
+            console.log(`    ${mark} ${c.id.padEnd(18)} exec=${c.execution} parse=${c.parse ?? "—"} task=${c.task ?? "—"}${c.note ? `  (${c.note})` : ""}`);
+          }
+        }
+        console.log("");
+      }
+
+      /** 기대에 어긋난 항목이 하나라도 있으면 게이트는 실패다. */
+      const mismatched = Object.values(report.scenarios)
+        .flatMap(s => s.cases).filter(c => c.mismatches.length > 0).length;
+      if (mismatched > 0) {
+        console.log(`[parism eval] 기대와 어긋난 항목 ${mismatched}건 — 실패다.`);
+        process.exitCode = 1;
+      } else {
+        console.log("[parism eval] 기대한 대로의 항목은 어긋난 것이 없다.");
+      }
+      console.log("\n  관측은 관측이다. 기대를 세우지 않은 항목은 비율에 들어가지 않는다.");
     });
 
   return program;

@@ -4,14 +4,8 @@ import { createServer }         from "./server.js";
 import { loadConfigMultiLayer } from "./config/loader.js";
 import { createRegistry }       from "./parsers/index.js";
 import { createCli }            from "./cli.js";
+import { isCliMode }            from "./cli/routing.js";
 import { validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS } from "./engine/redactor.js";
-
-const CLI_COMMANDS = ["capture", "init-parser", "test", "add", "inspect", "help", "--help", "-h", "--version", "-V"];
-
-function isCliMode(): boolean {
-  const firstArg = process.argv[2];
-  return firstArg != null && CLI_COMMANDS.includes(firstArg);
-}
 
 async function startMcpServer(): Promise<void> {
   const config     = await loadConfigMultiLayer();

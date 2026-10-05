@@ -687,7 +687,38 @@ parism test ~/.parism/fixtures
 **What you need to know**
 
 - **Capture does not store raw output.** Secrets, home paths, and `--token=`-style argument values are redacted, and *what* was redacted is kept in `redactions`. Sensitive values keep their shape and lose only the value — deleting them outright would make the fixture look fabricated. Argv keeps the option name and the length, because argv also feeds the comparison key (`--token=<redacted:12>`).
-- **Without `reviewed_by` an expectation is a proposal, not a contract.** `parism test` does not count it as a contract violation. It also never *writes* expectations — auto-updating them is the cheapest way to hide a regression.
+- ### `parism eval` — three separate judgments
+
+`parism eval` actually runs commands on this host and checks whether they met expectations.
+It does not report a single success rate, because three things with different causes are
+being measured at once:
+
+| Level | What it looks at |
+|---|---|
+| `execution` | Did the command **actually run?** A guard refusal is not an execution failure |
+| `parse` | Was it read structurally · **no parser exists** · explicit parse failure |
+| `task` | Did it do its job. **Finding something absent succeeds by failing** |
+
+Two of these are deliberately *not* failures — counting them as such would report the policy
+working as a parism failure. A guard refusal shows up as `execution: blocked` on its own.
+
+- **No parser is not a failure.** It is the fact that parism does not know the format.
+- **An unsupported format fails explicitly.** It does not return an empty result quietly; it suggests a usable substitute.
+- **An item with no stated expectation is left out of the rates.** Unknown things are not reported as known.
+
+The `retry-rate` scenario measures one contract directly: **a retained result is never re-executed.**
+It retains a result from an empty temporary repository, then **creates a new file**. If the new
+file shows up in the retained result, the command was re-run.
+
+```bash
+parism eval                    # all scenarios
+parism eval execution-parse    # one scenario
+parism eval --verbose          # every observation
+```
+
+Exit code is 1 if any item with an expectation does not match.
+
+**Without `reviewed_by` an expectation is a proposal, not a contract.** `parism test` does not count it as a contract violation. It also never *writes* expectations — auto-updating them is the cheapest way to hide a regression.
 - **Replay does not re-execute the command.** It uses the stored stdout only. Re-running would mix in the environment at that moment and make "the parser changed" indistinguishable from "the machine changed".
 - **Evidence expectations check only the pointers you list.** Turn on `evidence.exhaustive: true` for a full sweep.
 - The manifest contract is SPECIFICATION 5.2.4.
