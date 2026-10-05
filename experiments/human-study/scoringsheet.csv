@@ -1,0 +1,9 @@
+run_id,task_id,participant,arm,attempt_no,correct,wrong_kind,attempts,verify_seconds,gave_up,reason
+# 빈 템플릿입니다. 이 헤더와 주석만 있는 파일을 복사해 쓰십시오.
+# 이 파일에 결과를 적어 넣기 전까지 어떤 결론도 없습니다.
+#
+# 사람이 채우는 열 : attempts, verify_seconds, gave_up, reason
+# 기계가 채우는 열 : correct, wrong_kind
+#
+# correct 는 1 또는 0, wrong_kind 는 TASKS.md 의 고정 목록 중 하나입니다.
+# wrong_kind 는 correct=1 이면 none 이어야 합니다.
