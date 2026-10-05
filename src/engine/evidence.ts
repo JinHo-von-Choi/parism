@@ -127,18 +127,6 @@ export function buildLineIndex(text: string): LineIndex {
   return { lineStarts, lines, byteLength: bytes };
 }
 
-/**
- * 줄 안의 문자열 오프셋을 전체 바이트 오프셋으로 바꾼다.
- * 줄이 없거나 범위가 벗어났으면 null 을 돌려 근거가 없다는 사실(근거 없음)을 드러낸다.
- */
-export function toByteSpan(index: LineIndex, line: number, start: number, end: number): { start: number; end: number } | null {
-  const row = index.lines[line - 1];
-  if (row === undefined) return null;
-  if (start < 0 || end < start || end > row.length) return null;
-  const base = index.lineStarts[line - 1]!;
-  return { start: base + byteLengthOf(row.slice(0, start)), end: base + byteLengthOf(row.slice(0, end)) };
-}
-
 /** 결과 식별자. 충돌을 피하려고 시간과 난수를 함께 쓴다. */
 export function newResultId(now: number = Date.now()): string {
   return `r_${now.toString(36)}_${Math.random().toString(36).slice(2, 10)}`;

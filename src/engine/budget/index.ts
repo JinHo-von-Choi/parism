@@ -251,7 +251,15 @@ export function applyBudget(input: ApplyBudgetInput): BudgetOutcome {
    * 이 검사를 빠뜨리면 '본문만 예산 안에 들었다'고 잘못 말하게 된다.
    */
   const total_ = total;
-  let   kept_  = kept;
+  /**
+   * **이분 탐색 결과를 반드시 여기서 쓴다.**
+   *
+   * `lo` 는 탐색이 찾은 답이다. 이걸 버리고 `kept`(전체 행)에서 한 행씩 덜면
+   * 아래 재검증 루프가 O(n) 번 돌고, 매번 payload 전체를 다시 재므로 O(n²) 이 된다.
+   * 실측: 2,000행에서 8초(행 수를 두 배로 하면 네 배가 된다 — 이차임을 확인했다).
+   * 이 줄을 `kept` 로 쓰면 재검증은 표면이 늘어난 만큼 몇 행만 더 덜면 끝난다.
+   */
+  let kept_ = kept.slice(0, lo);
   for (;;) {
     const hasMore  = kept_.length < total_;
     const progress: Record<string, unknown> = hasMore

@@ -9,15 +9,10 @@
  */
 
 import {
-  toByteSpan, hashContent, newResultId,
-  type Completeness, type FieldEvidence, type LineIndex, type RawEvidence, type Review, type SourceSpan,
+  hashContent, newResultId,
+  type Completeness, type LineIndex, type RawEvidence, type Review, type SourceSpan,
 } from "./evidence.js";
 import { mapRange, type MaskedRange } from "./mask-map.js";
-
-export type FieldEvidenceMap = Record<string, FieldEvidence[]>;
-
-/** 바이트 구간 표. SourceSpan 에 transform 이 함께 실린다. */
-export type ByteSpanMap = Record<string, SourceSpan[]>;
 
 /** review 를 만들 때 필요한 입력 */
 export interface ReviewInput {
@@ -69,45 +64,6 @@ export function buildReview(input: ReviewInput, resultId: string): Review {
     retained:             false,
     warnings:             input.warnings,
   };
-}
-
-/**
- * 파서가 준 문자열 위치 표를 바이트 구간 근거로 바꾼다.
- * 바이트 오프셋은 마스킹된 정규 원문의 기준이다(계산된 신호가 유출되지 않게).
- */
-export function toFieldEvidence(
-  raw:      RawEvidence,
-  index:    LineIndex,
-  valueAt:  (pointer: string) => unknown,
-): FieldEvidenceMap {
-  const out: FieldEvidenceMap = {};
-  for (const [pointer, spans] of Object.entries(raw)) {
-    const outSpans: SourceSpan[] = [];
-    let   transform: string | undefined;
-    for (const span of spans) {
-      const bytes = toByteSpan(index, span.line, span.start, span.end);
-      if (!bytes) continue;
-      /** 원문에 그대로 있는 구간만 verbatim 이다. 변환이 끼면 derived 로 밝힌다. */
-      if (span.transform === undefined) transform = undefined;
-      else transform = span.transform;
-      outSpans.push({
-        source:  span.source,
-        start:   bytes.start,
-        end:     bytes.end,
-        line:    span.line,
-        ...(span.record !== undefined && { record: span.record }),
-      });
-    }
-    if (outSpans.length === 0) continue;
-    out[pointer] = [{
-      value:         valueAt(pointer),
-      source_kind:   transform === undefined ? "verbatim" : "derived",
-      source_spans:  outSpans,
-      ...(transform && { transform }),
-      masked:        false,
-    }];
-  }
-  return out;
 }
 
 /** 원문 구간이 실제로 그 값을 담는지 확인한다. 다른 내용이면 근거가 아니므로 버린다. */
@@ -170,9 +126,16 @@ export function evidenceToByteSpans(
   const maskedBytes = byteOffsetsOf(maskedText);
   const out: Record<string, SourceSpan[]> = {};
 
+  /**
+   * 줄 시작 위치는 원문만으로 정해지고 반복 안에서 바뀌지 않는다.
+   * 포인터마다 다시 계산하면 O(포인터 × 원문 길이) 이 되어,
+   * 1MB 출력을 5천 행으로 나눈 fixture 에서 근거 하나를 만드는 데 2초가 걸렸다(실측).
+   * 한 번만 계산한다.
+   */
+  const lineOffsets = lineCharOffsets(unmasked);
+
   for (const [pointer, spans] of Object.entries(raw)) {
     const converted: SourceSpan[] = [];
-    const lineOffsets = lineCharOffsets(unmasked);
     for (const span of spans) {
       /**
        * line=0 은 줄 구분과 무관한 NUL 레코드용이다(경로에 개행이 있어도 정확해야 한다).

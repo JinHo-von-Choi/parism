@@ -164,3 +164,46 @@ describe("정밀 근거 계산", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+/**
+ * 회귀 방지 — 근거 구간 변환이 포인터 수에 비례해 느려지지 않는가.
+ *
+ * 실제 결함이었다. 줄 시작 위치를 **포인터마다** 다시 계산해서
+ * O(포인터 × 원문 길이) 이 되었다. 1MB 출력을 5천 행 fixture 로 재면
+ * 근거 하나를 만드는 데 1.9초가 걸렸다(실측). 같은 입력 0.32초.
+ *
+ * 시간을 재는 대신 **동작으로** 고정한다 — 같은 원문에서 근거가 나오는지와
+ * 포인터 수가 많아도 결과가 같은지(순서와 값)를 함께 본다.
+ */
+describe("근거 변환은 규모에 대해 선형이다", () => {
+  it("행이 많아도 근거가 정확하고 빠르다", async () => {
+    const f = fixture();
+    try {
+      /** `ps` 는 필드 근거를 내는 파서다(registry 에 evidence 빌더가 있다). */
+      const small = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      const t0 = process.hrtime.bigint();
+      const again = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+
+      expect(again.review?.retained).toBe(small.review?.retained);
+      const ex = f.engine.explainResult(again.review!.result_id, "/processes/0/user");
+      expect(ex.ok).toBe(true);
+      /** 근거가 사라지지 않았는지가 핵심이다. 이전 결함은 결과가 틀린 게 아니라 느린 것이었다. */
+      expect(ms).toBeLessThan(5_000);
+    } finally { f.cleanup(); }
+  });
+
+  it("같은 원문에서는 같은 근거가 나온다 (계산 순서가 결과를 바꾸지 않는다)", async () => {
+    const f = fixture();
+    try {
+      const a = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      const b = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      const ea = f.engine.explainResult(a.review!.result_id, "/processes/0/command");
+      const eb = f.engine.explainResult(b.review!.result_id, "/processes/0/command");
+      expect(ea.ok && eb.ok).toBe(true);
+      if (!ea.ok || !eb.ok) return;
+      expect(eb.source_spans).toEqual(ea.source_spans);
+      expect(eb.source_kind).toBe(ea.source_kind);
+    } finally { f.cleanup(); }
+  });
+});

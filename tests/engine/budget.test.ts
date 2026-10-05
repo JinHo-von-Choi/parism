@@ -108,6 +108,40 @@ describe("예산 적용", () => {
     expect(out.omissions.some(o => o.stage === "budget")).toBe(true);
   });
 
+  /**
+   * 회귀 방지 — 예산 적용이 이차로 늘어나지 않는가.
+   *
+   * 실제 결함이었다. 이분 탐색이 찾은 행 수를 버리고 전체 행에서 한 행씩 덜어
+   * 재검증하므로, 계측이 O(n) 번 돌아 O(n²) 이 되었다.
+   * 실측: 2,000행에서 7,959ms(행 수를 두 배로 하면 네 배 — 이차임을 확인).
+   * 수정 뒤 같은 입력 67ms.
+   *
+   * 시간을 재는 대신 **계측 호출 횟수**를 센다. 시간은 CPU 상태에 흔들려
+   * 근거가 되지 않지만 횟수는 결정적이라 이 성질만 굳힌다.
+   */
+  it("행 수가 많아도 계측 횟수가 로그에 비례한다 (이차로 늘지 않는다)", () => {
+    const counting = (n: number) => {
+      let calls = 0;
+      const out = applyBudget({
+        ...base, value: { entries: rows(n) },
+        budget: { max_tokens: 1500 },
+        measure: v => { calls += 1; return countJsonTokens(v); },
+      });
+      return { calls, out };
+    };
+
+    const small = counting(200);
+    const large = counting(2000);
+
+    /** 이분 탐색은 log2(2000) ≈ 11회, 표면 재검증은 몇 회가 더 돈다. 여유를 두어 100회로 잡는다. */
+    expect(large.calls).toBeLessThan(100);
+    /** 10배 많은 행에서 계측 횟수가 10배를 넘어서면 이차다. */
+    expect(large.calls).toBeLessThan(small.calls * 10);
+    /** 그래도 실제로 줄인 결과는 같아야 한다 — 비용만 줄고 답은 변하지 않는다. */
+    expect(findRowArray(large.out.value)?.rows?.length).toBeGreaterThan(0);
+    expect(large.out.report.budget_met).toBe(true);
+  });
+
   it("필요한 필드가 없으면 명시적으로 밝힌다", () => {
     const out = applyBudget({
       ...base, value: { entries: rows(3) },

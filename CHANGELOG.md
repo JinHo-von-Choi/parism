@@ -35,6 +35,13 @@
 - **거짓 삭제 0**: 어느 한쪽이라도 불완전하면(수집 잘림·파서 실패·표현 손실) 없는 행을 '삭제'로 단정하지 않고 `partial.withheld_reasons` 에 보류를 남긴다. identity 를 확정하지 못한 행이 있어도 '추가'나 '삭제'를 단정하지 않는다 — 못 찾았다고 새로 생긴 것이 아니다.
 - 중복 identity 는 오류다. 조용히 한 행을 버리지 않는다(`duplicate_identity`).
 
+### Added — 계획서 8장 실패를 재현하는 fixture 회귀 고리
+- **fixture 매니페스트(`manifest_version` 1)** — 계획서 8장 "실패를 재현하는 parser test" 의 저장 형식. `cmd`/`args` 의 정제본, `stdout`/`stderr` 의 정제본, exit 상태, `content_hash`, parism·파서·스키마·플랫폼·도구 버전, `redactions`, 그리고 사람이 검토한 `expected`(값·실패 계약·누락·근거·완전성)를 담는다. **기대값에 `reviewed_by` 가 없으면 '계약'이 아니라 '제안' 이다** — replay 는 이를 계약 위반으로 세지 않는다. 필수로 두면 '기대값은 썼지만 아직 아무도 보지 않았다' 는 상태가 표현 불가능해져 그 상태의 fixture 가 검증에서 조용히 사라진다.
+- **캡처 시 정제** — `parism capture` 가 저장하기 전에 시크릿(`ghp_`, `glpat-`, `AKIA`, `xox*-`, JWT), 홈 경로, `--token=` 류 인자 값을 가리고 **무엇을 가렸는지** `redactions` 에 남긴다. 예전에는 출력을 그대로 적어 그 파일을 이슈에 붙이는 순간 원문이 퍼졌다. 민감한 값은 형태를 남기고 값만 바꾸므로 fixture 가 조립된 것처럼 보이지 않는다. argv 는 비교 키가 사라지지 않게 옵션 이름과 **길이**를 남긴다(`--token=<redacted:12>`).
+- **오프라인 replay(`parism test <dir>`)** — 저장된 stdout 만 써서(명령을 다시 실행하지 않는다) 현재 파서로 되짚고, 통과/실패가 아니라 **변화된 경로**를 돌려준다: `/evidence/entries/0/path/0/line  value  기대 9 → 실제 0`. `runFixtureTests` 와는 별개 — pack 안의 fixture 와 manifest 로 저장된 fixture 를 각자 되짚고, 판정 방식(변화 경로 목록)만 하나로 통일했다.
+- **기대값을 쓰는 경로가 코드에 없다.** 되짚기는 읽기만 한다. 자동 갱신은 회귀를 숨기는 가장 싼 방법이라 막았다. 깨진 매니페스트와 매니페스트가 아닌 파일은 조용히 건너뛰지 않고 이유를 함께 보고한다.
+- **근거 기대는 부분 확인이 기본이다.** 파서가 낸 포인터를 전부 적어야 통과하는 방식이면 사람이 쓸 수 없다. 적은 포인터만 확인하고, 전수 대조가 필요할 때만 `exhaustive: true` 로 켠다. 기대 span 에 적지 않은 필드는 이 fixture 가 검증하지 않는다는 뜻이다.
+
 ### Changed — M1 · M2 · M3
 - Breaking notes: `git status --porcelain` 은 이제 **지원 형식**이므로 더 이상 `failure.hint` 의 '대안 형식 안내' 대상이 아니다. long 형식을 사람이 읽으려 할 때의 안내로만 남았다.
 - Breaking notes: `ps` 파서에 `--forest` 트리 접두사 제거가 `depth` 뿐 아니라 근거에서도 드러난다(`strip_tree_prefix`).
@@ -49,6 +56,10 @@
 - `guard.secrets` 는 이제 하위 키로 병합한다. `output_redaction_enabled` 하나만 켜도 `env_patterns` 기본값이 남는다.
 
 ### Fixed
+- **토큰 예산이 행 수에 대해 이차로 늘던 결함(M2)**. `applyBudget` 의 이분 탐색이 찾은 행 수를 버리고 전체 행에서 한 행씩 덜며 payload 를 다시 재서 O(n log n) 이 O(n²) 으로 무너졌다. 계측 호출 횟수를 직접 세어 확정했다(2,000행에서 2,012회 — 로그 탐색으로는 11회면 충분). 2,000행에서 **7,959ms → 67ms**. 답은 같고 비용만 줄었다(전 시험 1,399건 동일 통과).
+- **근거 구간 변환이 포인터마다 원문 전체를 다시 훑던 결함(M1)**. `evidenceToByteSpans` 가 반복문 안에서 줄 시작 위치 표를 다시 만들어 O(포인터 × 원문 길이) 이었다. 근거·보관 조합에서 1,937ms → **322ms**, on 전체 1,227ms → **487ms**. 근거만 켜면 149ms, 보관만 켜면 93ms 였던 것과 대비해 조합별로 지목했다.
+- **호출되지 않던 `toFieldEvidence` 와 `toByteSpan` 제거.** 어느 곳에서도 쓰이지 않는 죽은 코드였고, `toFieldEvidence` 는 근거를 내는 유일한 파서(`git status`)가 쓰는 `line=0` 규약도 처리하지 못했다.
+- `parism test` 가 `"not yet implemented"` 을 찍고 exit 1 이던 스텁이었다. 계획서 8장 "CLI 를 닫힌 회귀 고리로 만든다" 가 열려 있었다. capture → 정제된 fixture → replay → 변화 경로 보고로 닫았다.
 - **마스킹이 근거 구간을 어긋나게 만들 수 있던 문제**를 미리 막았다. 근거 바이트 오프셋은 마스킹된 정규 원문 기준이라 마스킹 전 위치를 그대로 쓰면 어긋난다. 마스킹 전후 대응표(`src/engine/mask-map.ts`)를 만들어 정확히 옮기고, 가려진 구간 안의 값은 치환 토큰을 가리키며 `masked` 로 드러난다.
 - `ps` 근거의 숫자 대조를 문자열이 아니라 수치로 하였다. `"0.0"` 과 `0`, `"1.20"` 과 `1.2` 처럼 표기가 달라도 값이 같으면 근거다. 문자열 비교로는 같은 값을 다른 값으로 판단해 근거를 버리고 있었다.
 - **외부 ParserPack 계약 정규식이 서버 스레드에서 실행되던 결함(서버 정지 위험)**. 워커가 보낸 `noise`/`rowLine`/`acceptedValues` 의 `RegExp` 를 메인 스레드가 그대로 만들어 실행해, 외부 팩이 선언한 재귀 역추적 패턴 하나(소스 `^(a+)+b$`)이 워커 시간 상한 500ms 를 무시하고 서버 스레드를 90초 넘게 막았다(실측: 40자 입력에서 호출이 종료되지 않음). 이제 계약 정규식은 워커 안에서만 실행한다. `noise`/`rowLine` 은 원문 줄 분류를, `acceptedValues` 는 플래그 값 판정을 워커가 수행해 줄 수와 참/거짓만 돌려준다. 메인 스레드에는 `{ __parism_regex__: { source, flags } }` 서술자만 전달된다. 판정 결과가 없으면 형식을 거절한다(검증 없는 통과를 막는다). 같은 실측 입력은 이제 상한에 걸려 `parser_exception` 으로 끝나고, 메인 스레드는 0.99ms 안에 다른 요청에 응답한다.
@@ -61,7 +72,12 @@
 - **`kubectl get pods` 의 RESTARTS 열 밀림**. 재시작 횟수가 0이 아니면 kubectl 이 `2 (5d ago)` 처럼 괄호 표기를 RESTARTS 뒤에 붙이는데, 이를 한 열로 세어 `age: "(5d"`, `ip: "ago)"`, `node: "8d"` 로 읽었다. 닫는 괄호까지를 RESTARTS 값으로 묶고 그 다음 칸을 AGE 로 읽으며, 괄호 표기를 `last_restart` 로도 보존한다.
 - **`git status --porcelain` 에 `-z` 없이 주면 모든 항목이 하나로 뭉치던 결함**. NUL 레코드 전용 파서가 줄 구분 출력을 통째로 한 레코드로 읽었다. 실측: 미추적 파일 4개 + 수정한 파일 1개 + 이름 변경 1건(6건)이 **항목 하나로** 합쳐지고 `path` 에 개행과 ` -> ` 표기가 그대로 남았다. `-z` 여부를 판별해 레코드 경계(NUL vs 개행)·경로 해석(가공 없음 vs C 이스케이프 해제)·이름 변경 표기(다음 레코드 vs ` -> `)를 나눠 처리한다. 두 형식의 항목 수와 경로 집합이 같은지 실제 저장소로 대조했다.
 
+### Breaking notes
+- **`parism capture` 가 쓰는 fixture JSON 형식이 바뀌었다.** 최상위 `command`/`args`/`exitCode` 대신 매니페스트가 된다: `tool.command`, `tool.args`, `exit.code`, `stdout`, `stderr`, `captured_at`, 그리고 `manifest_version`·`id`·`content_hash`·`versions`·`redactions` 이 추가된다. 예전 파일에는 형식 버전을 표시할 방법이 없어 조용히 깨졌다. 이제 `parism test` 가 형식이 다른 파일을 통과시키지 않고 그 사실을 보고한다. 읽고 있던 코드가 있으면 `fixture.command` → `fixture.tool.command`, `fixture.exitCode` → `fixture.exit.code` 로 바꾸면 된다. 파일 이름도 `${cmd}-${timestamp}.json` 에서 명령어를 slug 처리한 `${slug(cmd)}-${timestamp}.json` 으로 바뀐다.
+
 ### Verified
+- **성능 게이트(`experiments/perf-gate.mjs`)** — 계획서 10장. 같은 커밋 안에서 `off`(새 인자 없음)와 `on`(근거+예산+보관)을 1KB/100KB/1MB × concurrency 1/4/16 으로 재고 on 이 기존 경로에 추가한 비용을 공개했다. 필드 근거를 실제로 내는 파서가 `git status`·`ps` 뿐이라 `ls -l` 과 `git status --porcelain` 을 나란히 재었다(한쪽만 재면 근거 구축 비용이 빠져 결론이 거짓이 된다). 실측: 소량이면 on 추가 비용이 3~6% 안이지만 100KB 를 넘으면 p50 +58~276%, 1MB 에서는 +132~548%(conc 16, `ls` 기준 throughput −87.1%). **10% 목표는 규모가 크면 크게 어긋난다 — 이 표는 초기 예산을 대체하지 않는다.** 이전 릴리스 대비 '기능 off 회귀 없음' 판정은 하지 않는다(빌드 차이와 코드 차이를 분리할 수 없다). 워커 CPU 는 외부 ParserPack 이 없어 **측정하지 않았다**. 전체 표와 판독법은 `experiments/README.md` 부록 F.
+- **성능 게이트가 잡은 이차 비용 2건**(A-7·A-8) — 값을 정확히 냈지만 규모에서 무너졌다. 예산 7,959ms → 67ms(2,000행), 근거 1,937ms → 322ms(1MB). 수정 후 `git` 1MB conc16 의 on 추가 비용은 +2,105% 에서 +328.9% 로 내려갔지만 10% 목표에는 여전히 멀다.
 - **tarball 소비 smoke test** — `npm pack` 한 tarball 을 클린 디렉터리에 설치하고 **설치본만** import 해서 12개 항목 31개 검사를 돌렸다. 통과: bin 버전, 환경변수·설정 파일의 `allowed_paths` 반영, 리댁션 켬/끔 양쪽 계약, porcelain 두 형식의 경로 집합 일치, `-z` 근거 바이트 구간이 원문을 정확히 가리킴, 근거 구간이 원문 범위 안, 수집 절단 시 `review` 가 근거 범위를 알림, 잘못된 포인터 거절, 예산 상한 준수, 미지원 토크나이저 실행 전 거절, 120행을 이어 읽기로 누락·중복 없이 복원, 위조 cursor 거절, 동일 fixture diff 0, 스테이징 전환이 그 행만 변경, 보관 안 된 결과 거절(재실행 없음), 외부 팩 격리가 메인 스레드를 장악하지 않음(13ms), `contract_version` 생략 시 새 필드 없음, 기존 봉투 필드 유지, 허용 밖 cwd·명령 거절.
 - 발견(패키지 결함이 아니라 사용 방식): `createEngine({ configPath })` 는 다층 설정 대신 `loadConfig` 단일 층을 쓴다. 그래서 `PARISM_ALLOWED_PATHS` 같은 **환경변수 레이어가 반영되지 않는다** — 허용 경로를 설정 파일에 직접 적어야 한다. 기본 `allowed_paths` 는 프로세스 cwd 이므로 임시 디렉터리에서 시험하려면 명시적으로 지정해야 한다.
 - 발견(사용자 놀람 여부): `package.json` 의 `exports` 맵에 `./package.json` 과 `require` 조건이 없다. ESM 전용 패키지이므로 `require` 해석이 막히는 것은 의도된 것으로 보고 **보고만 한다**(패키징 결함으로 단정하지 않음). 다만 소비자가 버전 확인을 위해 `require.resolve('@nerdvana/parism/package.json')` 을 쓰는 패턴은 막힌다.
