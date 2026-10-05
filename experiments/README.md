@@ -268,8 +268,44 @@ identity 를 확정하지 못한 행이 있어 `partial.withheld_reasons` 에 �
 
 ```bash
 npm run build
-node experiments/experiment-a.mjs   # 19항목
-node experiments/experiment-b.mjs   # 21항목
+node experiments/experiment-a.mjs   # 실험 A — 19항목
+node experiments/experiment-b.mjs   # 실험 B — 21항목
+node experiments/demo-60s.mjs       # 60초 데모 — 계획서 11장 세 장면
 ```
 
 fixture 는 고정 시드(`SEED = 20261005`)로 만들어져 **같은 커밋에서 같은 입력이 나온다.** 임시 디렉터리는 실행이 끝나면 지워진다.
+
+---
+
+## 부록 F. 60초 데모에서 나온 것
+
+`experiments/demo-60s.mjs` 가 계획서 11장의 세 장면을 그대로 재현한다. README 첫 화면에 넣은 값이 여기서 나온다.
+
+### 실측값
+
+| 장면 | 결과 |
+|---|---|
+| 1. 예산 | 200행 중 138행 표시, 68행 생략, measured 19987/20000, 파싱 오류 0건 |
+| 2. 근거 | `git status` 는 `byte[3,13) = "changed.ts"`, `ls` 는 `source_kind: "none"` |
+| 3. 이어 읽기 | 1회로 206행 전부 복원(중복 0), 명령 실행 1회 유지 |
+| 그 뒤 | `unknown_id` 와 `not_retained` 을 구분해 거절, 재실행 없음 |
+
+### 데모가 잡은 결함: 예산을 넘었는데 그 이유가 말되지 않았다
+
+2,000 토큰 예산으로 이 목록을 부르면 **0행**이 나온다. 그런데 최종 payload 는 5,396 토큰이었다.
+
+```
+목록 206행 중 0행 표시
+측정 5396 / 2000 토큰
+omission: "206 of 206 row(s) were left out to fit 2000 tokens"   ← 이 문장만으로는 설명되지 않는다
+```
+
+행이 하나도 안 나갔는데 5천 토큰이 나왔다. **넘은 것은 행이 아니라 `raw` 원문**인데 omission 이 그 사실을 말하지 않아 '0행을 내보내면서 왜 5천 토큰이지' 알 수 없었다.
+
+수정: `no row fits the budget with the required fields; the remaining N tokens are the response envelope and raw output, not rows`. 회귀 시험 1건.
+
+### 계획서 예시값과 실측값이 다르다
+
+계획서 11장은 "200개 중 28개 표시, 172개 예산 생략" 을 예시로 적었다. **실측은 138행 표시 / 68행 생략이다.** 예시값은 2,000 토큰 기준인데, 이 fixture 는 2,000 토큰으로 0행이 나온다(위 결함 참조). '일부는 표시되고 나머지는 사유와 함께 생략된다'가 보이도록 예산을 20,000 으로 잡았다.
+
+**28 을 그대로 인용하지 않는다.** 화면 예시와 실제 반환량을 같은 것으로 말하면 그것는 거짓말이다.

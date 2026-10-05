@@ -282,6 +282,20 @@ export function applyBudget(input: ApplyBudgetInput): BudgetOutcome {
     const cursor = makeCursor({ result_id: input.resultId, ...input.binding }, kept.length);
     (progress.continuation as Continuation).cursor = cursor;
 
+    /**
+     * 한 행도 담지 못했는데 최종 크기가 상한을 넘는다면, 넘은 것은 행이 아니라
+     * 본문 밖 표면(특히 raw 원문)이다. 그 사실을 omission 에 적지 않으면
+     * '0행을 내보내면서 왜 5천 토큰인지' 알 수 없다.
+     */
+    if (kept.length === 0 && finalTokens > input.budget.max_tokens) {
+      omissions.push({
+        stage:  "budget",
+        reason: `no row fits the budget with the required fields; the remaining ${finalTokens} tokens are the response envelope and raw output, not rows`,
+        rows_total: total, rows_returned: 0, rows_omitted: total,
+        next_cursor: cursor,
+      });
+    }
+
     if (mode === "error") {
       omissions.push({
         stage: "budget",

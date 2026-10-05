@@ -117,6 +117,33 @@ describe("예산 적용", () => {
     expect(out.omissions.some(o => o.reason.includes("없는_필드"))).toBe(true);
   });
 
+  it("한 행도 담지 못해 상한을 넘으면, 넘은 것이 행이 아니라고 밝힌다", () => {
+    /**
+     * 실측(60초 데모): 206행 fixture 에 2,000 토큰 예산을 걸면 0행이 나오는데
+     * 최종 payload 는 5,396 토큰이었다. 넘은 것은 행이 아니라 raw 원문이다.
+     * 그 사실을 말하지 않으면 '0행을 내보내면서 왜 5천 토큰인지' 알 수 없다.
+     *
+     * 그래서 measure 가 '행만'이 아니라 raw 까지 포함한 최종 응답을 잰다.
+     */
+    const raw = Array.from({ length: 206 }, (_, i) =>
+      `drwxr-xr-x  2 nirna nirna  ${1000 + i} Oct  5 11:00 dir-${String(i).padStart(3, "0")}`,
+    ).join("\n");
+    /** 실제 ls 행이 가진 필드만 둔다 — 없는 필드를 필수로 걸면 축약이 아니라 검증 단계에서 먼저 멈춘다. */
+    const entries = Array.from({ length: 206 }, (_, i) => ({
+      path: `dir-${String(i).padStart(3, "0")}`, size_bytes: 1000 + i, type: "directory",
+    }));
+    const out = applyBudget({
+      ...base, value: { entries },
+      budget: { max_tokens: 2000, required_fields: ["path", "size_bytes", "type"] },
+      measure: (v) => countJsonTokens({ stdout: { raw, parsed: v } }),
+    });
+    expect(findRowArray(out.value)?.rows ?? []).toHaveLength(0);
+    expect(out.report.budget_met).toBe(false);
+    expect(out.omissions.some(o =>
+      o.reason.includes("no row fits the budget") && o.reason.includes("raw output")
+    )).toBe(true);
+  });
+
   it("필수 필드는 예산이 빡빡해도 남는다", () => {
     const out = applyBudget({
       ...base, value: { entries: rows(200) },

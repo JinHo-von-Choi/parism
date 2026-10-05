@@ -78,6 +78,11 @@
 - 발견(하네스 작성 중): `git status --porcelain` 은 경로순으로 정렬해 **같은 파일 집합으로는 출력 순서를 뒤집을 수 없다.** 계획서가 "순서 변화와 잘린 결과를 섞어"라 한 그 부분은 이 도메인에서 성립하지 않는다. 하네스는 "목록이 1건 늘어남"으로 그 자리를 대신 채우고 그 사실을 주석에 남겼다.
 - 발견(실행 환경, 제품 결함 아님): 소스를 tsx 로 직접 실행하면 이 호스트에서 `spawn(detached=true)` 가 ENOENT 를 내 모든 명령이 `spawn_failed` 가 된다. `dist` 는 같은 인자로 정상이다. 실험이 제품에 대한 측정치가 되려면 `npm run build` 후 `dist` 를 재야 한다.
 - 회귀 시험 7건 추가(`tests/engine/compare.test.ts`, `tests/engine/result-store.test.ts`, `tests/engine/evidence.test.ts`), 전체 시험 **59 파일 / 1,398 통과 / 9 생략**.
+- **60초 데모**(계획서 11장) — `experiments/demo-60s.mjs`. 세 장면(예산→근거→이어 읽기)을 실제로 돌려 README 첫 화면에 실측값을 넣었다. **약속이 아니라 측정값**이며 고정 시드로 재현된다.
+  - 장면 1: 200행 중 138행 표시, 68행 생략, measured 19987/20000, 파싱 오류 0건. 표시한 수·뺀 수·이유·파싱 실패가 각각 다른 필드로 분리된다.
+  - 장면 2: `git status --porcelain` 은 `byte[3,13) = "changed.ts"` 를 준다. `ls` 는 필드 근거가 없는데 `source_kind: "none"` 으로 **"근거 없음"** 이라고 말한다.
+  - 장면 3: 이어 읽기 1회로 206행 전부 복원(중복 0), 명령 실행 횟수 여전히 1회. 그 뒤 `unknown_id` 와 `not_retained` 을 구분해 거절하고 재실행하지 않는다.
+- **한 행도 담지 못해 예산을 넘었을 때 그 사실을 밝히지 않던 결함.** 실측: 206행 fixture 에 2,000 토큰 예산을 걸면 0행이 나오는데 최종 payload 는 5,396 토큰이었다. 넘은 것은 행이 아니라 **raw 원문**인데, omission 에 그 사실이 없어 '0행을 내보내면서 왜 5천 토큰인지' 알 수 없었다. 이제 `no row fits the budget ... the remaining N tokens are the response envelope and raw output, not rows` 로 밝힌다. 회귀 시험 1건.
 
 ## [2.0.2] - 2026-10-03
 

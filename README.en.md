@@ -48,6 +48,54 @@ Parism's economics live not on the invoice, but in the space where mistakes and 
 
 ---
 
+## 60-Second Demo — these numbers were actually produced by the script below
+
+`experiments/demo-60s.mjs` produces exactly this. Reproduce with `npm run build && node experiments/demo-60s.mjs` (fixed seed). **These are measurements, not promises.**
+
+**Scene 1 — put a budget on a 200-row list and see what was dropped**
+
+```
+200 rows in, 138 shown
+68 rows dropped by the budget
+measured 19987 / 20000 tokens (parism/approx, exact=false)
+parse errors 0
+omissions: ["budget"]
+  budget: 68 of 206 row(s) were left out to fit 20000 tokens
+          total=206 returned=138 omitted=68
+```
+
+The ordering matters. **How many were shown, how many were dropped, why, and whether parsing failed** each land in a different field. If the numbers do not add up you get `budget_met: false` rather than a quiet shrink.
+
+**Scene 2 — the raw span behind a value you picked**
+
+```
+value      "changed.ts" ( M)
+raw span   byte[3, 13) = "changed.ts"
+kind       verbatim
+masked     not masked
+```
+
+`ls` produces no field evidence, and says so with `source_kind: "none"` rather than inventing one. `ps` and `git status --porcelain` do give byte spans.
+
+**Scene 3 — the rest, without re-running the command**
+
+```
+after 1 continuation: 206 rows recovered (no duplicates)
+```
+
+And after that:
+
+```
+unknown id:     unknown_id      ← this session never had it
+not retained:   not_retained    ← never stored in the first place
+```
+
+Two different reasons, because they call for different next steps. **Neither re-runs the command automatically.**
+
+**One number worth noting.** The same 138 rows cost 19,987 tokens with the raw output attached, and 1,995 tokens as required fields only. The difference is the raw text. That is why a budget forces you to decide *in advance* what to drop. Ask for this listing with a 2,000-token budget and you get 0 rows in practice — the raw output alone exceeds the ceiling. Even then it says so instead of quietly exceeding.
+
+---
+
 ## What Parism Does
 
 A prism does not destroy light. It decomposes it.
