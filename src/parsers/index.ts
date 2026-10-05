@@ -2,7 +2,7 @@ import { ParserRegistry, type ParserFn }                                from "./
 import { parseLs, parseFind, parseStat, parseDu, parseDf, parseTree } from "./fs/index.js";
 import { parsePs, parsePsWithEvidence, parseKill }                     from "./process/index.js";
 import { parsePing, parseCurl, parseNetstat, parseLsof, parseSs,
-         parseDig }                                                    from "./network/index.js";
+         parseDig, ipPack }                                            from "./network/index.js";
 import { parseGrep, parseWc, parseHead, parseTail, parseCat }         from "./text/index.js";
 import { parseGitStatus, parseGitLog, parseGitDiff, parseGitBranch }  from "./git/index.js";
 import { parseGitStatusPorcelain, isPorcelainArgs }                        from "./git/status-porcelain.js";
@@ -45,6 +45,7 @@ export function createRegistry(): ParserRegistry {
   register("lsof",    parseLsof);
   register("ss",      parseSs);
   register("dig",     parseDig);
+  registry.registerPack(ipPack);
   register("grep",    parseGrep);
   register("wc",      parseWc);
   register("head",    parseHead);

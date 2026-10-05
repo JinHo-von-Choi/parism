@@ -4,3 +4,4 @@ export { parseNetstat } from "./netstat.js";
 export { parseLsof }   from "./lsof.js";
 export { parseSs }     from "./ss.js";
 export { parseDig }    from "./dig.js";
+export { default as ipPack } from "./ip.js";
