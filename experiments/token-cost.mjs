@@ -118,10 +118,33 @@ try {
   console.log(`  JSON 토큰      ${jsonTok}`);
   console.log(`\n  JSON 이 raw 보다 **${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%** ${pct >= 0 ? "무겁다" : "가볍다"}`);
 
+  /**
+   * 투영(`select` + `limit`)이 응답을 얼마나 줄이는지도 잰다.
+   *
+   * 앞의 raw 대 JSON 비교와 **비교 대상이 다르다.** 여기서는 둘 다 parism 응답이고,
+   * 차이는 서버 측 투영이 한 몫이다. "JSON 이 무겁다" 와 "필터가 아껴준다" 를
+   * 같은 축에 놓지 않는다 — 그래야 숫자가 오해받지 않는다.
+   */
+  const projected = await engine.run("ls", {
+    args: ["-la", dir],
+    select: ["name", "size_bytes"],
+    limit: 50,
+  });
+
+  const fullTok     = countJsonTokens(JSON.stringify(out.stdout.parsed), TOKENIZER);
+  const projectedTok = countJsonTokens(JSON.stringify(projected.stdout.parsed), TOKENIZER);
+  const savedPct    = (1 - projectedTok / fullTok) * 100;
+
+  console.log(`\n  투영(select name,size_bytes + limit 50)`);
+  console.log(`  투영 전 토큰   ${fullTok}`);
+  console.log(`  투영 후 토큰   ${projectedTok}`);
+  console.log(`  줄어든 비율    ${savedPct.toFixed(1)}%`);
+
   console.log("\n  읽는 법:");
   console.log("  - 이건 **측정치**다. 문장이 아니라 위 스크립트의 결과다.");
   console.log("  - 토크나이저를 바꾸면 값이 달라진다. 다른 출처의 수치와 섞지 않는다.");
   console.log("  - **재현하지 못한 수치를 문서에 남기지 않는다.** 못 쟀으면 못 쟀다고 쓴다.");
+  console.log("  - 투영 수치는 `--entries=500` 으로 돌려야 README 의 97.6% 와 같은 입력이 된다.");
 
 } finally {
   await rm(dir, { recursive: true, force: true });

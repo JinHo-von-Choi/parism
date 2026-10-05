@@ -492,6 +492,62 @@ stdin 을 열어둔 채로 멈추는 것이 결정적이었다. 평가였다면 
 
 ---
 
+### A-18. `parism capture` 가 "저장했다" 고 말하면서 저장하지 않았다
+
+**결함이었다.** README 를 쓰면서 **실제로 실행해 볼까** 했다. 그때 잡혔다. 계획서가 가리킨
+"실패를 재현하는 parser test" 회귀 고리가 **처음부터 연결돼 있지 않았다.**
+
+**증상.**
+
+```console
+$ parism capture "git status --porcelain"
+Fixture saved: ~/.parism/fixtures/git-20261005-163612.json
+Exit code: 0
+$ ls ~/.parism/fixtures/
+ls: cannot access '~/.parism/fixtures/': No such file or directory
+$ find . -name 'git-2026*'
+./~/.parism/fixtures/git-20261005-163612.json
+```
+
+**사용자는 집에 저장됐다고 믿는다. 실제로는 프로젝트 폴더에 `~` 라는 이름의 디렉터리가 생겼다.**
+
+**원인.** `--output` 의 기본값이 **문자열** `"~/.parism/fixtures"` 였다. 셸이 아니라 Node 라서
+`~` 가 전개되지 않는다. `mkdirSync("~/.parism/fixtures", { recursive: true })` 는
+**작업 디렉터리 밑에 `~` 라는 폴더를 만들고**, 그 안에 쓴다. exit code 는 0 이다.
+
+**왜 조용히 위험했나.** 세 가지가 겹친다.
+1. **메시지가 거짓말이다.** "Fixture saved: ~/..." 가 보인다.
+2. **다음 단계가 고장 난다.** README 가 안내하는 `parism test ~/.parism/fixtures` 는
+   셸이 `~` 를 펼치므로 **다른 위치**를 본다. 회귀 고리가 끊긴다 — "기록한다 → 되짚는다"
+   의 두 번째 절반이 첫 번째 절반의 산출물을 찾지 못한다.
+3. **저장소가 오염된다.** 커밋하면 `~` 폴더가 저장소에 들어간다.
+
+**수정.** 기본값을 `~` 문자열이 아니라 **실제 경로**로 계산한다(`defaultFixturesDir()`).
+사용자가 `--output '~/x'` 를 명시적으로 줘도 같은 이유로 고장 나므로 `expandTilde()` 로
+펼친다. 메시지에도 **펼친 경로**를 그대로 찍는다 — 이제 메시지와 사실이 같은 대상을 가리킨다.
+
+**수정 후 실측.**
+
+```console
+$ parism capture "git status --porcelain"
+Fixture saved: /home/nirna/.parism/fixtures/git-20261005-163757.json
+$ ls /home/nirna/.parism/fixtures/
+git-20261005-163617.json  git-20261005-163757.json
+$ ls -d './~'
+ls: cannot access './~': No such file or directory
+```
+
+**회귀 시험 6건** — `tests/cli/capture-home-dir.test.ts`. `createCli()` 를 **실제로 실행해**
+cwd 를 바꿔 두고 관측한다. `captureCommand()` 를 직접 부르면 이 결함을 잡지 못한다 —
+함수는 `fixturesDir` 를 받은 순간부터 정상이고, **CLI 가 뭐를 넘겨주는지**만 문제다.
+"파일이 있다" 만 확인하면 조기 반환할 수 있어, **작업 디렉터리에 `~` 가 생겼는지도 함께 본다.**
+
+**결함을 되살려 확인했다.** `outputDir` 를 다시 `"~/.parism/fixtures"` 로 되돌리니
+6건 중 **2건이 실패했다**(홈에 저장 안 됨 / `~` 폴더 생성). 복원 후 전부 통과한다.
+
+**이 결함은 문서 작성 중에만 드러났다.** 계획서에도, 시험에도, `parism capture` 를
+"쓴다"고 적힌 곳에도 없었다. **도구를 직접 돌려 봐야 보이는 종류의 결함**이다.
+
 ## 부록 B. 재현하지 못해 손대지 않은 것
 
 **이 부록이 더 중요하다.** 계획서나 이전 검토에 있던 주장을 **재현하지 못했다.** 그러니 고치지 않았고, 고쳤다고 말하지도 않는다.

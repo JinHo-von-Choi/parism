@@ -26,16 +26,11 @@ parism은 두 번째와 세 번째 번역 사이에 개입한다. 셸 없이 명
 | v2.0.0 | 2026-10-03 | 가드의 명령별 허용목록(`policy.ts`), 파서 실패 계약(`unsupported_format`/`unrecognized_output`) | 위험 사례 11종 중 10종이 기본 설정으로 통과했다 | 기존 블랙리스트 + 경로 검사 유지 — 위험 쓰기 옵션이 남음 |
 | v1.0.0 | 2026-04-15 | 첫 stable 릴리스 — v0.6.0-alpha 의 모든 개선 통합 | alpha 레이블이 작업 규모에 비해 과보수적이며, API 안정성 공약을 명시화할 필요 | v0.7.0 경유 유지 / v1.0.0-rc.1 경유 |
 | v0.1 | 2026-03-06 | MCP 서버 + `execFile` 게이트웨이 초기 구조 | 셸을 거치지 않는 프로세스 실행으로 인젝션 원천 차단 | `child_process.spawn` + shell 옵션 |
-| v0.2 | 2026-03-07 | Guard 4겹 방어선 도입, compact 포맷, native JSON 패스스루 | Guard 경로 인자 검증 미비 수정; compact로 리스트 출력 토큰 절감 [^1] [^2] | 단일 allowlist 방어만 유지 |
-| v0.3 | 2026-03-07 | 44종 내장 파서 확장, `ResponseEnvelope` 정식 계약, 페이지네이션 | 에이전트 시스템 관리 명령 지원 확대; `run_paged`로 대용량 출력 처리 [^1] | 파서 없이 raw 전달만 |
-| v0.4 | 2026-03-12 | piped-only compact 포맷 기본 활성화, `allowed_paths` 기본값 `[process.cwd()]`, `command_arg_restrictions` 기본값 병합 | v0.3 비판적 검토에서 보안·성능·문서 정합성 결함 지적 수용 [^3] | breaking change 연기 |
-| v0.5 | 2026-03-28 | `ParserPack` SDK, CLI 5개 명령어 (`capture`/`init-parser`/`test`/`add`/`inspect`), `createRegistry` DI 팩토리 | 사용자 커스텀 파서 로컬 개발 루프 완성; `defaultRegistry` 싱글턴에서 DI 패턴 전환 [^4] | 싱글턴 유지 |
+| v0.2 | 2026-03-07 | Guard 4겹 방어선 도입, compact 포맷, native JSON 패스스루 | Guard 경로 인자 검증 미비 수정; compact로 리스트 출력 토큰 절감 | 단일 allowlist 방어만 유지 |
+| v0.3 | 2026-03-07 | 43종 내장 파서 확장, `ResponseEnvelope` 정식 계약, 페이지네이션 | 에이전트 시스템 관리 명령 지원 확대; `run_paged`로 대용량 출력 처리 | 파서 없이 raw 전달만 |
+| v0.4 | 2026-03-12 | piped-only compact 포맷 기본 활성화, `allowed_paths` 기본값 `[process.cwd()]`, `command_arg_restrictions` 기본값 병합 | v0.3 비판적 검토에서 보안·성능·문서 정합성 결함 지적 수용 | breaking change 연기 |
+| v0.5 | 2026-03-28 | `ParserPack` SDK, CLI 5개 명령어 (`capture`/`init-parser`/`test`/`add`/`inspect`), `createRegistry` DI 팩토리 | 사용자 커스텀 파서 로컬 개발 루프 완성; `defaultRegistry` 싱글턴에서 DI 패턴 전환 | 싱글턴 유지 |
 | v0.6.0-alpha.1 | 2026-04-15 | `failure` 필드 통합, `guard.secrets` 설정 통합, Zod `ParserPack` 스키마 계약, 출력 레덕션 레이어, `ParismEngine` 파사드, `SECURITY.md` 명문화 | prolog-reasoner 벤치마킹 분석 후 2-AI 적대적 검토 합성 결과 | `meta.error_code` 신설 (Copilot 지적으로 철회) / Facade 미도입 (Gemini YAGNI 지적 — ROI 재구성으로 부활) / `allowed_commands` 기동 선검증 (삭제됨) |
-
-[^1]: 근거: [docs/plans/2026-03-06-benchmark.md](docs/plans/2026-03-06-benchmark.md)
-[^2]: 근거: [docs/plans/2026-03-07-safe-os-gateway.md](docs/plans/2026-03-07-safe-os-gateway.md)
-[^3]: 근거: [docs/plans/2026-03-12-feedback-critical-acceptance.md](docs/plans/2026-03-12-feedback-critical-acceptance.md)
-[^4]: 근거: [docs/plans/2026-03-28-parser-sdk-phase1.md](docs/plans/2026-03-28-parser-sdk-phase1.md)
 
 ---
 
@@ -89,7 +84,7 @@ MCP 서버: `src/server.ts` + `src/index.ts`가 `@modelcontextprotocol/sdk` 기�
 src/types/          (envelope.ts — 계약 타입만)
 src/config/         (loader.ts — 설정 파싱/병합/마이그레이션)
 src/engine/         (guard.ts, executor.ts, redactor.ts, paginator.ts, state-tracker.ts, telemetry.ts)
-src/parsers/        (registry.ts, compact.ts, json-passthrough.ts, 44종 파서)
+src/parsers/        (registry.ts, compact.ts, json-passthrough.ts, 43종 파서)
 src/facade/         (engine.ts — ParismEngine 클래스)
 src/server.ts       (MCP 도구 정의, 직렬화)
 src/version.ts      (PACKAGE_VERSION 상수 — 순환 의존성 방지)
@@ -464,7 +459,7 @@ compact 는 **값을 보존하지 않는다면 압축하지 않는다.**
 
 `ParserRegistry`에는 두 등록 경로가 있다.
 
-`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 5.1의 `ParserContract` 형태의 선택 인자다. 내장 44개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
+`register(cmd, fn, contract?)`: `ParserFn` 함수를 직접 등록한다. `contract`는 5.1의 `ParserContract` 형태의 선택 인자다. 내장 43개 파서가 사용하는 경로다. Zod 스키마가 없어 `strict_schemas` 모드에서도 런타임 검증이 적용되지 않는다.
 
 `registerPack(pack)`: `ParserPack` 객체를 등록한다. `packs` Map과 `parsers` Map 양쪽에 등록된다. `strict_schemas=true`일 때 Zod 스키마로 파서 출력을 검증한다. 서버 스레드에서 실행하는 커스텀 파서와 `parsers.external_isolation: "none"`인 외부 파서가 사용하는 경로다.
 
@@ -844,10 +839,6 @@ MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일�
 
 - [CHANGELOG.md](CHANGELOG.md) — 버전별 변경 이력
 - [SECURITY.md](SECURITY.md) — 위협 모델, 4겹 방어선 한계, 취약점 신고 채널
-- [Requirements.md](Requirements.md) — v0.4 피드백 기반 요구사항 원본 (보안·테스트·기능 확장)
-- [docs/failure-cases-2026-10-05.md](docs/failure-cases-2026-10-05.md) — 실측으로 잡은 결함과 **재현하지 못한 주장**. 근거 조회·예산·의미 diff 도입 기간의 측정 기록
-- ~~`docs/plans/2026-03-06-benchmark.md`~~ — **이 파일은 더 이상 존재하지 않는다.** 토큰 비용·CFR 벤치마크 프레임워크의 원본 플랜이었고, README 가 인용하던 CFR 수치(4.18%·28.6%)의 출처였다. 수치까지 함께 지웠다(README 의 파싱 오류 절). 현재 재현 가능한 것은 `experiments/` 아래 스크립트들이다.
-- [docs/plans/2026-03-06-issue-remediation.md](docs/plans/2026-03-06-issue-remediation.md) — Guard 경로 인자 검증, config 깊은 병합, 버전 정합화 플랜
-- [docs/plans/2026-03-07-safe-os-gateway.md](docs/plans/2026-03-07-safe-os-gateway.md) — v0.2 Safe OS Gateway 구현 플랜 (compact 포맷, native JSON 패스스루)
-- [docs/plans/2026-03-12-feedback-critical-acceptance.md](docs/plans/2026-03-12-feedback-critical-acceptance.md) — v0.4 비판적 수용 플랜 (경로 가드 완성, 스냅샷 성능, 파서 실패 관측)
-- [docs/plans/2026-03-28-parser-sdk-phase1.md](docs/plans/2026-03-28-parser-sdk-phase1.md) — ParserPack SDK v0.5 구현 플랜 (createRegistry DI, CLI 5개 명령어)
+- [docs/failure-cases-2026-10-05.md](docs/failure-cases-2026-10-05.md) — 실측으로 잡은 결함과 재현하지 못한 주장
+- [docs/adr/](docs/adr/) — 기록된 설계 결정
+- [docs/plans/](docs/plans/) — 유지되는 설계 플랜

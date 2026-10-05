@@ -293,7 +293,7 @@ describe("exportJsonSchema()", () => {
 });
 
 describe("createRegistry()", () => {
-  it("44개 내장 파서가 등록된 레지스트리를 반환한다", () => {
+  it("43개 내장 파서가 등록된 레지스트리를 반환한다", () => {
     const registry = createRegistry();
     const commands = [
       "ls", "find", "stat", "du", "df", "tree",
@@ -309,12 +309,16 @@ describe("createRegistry()", () => {
       "git",
     ];
 
+    expect(commands).toHaveLength(43);
+    expect(registry.parsers.size).toBe(43);
+
     for (const cmd of commands) {
-      const result = registry.parse(cmd, [], "");
-      // 파서가 등록되어 있으면 parsed는 null이 아니거나, 빈 입력에 대한 결과를 반환
-      // 핵심: parsed가 undefined가 아님 (파서 함수가 호출됨)
-      expect(result).toBeDefined();
+      expect(registry.parsers.has(cmd), `${cmd} 파서가 등록되지 않았다`).toBe(true);
     }
+
+    // 대조군: 목록에 없는 명령어는 등록되어 있지 않아야 한다.
+    // 이게 없으면 위 반복문이 전부 통과해도 아무것도 검사하지 않은 시험이 된다.
+    expect(registry.parsers.has("parism-존재하지-않는-명령어")).toBe(false);
   });
 
   it("매번 새 인스턴스를 반환한다 (싱글턴이 아님)", () => {

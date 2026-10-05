@@ -2,7 +2,7 @@ import { Command }        from "commander";
 import { existsSync }    from "node:fs";
 import { join }          from "node:path";
 import { PACKAGE_VERSION } from "./server.js";
-import { parismHome }     from "./cli/paths.js";
+import { parismHome, expandTilde, defaultFixturesDir } from "./cli/paths.js";
 
 /**
  * CLI 프로그램을 생성한다. 명령어 핸들러는 각 모듈에서 등록.
@@ -43,13 +43,19 @@ export function createCli(): Command {
   program
     .command("capture <command>")
     .description("Execute command and save raw output as fixture")
-    .option("-o, --output <dir>", "Output directory", "~/.parism/fixtures")
+    .option("-o, --output <dir>", "Output directory (default: ~/.parism/fixtures)")
     .action(async (command: string, options: { output?: string }) => {
       const { captureCommand } = await import("./cli/capture.js");
       const parts  = command.split(/\s+/);
       const cmd    = parts[0];
       const args   = parts.slice(1);
-      const result = await captureCommand(cmd, args, options.output);
+      /**
+       * 기본값을 `~` **문자열**로 두면 셸이 아니라 Node 라서 전개되지 않는다.
+       * 그 결과 fixture 가 작업 디렉터리 안의 `~` 폴더에 쓰이고, 사용자는
+       * 집에 저장됐다고 믿는다. 실제 경로로 바꿔 넘긴다. (cli/paths.ts 의 `expandTilde` 주석 참고)
+       */
+      const outputDir = options.output ? expandTilde(options.output) : defaultFixturesDir();
+      const result = await captureCommand(cmd, args, outputDir);
       console.log(`Fixture saved: ${result.fixturePath}`);
       console.log(`Exit code: ${result.exitCode}`);
       /** 무엇이 가려졌는지 모른 채 '저장했다'만 말하면 나중에 원문 유출 여부를 알 수 없다. */
@@ -58,7 +64,7 @@ export function createCli(): Command {
         console.log(`Redacted ${result.redactions} occurrence(s) (${kinds}) — manifest 의 redactions 에 남았다`);
       }
       console.log("This fixture replays but has no expected values yet.");
-      console.log("Add expected (and reviewed_by) by hand, then run: parism test " + (options.output ?? "~/.parism/fixtures"));
+      console.log("Add expected (and reviewed_by) by hand, then run: parism test " + outputDir);
     });
 
   program

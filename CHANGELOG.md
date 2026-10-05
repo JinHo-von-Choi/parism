@@ -56,7 +56,7 @@
 
 ### Changed — M0 안정화
 - Breaking notes: `toCompact()` 는 `unknown` 대신 `CompactOutcome`(`{ ok: true, value }` | `{ ok: false, reason, message }`)을 돌린다. `parism inspect` 도 이 계약을 따른다.
-- Breaking notes: 격리 실행 외부 ParserPack 의 `contract.noise`, `contract.rowLine`, `contract.acceptedValues` 는 메인 스레드에서 `RegExp` 가 아니다. `source`/`flags` 서술자로 접근하거나 워커가 계산한 줄 수(`facts`)를 써야 한다. 이전 동작을 되돌리려면 `parsers.external_isolation: "none"` 을 전역 설정에 둔다. 이 규칙은 내장 파서(44종)에 적용되지 않는다.
+- Breaking notes: 격리 실행 외부 ParserPack 의 `contract.noise`, `contract.rowLine`, `contract.acceptedValues` 는 메인 스레드에서 `RegExp` 가 아니다. `source`/`flags` 서술자로 접근하거나 워커가 계산한 줄 수(`facts`)를 써야 한다. 이전 동작을 되돌리려면 `parsers.external_isolation: "none"` 을 전역 설정에 둔다. 이 규칙은 내장 파서(43종)에 적용되지 않는다.
 - Breaking notes: `DEFAULT_CONFIG.guard.secrets.output_patterns` 의 기본값 `[]` 을 제거했다. 키를 생략하면 기본 패턴 7개를 쓰고, `[]` 를 명시하면 의도적 비활화로 구별된다. 이전처럼 `[]` 를 기본값으로 두려면 설정 파일에 `output_patterns: []` 을 적어야 한다.
 - `guard.secrets` 는 이제 하위 키로 병합한다. `output_redaction_enabled` 하나만 켜도 `env_patterns` 기본값이 남는다.
 
@@ -109,13 +109,28 @@
 - **`kubectl get pods` 의 RESTARTS 열 밀림**. 재시작 횟수가 0이 아니면 kubectl 이 `2 (5d ago)` 처럼 괄호 표기를 RESTARTS 뒤에 붙이는데, 이를 한 열로 세어 `age: "(5d"`, `ip: "ago)"`, `node: "8d"` 로 읽었다. 닫는 괄호까지를 RESTARTS 값으로 묶고 그 다음 칸을 AGE 로 읽으며, 괄호 표기를 `last_restart` 로도 보존한다.
 - **`git status --porcelain` 에 `-z` 없이 주면 모든 항목이 하나로 뭉치던 결함**. NUL 레코드 전용 파서가 줄 구분 출력을 통째로 한 레코드로 읽었다. 실측: 미추적 파일 4개 + 수정한 파일 1개 + 이름 변경 1건(6건)이 **항목 하나로** 합쳐지고 `path` 에 개행과 ` -> ` 표기가 그대로 남았다. `-z` 여부를 판별해 레코드 경계(NUL vs 개행)·경로 해석(가공 없음 vs C 이스케이프 해제)·이름 변경 표기(다음 레코드 vs ` -> `)를 나눠 처리한다. 두 형식의 항목 수와 경로 집합이 같은지 실제 저장소로 대조했다.
 
+### Fixed
+- **레지스트리 크기 시험이 아무것도 검사하지 않던 문제**. `tests/parsers/registry.test.ts` 의 "44개 내장 파서" 시험은 각 명령에 대해 `expect(registry.parse(cmd, [], "")).toBeDefined()` 만 확인했다. 그런데 `parse()` 는 **파서가 등록되지 않은 명령어에도** `{ parsed: null }` 이라는 객체를 돌려준다(실측: 존재하지 않는 명령어 → `{"parsed":null}`). 따라서 **파서가 하나도 없어도 전부 통과하는 시험이었다.** 등록 여부·크기·대조군(미등록 명령어가 등록되어 있지 않음)을 보도록 바꿨다. **변이로 확인했다** — `register("ss", …)` 한 줄을 주석 처리하니 `42 ≠ 43` 으로 깨졌다.
+- **`parism capture` 가 "저장했다" 고 말하면서 저장하지 않던 결함 (결함 A-18)**. `--output` 기본값이 **문자열** `"~/.parism/fixtures"` 였다. 셸이 아니라 Node 라서 `~` 가 전개되지 않아, fixture 가 **작업 디렉터리 안의 `~` 폴더**에 쓰이고 exit 0 이었다. 메시지가 집 경로처럼 보여 사용자는 저장됐다고 믿었고, README 가 안내하는 다음 단계 `parism test ~/.parism/fixtures` 는 그 파일을 찾지 못했다 — **회귀 고리가 처음부터 연결돼 있지 않았다.** 기본값을 실제 경로로 계산하고(`defaultFixturesDir()`), `--output '~/x'` 도 펼치도록(`expandTilde()`) 메시지에 **펼친 경로**를 그대로 찍는다. 회귀 시험 6건(`tests/cli/capture-home-dir.test.ts`) — `createCli()` 를 실제로 실행해 cwd 를 바꿔 두고 관측한다. `captureCommand()` 를 직접 부르는 시험으로는 잡히지 않는다. **결함을 되살려 6건 중 2건이 실패하는 것을 확인했다.**
+
+### Documentation
+- **문서 전면 재작성 (README.md · README.en.md)**. 외부에서 읽는 문서인 두 README 에 있던 내부 개발 서술(과거 수치를 지운 이야기, 계획서 장 번호, "실제로 그랬다" 류 메모, 자기 참조)을 걷어내고, 무엇인지 · 왜 필요한가 · 무엇이 달라지는가 · 어떻게 쓰는가 순서로 다시 짰다. 영어판은 한국어판 정稿를 그대로 미러링한다.
+  - **근거 조회가 두 벌로 서술되던 것을 하나로 통합**했다(`run` 파라미터 표와 별도 절이 같은 내용을 반복).
+  - **43종 명령어 표로 축약**했다. 필드 단위 상세는 `describe({ cmd })` 와 SPECIFICATION §3.2 가 담당한다. 44줄짜리 파서 필드 나열을 지웠다.
+  - 파서가 없는 경우·형식 밖 인자·네이티브 JSON 패스스루를 한 곳에 모았다. 실패 값 네 가지(`parser_exception` / `schema_violation` / `unsupported_format` / `unrecognized_output`)를 표로 확정했다.
+  - 마이그레이션·설정·커스텀 파서 절에서 버전 이력 서술과 내부 구현 이름을 걷어내고, 지금 필요한 사실만 남겼다.
+- **"44종" 이 사실이 아니었다.** `registry.parsers.size` 를 재서 **43** 이다. 커밋을 거슬러 올라가도 v0.3(e5b8152) 시점에 이미 43이었다 — 44라는 수는 한 번도 사실이 아니었다. SPECIFICATION 3곳과 CHANGELOG 1곳을 43으로 고쳤다.
+- **명령어 지원 표의 허용 표시가 틀렸다.** `pnpm list` 를 기본 허용(O)으로 적었으나 실측 `command_not_allowed` 이다 — `pnpm` 은 `allowed_commands` 에 직접 넣어야 한다. `yarn list` 도 마찬가지이며 추가로 build 프로필이 필요하다. 실행해 확인했다(허용 목록에 `pnpm` 을 넣자 가드를 통과했다 — 이후 실행 자체는 이 호스트에 pnpm 이 없어 `spawn ENOENT`).
+- **투영 효과 96% 수치가 재현되지 않았다.** README 의 "500개 항목에 `select`+`limit` 이 응답 토큰을 96% 줄인다(28,609 → 1,066, gpt-tokenizer)"는 출처 스크립트가 없었다. `experiments/token-cost.mjs` 에 해당 측정을 추가해 다시 쟀고 **97.6%(30,122 → 725, `parism/approx`)** 이 나왔다 — 같은 스크립트 안에서 재현된다. 앞의 raw/JSON 수치와 비교 대상이 다르다(둘 다 parism 응답이고 차이는 투영이 만든다)고 출력에 명시했다.
+- **죽은 링크를 걷어냈다.** SPECIFICATION 의 각주 4개와 참고 자료 링크 5개, 총 9개가 저장소에 없는 파일(`docs/plans/2026-03-*` 4개와 `Requirements.md`)을 가리키고 있었다. 존재하는 문서만 남겼다.
+
 ### Breaking notes
 - **`parism capture` 가 쓰는 fixture JSON 형식이 바뀌었다.** 최상위 `command`/`args`/`exitCode` 대신 매니페스트가 된다: `tool.command`, `tool.args`, `exit.code`, `stdout`, `stderr`, `captured_at`, 그리고 `manifest_version`·`id`·`content_hash`·`versions`·`redactions` 이 추가된다. 예전 파일에는 형식 버전을 표시할 방법이 없어 조용히 깨졌다. 이제 `parism test` 가 형식이 다른 파일을 통과시키지 않고 그 사실을 보고한다. 읽고 있던 코드가 있으면 `fixture.command` → `fixture.tool.command`, `fixture.exitCode` → `fixture.exit.code` 로 바꾸면 된다. 파일 이름도 `${cmd}-${timestamp}.json` 에서 명령어를 slug 처리한 `${slug(cmd)}-${timestamp}.json` 으로 바뀐다.
 
 ### Verified
 - **경쟁 도구 비교(RT / jc / Nushell)** — 계획서 10장. 이전까지 "도구가 이 호스트에 없어 미실측" 이었으나 **jc 1.26.0 과 nushell 0.116.1 을 실제로 설치해 측정했다.** 실험 A 와 동일 fixture·동일 질문(`.ts` + 2,048B 초과 중 큰 순 3개)에서: nushell 이 한 파이프라인으로 조건·정렬·상위 3개를 끝내고 가장 작은 관련 출력(307B)과 정확한 순서를 냈다. **parism 은 이기지 못했다.** 조합해 순서까지 맞추면 13.2ms / 190B 다. jc 는 `jc --find` 가 `path`·`node` 만 주고 **크기가 없어** '큰 순' 을 낼 수 없으며(직접 부르면 빈 배열, stdin 으로 먹여야 파싱됨) 이를 실패가 아니라 **'측정 불가'** 로 적었다 — 계획서의 "지원 범위가 다른 도구에 억지로 실패를 부여하지 않는다" 규칙. RT 는 **어떤 도구인지 특정하지 못해 비교에서 뺐다** — 추측으로 다른 도구를 대신 넣지 않는다. 또한 이 과제에서 parism 에도 필드 근거가 없고(`find` 는 근거 파서가 아님) 그 사실을 `review` 경고로 알린다는 것을 `explain_result` 로 되짚어 확인했다. 근거 열은 선언이 아니라 실측이다.
 - **사람 실험(5~8명) 절차와 도구** — 계획서 10장의 남은 절반. `experiments/human-study/` 에 30과제(6묶음 × 5), 절차서, 채점 시트, 분석 스크립트를 놓았다. **실시된 사람은 0명이고 채점 시트는 빈 템플릿이다** — 절차만 있고 결과는 없다. 설계 요지: 기계 채점(`correct`·`wrong_kind`)과 사람 채점(`attempts`·`verify_seconds`·`gave_up`)을 분리하고, 오답보다 무거운 실패(`fabricated_evidence`·`silent_loss`)를 따로 세며, 거절 사유 4종을 각각 별도 과제로 둔다. 분석은 유의성 검정을 하지 않고(5~8명으로 불가) 판정하지 않는다. n<5면 구간을 내지 않고, 평균 대신 중앙값·p90 을 쓴다. 헤더가 없는 채점 시트는 열이 밀려 엉뚱한 숫자를 내므로 막고 종료한다.
-- **성능 게이트(`experiments/perf-gate.mjs`)** — 계획서 10장. 같은 커밋 안에서 `off`(새 인자 없음)와 `on`(근거+예산+보관)을 1KB/100KB/1MB × concurrency 1/4/16 으로 재고 on 이 기존 경로에 추가한 비용을 공개했다. 필드 근거를 실제로 내는 파서가 `git status`·`ps` 뿐이라 `ls -l` 과 `git status --porcelain` 을 나란히 재었다(한쪽만 재면 근거 구축 비용이 빠져 결론이 거짓이 된다). 실측: 소량이면 on 추가 비용이 3~6% 안이지만 100KB 를 넘으면 p50 +58~276%, 1MB 에서는 +132~548%(conc 16, `ls` 기준 throughput −87.1%). **10% 목표는 규모가 크면 크게 어긋난다 — 이 표는 초기 예산을 대체하지 않는다.** 이전 릴리스 대비 '기능 off 회귀 없음' 판정은 하지 않는다(빌드 차이와 코드 차이를 분리할 수 없다). 워커 CPU 는 외부 ParserPack 이 없어 **측정하지 않았다**. 전체 표와 판독법은 `experiments/README.md` 부록 F.
+- **성능 게이트(`experiments/perf-gate.mjs`)** — 계획서 10장. 같은 커밋 안에서 `off`(새 인자 없음)와 `on`(근거+예산+보관)을 1KB/100KB/1MB × concurrency 1/4/16 으로 재고 on 이 기존 경로에 추가한 비용을 공개했다. 필드 근거를 실제로 내는 파서가 `git status`·`ps` 뿐이라 `ls -l` 과 `git status --porcelain` 을 나란히 재었다(한쪽만 재면 근거 구축 비용이 빠져 결론이 거짓이 된다). 실측: 소량이면 on 추가 비용이 3~6% 안이지만 100KB 를 넘으면 p50 +58~276%, 1MB 에서는 +132~548%(conc 16, `ls` 기준 throughput −87.1%). **10% 목표는 규모가 크면 크게 어긋난다 — 이 표는 초기 예산을 대체하지 않는다.** 이전 릴리스 대비 '기능 off 회귀 없음' 판정은 하지 않는다(빌드 차이와 코드 차이를 분리할 수 없다). 워커 CPU 는 외부 ParserPack 이 없어 **측정하지 않았다**. 전체 표와 판독법은 `experiments/README.md` 부록 G.
 - **성능 게이트가 잡은 이차 비용 2건**(A-7·A-8) — 값을 정확히 냈지만 규모에서 무너졌다. 예산 7,959ms → 67ms(2,000행), 근거 1,937ms → 322ms(1MB). 수정 후 `git` 1MB conc16 의 on 추가 비용은 +2,105% 에서 +328.9% 로 내려갔지만 10% 목표에는 여전히 멀다.
 - **tarball 소비 smoke test** — `npm pack` 한 tarball 을 클린 디렉터리에 설치하고 **설치본만** import 해서 12개 항목 31개 검사를 돌렸다. 통과: bin 버전, 환경변수·설정 파일의 `allowed_paths` 반영, 리댁션 켬/끔 양쪽 계약, porcelain 두 형식의 경로 집합 일치, `-z` 근거 바이트 구간이 원문을 정확히 가리킴, 근거 구간이 원문 범위 안, 수집 절단 시 `review` 가 근거 범위를 알림, 잘못된 포인터 거절, 예산 상한 준수, 미지원 토크나이저 실행 전 거절, 120행을 이어 읽기로 누락·중복 없이 복원, 위조 cursor 거절, 동일 fixture diff 0, 스테이징 전환이 그 행만 변경, 보관 안 된 결과 거절(재실행 없음), 외부 팩 격리가 메인 스레드를 장악하지 않음(13ms), `contract_version` 생략 시 새 필드 없음, 기존 봉투 필드 유지, 허용 밖 cwd·명령 거절.
 - 발견(패키지 결함이 아니라 사용 방식): `createEngine({ configPath })` 는 다층 설정 대신 `loadConfig` 단일 층을 쓴다. 그래서 `PARISM_ALLOWED_PATHS` 같은 **환경변수 레이어가 반영되지 않는다** — 허용 경로를 설정 파일에 직접 적어야 한다. 기본 `allowed_paths` 는 프로세스 cwd 이므로 임시 디렉터리에서 시험하려면 명시적으로 지정해야 한다.
@@ -134,9 +149,10 @@
 - 발견(실행 환경, 제품 결함 아님): 소스를 tsx 로 직접 실행하면 이 호스트에서 `spawn(detached=true)` 가 ENOENT 를 내 모든 명령이 `spawn_failed` 가 된다. `dist` 는 같은 인자로 정상이다. 실험이 제품에 대한 측정치가 되려면 `npm run build` 후 `dist` 를 재야 한다.
 - 회귀 시험 7건 추가(`tests/engine/compare.test.ts`, `tests/engine/result-store.test.ts`, `tests/engine/evidence.test.ts`), 전체 시험 **59 파일 / 1,398 통과 / 9 생략**.
 - **60초 데모**(계획서 11장) — `experiments/demo-60s.mjs`. 세 장면(예산→근거→이어 읽기)을 실제로 돌려 README 첫 화면에 실측값을 넣었다. **약속이 아니라 측정값**이며 고정 시드로 재현된다.
-  - 장면 1: 200행 중 138행 표시, 68행 생략, measured 19987/20000, 파싱 오류 0건. 표시한 수·뺀 수·이유·파싱 실패가 각각 다른 필드로 분리된다.
+  - 장면 1: 200행 중 87행 표시, 119행 생략, measured 18355/20000, 파싱 오류 0건. 표시한 수·뺀 수·이유·파싱 실패가 각각 다른 필드로 분리된다.
   - 장면 2: `git status --porcelain` 은 `byte[3,13) = "changed.ts"` 를 준다. `ls` 는 필드 근거가 없는데 `source_kind: "none"` 으로 **"근거 없음"** 이라고 말한다.
   - 장면 3: 이어 읽기 1회로 206행 전부 복원(중복 0), 명령 실행 횟수 여전히 1회. 그 뒤 `unknown_id` 와 `not_retained` 을 구분해 거절하고 재실행하지 않는다.
+  - 같은 87행을 원문까지 받으면 18,355 토큰, 필수 필드만 받으면 1,266 토큰. 2,000 토큰 예산에서는 실측 0행(원문만으로 상한 초과), 20,000 토큰에서는 138행.
 - **한 행도 담지 못해 예산을 넘었을 때 그 사실을 밝히지 않던 결함.** 실측: 206행 fixture 에 2,000 토큰 예산을 걸면 0행이 나오는데 최종 payload 는 5,396 토큰이었다. 넘은 것은 행이 아니라 **raw 원문**인데, omission 에 그 사실이 없어 '0행을 내보내면서 왜 5천 토큰인지' 알 수 없었다. 이제 `no row fits the budget ... the remaining N tokens are the response envelope and raw output, not rows` 로 밝힌다. 회귀 시험 1건.
 
 ## [2.0.2] - 2026-10-03

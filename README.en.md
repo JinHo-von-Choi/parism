@@ -1,199 +1,179 @@
 # Parism
 
 > Refract the Shell. Every command, structured.
+>
+> A safe, predictable execution gateway for AI agents.
 
 <p align="right"><a href="README.md">한국어</a> | <a href="README.en.md">English</a></p>
 
----
+> Docs: [README](README.en.md) · [SPECIFICATION](SPECIFICATION.md) · [SECURITY](SECURITY.md) · [CHANGELOG](CHANGELOG.md)
 
-## The Shell Was Not Designed for You
-
-In 1969, when Ken Thompson built Unix, he assumed the output would be read by a human — specifically, a creature with eyes sitting in front of a terminal.
-
-Half a century later, that assumption no longer holds.
-
-An AI agent runs `ls -la` and receives its output. Then the real work begins: split on whitespace, figure out that the first column is permissions, the third is the owner, infer where the filename starts — burning tokens to reason through what a human eye processes in 0.1 seconds.
-
-This is not translation. It is decrypting a message that was never encrypted.
+Design decisions and module layout: [SPECIFICATION.md](SPECIFICATION.md)
 
 ---
 
-## Why This Is a Problem
+## What it is
 
-Three translations happen.
+An execution gateway that runs a shell command and hands the result back as **structured data**.
 
-First: the kernel manages filesystem metadata as `stat` structures — `inode`, `mode`, `uid`, `gid`, `size`, `mtime`. Already perfectly structured data.
+```console
+$ parism run "ls -la src"
+```
 
-Second: `ls` flattens that structure into human-readable text. `drwxr-xr-x  2 user group 4096 Mar 06 09:23 src`. Structure collapses into string.
+```json
+{
+  "ok": true,
+  "stdout": {
+    "raw": "drwxr-xr-x  2 user group 4096 Mar 06 09:23 src\n",
+    "parsed": {
+      "entries": [
+        {
+          "type": "directory",
+          "name": "src",
+          "permissions": { "owner": "rwx", "group": "r-x", "other": "r-x" },
+          "size_bytes": 4096,
+          "owner": "user",
+          "group": "group",
+          "modified_at": "2026-03-06T09:23:00"
+        }
+      ]
+    }
+  }
+}
+```
 
-Third: the agent tries to reconstruct that structure from the text. Rebuilding what was just torn down.
+`raw` is always there. `parsed` is the bonus; `raw` is the safety net. Even a command with no parser comes back intact as raw text.
 
-Parism intervenes between the second and third step. It recovers what was discarded.
-
-This has a cost. Running `ls` once looks simple, but the agent may spend dozens of inference steps parsing the output — and often gets it wrong. Edge cases, unexpected whitespace, OS-specific formatting quirks. Wrong means retry. Retry means more tokens.
+43 built-in parsers ship with it, and you can add your own.
 
 ---
 
-## The Honest Truth — Tokens Cost More
+## Why it is needed
 
-When building Parism, the expectation was token savings. Structured data should be more efficient than raw text.
+The shell was built for humans. An agent is not a human.
 
-The expectation was wrong. JSON output is **considerably heavier** than raw text. Measured right next to this sentence (`node experiments/token-cost.mjs`), for `ls -la` with 200 entries: raw 5,044 tokens against JSON 12,204 tokens — **142.0% heavier.** At 500 entries: raw 12,545 against JSON 30,122, **140.1%.** Key names repeat with every entry. What a human eye resolves from a single header row, JSON spells out N times.
+`ls -la` flattens a filesystem's structure into a line of text formatted for human eyes. The agent has to turn that text back into structure: split on whitespace, decide that column one is permissions and column three is the owner, work out where the filename starts — spending tokens to reason about it. And it gets it wrong often.
 
-The **205%** that used to stand here cited a `2026-03-06` benchmark document that **no longer exists**, and named no tokenizer, so it could not be compared with any other source. It was removed and replaced with a **runnable script** — the figure is now a measurement you can execute, not a sentence.
+The failure points are predictable.
 
-The disappearance of "explanation tokens" is **not measured in this repository.** The `61%` that used to stand here came from the same missing benchmark document, and reproducing it would require measuring how much context a model actually writes — not something that can be done from here. So the number was removed.
+- A filename containing a space throws off the column boundaries.
+- `ps` orders its columns differently on Linux and macOS.
+- The `1K-blocks` header from `df -h` varies by environment.
+- macOS `stat` prints one unlabeled line, so a Linux-shaped parser gets nothing.
+- A filename containing an emoji or a newline desynchronizes UTF-16 code units from byte offsets.
 
-The qualitative argument stands. With raw text the agent needs context — "this format has permissions in the first column, owner in the third." JSON describes its own structure, so the agent just reads keys. **How much that shrinks is measurable by the human study (30 tasks, 5-8 people), which has not been run.**
+One mistake and the agent writes to a path that does not exist, burns a retry debugging the error, and gets it wrong again. Every retry is more tokens.
 
-And there is a crossover point. For one-shot queries — run `ls` once, done — Parism costs more tokens. But the moment that result feeds into a next step, the cost structure inverts. An agent that misreads raw text writes to a nonexistent path, debugs the failure by scanning history, retries, fails again. Tokens snowball. An agent that starts with structured data never enters that cycle.
-
-Parism's economics live not on the invoice, but in the space where mistakes and rework used to be. The cost of reading once more is nothing compared to the cost of reading once wrong.
+Parism removes the decoding step. It detects the OS, picks the matching parser, and returns structure.
 
 ---
 
-## 60-Second Demo — these numbers were actually produced by the script below
+## What changes
 
-`experiments/demo-60s.mjs` produces exactly this. Reproduce with `npm run build && node experiments/demo-60s.mjs` (fixed seed). **These are measurements, not promises.**
+**Values carry their origin.** `ps` and `git status --porcelain` results report which bytes of the raw output each field came from.
 
-**Scene 1 — put a budget on a 200-row list and see what was dropped**
-
-```
-200 rows in, 138 shown
-68 rows dropped by the budget
-measured 19987 / 20000 tokens (parism/approx, exact=false)
-parse errors 0
-omissions: ["budget"]
-  budget: 68 of 206 row(s) were left out to fit 20000 tokens
-          total=206 returned=138 omitted=68
+```json
+"evidence": {
+  "/processes/0/command": [{ "source": "stdout", "start": 118, "end": 131, "transform": "trim" }]
+}
 ```
 
-The ordering matters. **How many were shown, how many were dropped, why, and whether parsing failed** each land in a different field. If the numbers do not add up you get `budget_met: false` rather than a quiet shrink.
+After you pick a value, `explain_result` reopens the original span. A field with no origin reports `source_kind: "none"` — it says "no evidence" rather than inventing one.
 
-**Scene 2 — the raw span behind a value you picked**
+**Large results explain what they dropped.** Set a token budget and the response says how many rows were left out, why, and where the next page is. It never shrinks silently.
 
-```
-value      "changed.ts" ( M)
-raw span   byte[3, 13) = "changed.ts"
-kind       verbatim
-masked     not masked
+```json
+"budget": { "max_tokens": 2000, "measured_tokens": 1842, "budget_met": true },
+"omission": [{ "stage": "budget", "rows_total": 206, "rows_returned": 138, "rows_omitted": 68 }]
 ```
 
-`ls` produces no field evidence, and says so with `source_kind: "none"` rather than inventing one. `ps` and `git status --porcelain` do give byte spans.
+**Two existing results can be compared.** `compare_results` first says whether the two are comparable; if they are, it pairs changed fields with their evidence. If they are not, it returns the reason for refusing.
 
-**Scene 3 — the rest, without re-running the command**
-
-```
-after 1 continuation: 206 rows recovered (no duplicates)
+```json
+{ "comparable": false, "refusals": { "reasons": ["different command"] } }
 ```
 
-And after that:
+**Nothing re-runs.** Continuations and lookups read from stored results only. An unknown id, an expired one, an evicted one, and never-retained are four distinct refusal reasons.
+
+**Execution goes through a gate.** Commands outside the allow list do not run. Neither do paths outside the allowed roots. Secrets in output are masked by default. See [Guard](#guard--why-an-agent-gets-none-of-this-for-free) below.
+
+---
+
+## About token cost
+
+One thing is worth stating plainly: **JSON is heavier than raw text.** Key names repeat on every entry.
+
+For a 200-line `ls -la`: raw 5,044 tokens, JSON 12,204. At 500 lines: raw 12,545, JSON 30,122. Reproduce with `node experiments/token-cost.mjs --entries=200` (the default) and `--entries=500`.
+
+So budgeting is the right move. For a one-shot lookup, taking only the fields you need beats carrying the raw text. For a result you will reopen alongside its evidence, the structure earns its keep. Parism is not a tool that saves tokens — it removes decoding work.
+
+This repository does not measure how many percent an agent saves in misreads or retries. Unreproducible numbers do not go in the docs.
+
+---
+
+## 60-second demo
+
+This is exactly what `experiments/demo-60s.mjs` produces. Reproduce with `npm run build && node experiments/demo-60s.mjs` (fixed seed).
+
+**A budget on a 200-row listing**
 
 ```
-unknown id:     unknown_id      ← this session never had it
-not retained:   not_retained    ← never stored in the first place
+목록 200행 중 87행 표시
+예산 생략 119행
+측정 18355 / 20000 토큰 (parism/approx, exact=false)
+파싱 오류 0건
+누락 내역: ["budget"]
+  budget: reason=119 of 206 row(s) were left out to fit 14611 tokens
+          total=206 returned=87 omitted=119
+```
+
+**The raw span behind a chosen value**
+
+```
+고른 값: docs (directory, 4096 바이트)
+ls 필드 근거: "none"
+
+--- 근거가 있는 파서(git status --porcelain)로 같은 장면 ---
+  고른 값   "changed.ts" ( M)
+  원문 구간 byte[3, 13) = "changed.ts"
+  성격      verbatim
+  마스킹    가려지지 않음
+```
+
+`ls` produces no field evidence, so it says `source_kind: "none"`. `ps` and `git status --porcelain` do give byte spans.
+
+**The rest, without re-running the command**
+
+```
+이어 읽기 1회 후 206행 확보 (중복 없음: true)
+
+모르는 id: ok=false reason=unknown_id
+보관 안 함: retained=false explain=not_retained
 ```
 
 Two different reasons, because they call for different next steps. **Neither re-runs the command automatically.**
 
-**One number worth noting.** The same 138 rows cost 19,987 tokens with the raw output attached, and 1,995 tokens as required fields only. The difference is the raw text. That is why a budget forces you to decide *in advance* what to drop. Ask for this listing with a 2,000-token budget and you get 0 rows in practice — the raw output alone exceeds the ceiling. Even then it says so instead of quietly exceeding.
+**One number.** The same 87 rows cost 18,355 tokens with the raw output attached and 1,266 tokens as required fields only. The difference is the raw text. Ask for this listing with a 2,000-token budget and you get 0 rows in practice — the raw output alone exceeds the ceiling — and it still says so instead of quietly exceeding. The same listing under a 20,000-token budget returns 138 rows.
 
 ---
 
-## What Parism Does
+## Guard — why an agent gets none of this for free
 
-A prism does not destroy light. It decomposes it.
+`rm -rf /` is three characters long.
 
-```
-"drwxr-xr-x  2 user group 4096 Mar 06 09:23 src"
+Agents make mistakes. They lose context, misremember paths, and generate commands nobody intended. Guard exists so a mistake does not become a disaster.
 
-                    ↓  Parism
+There are four layers.
 
-{
-  "type": "directory",
-  "name": "src",
-  "permissions": { "owner": "rwx", "group": "r-x", "other": "r-x" },
-  "size_bytes": 4096,
-  "owner": "user",
-  "group": "group",
-  "modified_at": "2026-03-06T09:23:00"
-}
-```
+**Allow list**: a command not in `allowed_commands` never runs. The process is never even spawned, and the refusal carries no explanation.
 
-The information does not change. The shape does. The agent no longer parses. It reads.
+**Path restriction**: setting `allowed_paths` checks `cwd` and path arguments. Every command is checked against path-shaped values — anything containing `/`, starting with `.` or `~`, or resolving to something that exists under `cwd` (symlinks included) — and commands that take paths (`cat subdir/file`, `find src`) always have their positionals and path flag values checked. Anything outside the allowed roots is blocked. This is a guard-level defense, not a kernel sandbox.
 
----
+**Injection pattern blocking**: each argument is inspected on its own. If it contains `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`, the command does not run. Checking per argument means no false positives that cross an argument boundary.
 
-## Why This Is Better
+**Per-command argument restrictions**: each command can declare flags to block. `node -e`, `node --eval`, and `node --input-type` are blocked by default. So is `npx --yes`.
 
-### No More Parsing Errors
-
-Text parsing breaks easily. `ps aux` has different column ordering on Linux and macOS. The `1K-blocks` header in `df -h` varies by environment. Filenames with spaces almost always break `ls` parsing.
-
-Raw text parsing by agents does misread output. **But the rate is not measured here.** The `4.18%` and `28.6%` figures that used to stand here cited a `2026-03-06` benchmark document that **no longer exists**, and there is no way to reproduce them from this repository — that would require actually running an agent. Unreproducible numbers were removed rather than kept. The qualitative argument stands: a misread leads the agent to write to a path that does not exist, then to spend retries recovering from it, and then to misread again. Retry tokens and rollback cost.
-
-macOS `stat` is a starker example. Its output format is entirely different from Linux. Linux uses labeled lines like `Size: 4096`; macOS outputs a single unlabeled line. Apply a Linux parsing pattern unchanged and you get nothing at all — this is a **fact about the shapes, not a measured rate**. Parism detects the OS and selects the correct parser. The agent never needs to know the difference.
-
-**Parism's CFR is 0% was removed.** That the parsers are deterministic code and that the parse is **correct** are two different claims. The first is a property of the implementation; the second has to be measured — **and it is not measured in this repository.** What stands in its place is only what was actually measured.
-
-| | Status |
-|---|---|
-| Accuracy gate (1,200 seed-fixed cases, five judgments) | **passes** — but only two parsers: `git status --porcelain` and `ps` |
-| Platform tests (Linux/macOS/Windows CI, runs real commands) | passes — commands that are absent are skipped |
-| Human study (30 tasks, 5-8 people) | **materials only, 0 participants run.** The scoring sheet is an empty template |
-
-It cannot fail because it is deterministic is an **inference**; we measured it is a **fact**. This document leads with the fact.
-
-### Fewer Retries
-
-When an agent misinterprets output, it re-queries, runs a second command to verify, or proceeds with bad data. All three cost tokens. Structured output reduces room for misinterpretation. The file count is not something to infer — it is `entries.length`.
-
-### The Agent Gets Better at Everything Else
-
-Parsing text is inference. Inference consumes cognitive resources. When the agent spends capacity decoding output formats, less remains for the actual work — analyzing code, making design judgments, deciding the next step. Structured data eliminates parsing as a task entirely. The agent reads instead of reasons, and the freed capacity flows into the work that matters.
-
-### `raw` Is Always Preserved
-
-Parsers can be wrong. Some commands have no parser. So Parism always keeps `raw`. `parsed` is a bonus. `raw` is the fallback. The agent can always return to the original output.
-
-```json
-"stdout": {
-  "raw": "drwxr-xr-x ...",
-  "parsed": { "entries": [ ... ] }
-}
-```
-
-### Consistent Response Structure
-
-Whether success or failure, `ok` and `exitCode` are always in the same place. The agent's branching logic becomes simple. Not "parse stdout to check for errors" — just `if (!result.ok)`.
-
-### Execution Time Is Recorded
-
-Every response includes `duration_ms`. The agent can judge whether a command is slow or fast. Useful for debugging too.
-
-### diff Is Optional
-
-`diff` (created/deleted/modified) is populated only when `includeDiff: true`. run/run_paged default to `includeDiff: false`, skipping snapshot cost to reduce MCP call latency.
-
----
-
-## Guard — Why Not to Trust the Agent
-
-`rm -rf /` can be written in three characters.
-
-Agents make mistakes. They lose context, confuse paths, generate unintended commands. Guard is not about distrust — it is about designing so that agent mistakes do not become catastrophes.
-
-There are four layers of defense.
-
-**Command Whitelist**: Commands not in `allowed_commands` are never executed. No process is created. Rejected silently.
-
-**Path Restriction**: When `allowed_paths` is set, Guard validates `cwd` and path args. For every command, positional args and flag values that contain `/`, start with `.` or `~`, or name an existing entry under `cwd` (including symbolic links) are checked; positional args of path-taking commands (e.g. `cat subdir/file`, `find src`) and path flag values are always checked. References outside allowed paths are blocked. This is a guard, not a kernel-level sandbox.
-
-**Injection Pattern Blocking**: Each argument is checked individually for `;`, `$(`, `` ` ``, `&&`, `||`, `|`, `>`, `>>`, or `<`. Per-argument checking prevents cross-boundary false positives (e.g., `["foo>", ">bar"]` is not falsely detected as `>>`).
-
-**Per-Command Argument Restrictions**: Specific flags can be blocked per command. `node -e`, `node --eval`, and `node --input-type` are blocked by default. `npx --yes` is also blocked.
-
-A blocked command returns this:
+A blocked command returns this.
 
 ```json
 {
@@ -201,112 +181,81 @@ A blocked command returns this:
   "guard_error": {
     "reason": "command_not_allowed",
     "message": "Command 'rm' is not in the allowed list"
+  },
+  "failure": {
+    "kind": "guard",
+    "reason": "command_not_allowed",
+    "message": "Command 'rm' is not in the allowed list"
   }
 }
 ```
 
-The agent receives the block reason in the same envelope structure as any other result. No exceptions thrown. No pipeline broken.
+`failure` is the authoritative field. `guard_error` is kept for backward compatibility; branch on `result.failure.kind`.
+
+The agent receives a refusal in exactly the same shape as a normal result. Nothing throws. The pipeline does not break.
+
+The threat model, the limits of the four layers, and isolation recommendations for untrusted environments are in [SECURITY.md](SECURITY.md).
 
 ---
 
-## Supported Commands — 44 Built-in Parsers
+## Command support
 
-| Category | Command | Parsed Output | Default |
-|---|---|---|---|
-| Filesystem | `ls -l` | `entries[]`: name, type, permissions, size, modified time, owner, link target, `directory` (`-R` and multiple operands) | O |
-| Filesystem | `find` | `paths[]`: list of paths | O |
-| Filesystem | `stat` | `file`, `link_target`, `size_bytes`, `inode`, `permissions`, `uid`, `gid`, timestamps. `files[]` for several files | O |
-| Filesystem | `du` | `entries[]`: size, path, `modified_at` (`--time`) | O |
-| Filesystem | `df` | `filesystems[]`: partition, `type` (`-T`), size, usage, mount point. 1K blocks use `blocks_1k`, sizes with units (`-h`) use `size`, other block units use `size` and `block_size` | O |
-| Filesystem | `tree` | `root`, `tree{}`: hierarchical node map, `total_files`, `total_dirs` | O |
-| Process | `ps aux` | `processes[]`: PID, CPU%, MEM%, command, `depth` (tree output) | O |
-| Process | `kill` | raw pass-through (blocked by default, add to prism.config.json to allow) | X |
-| Network | `ping` | `target`, `packets_transmitted`, `packet_loss_percent`, `rtt_*_ms` | O |
-| Network | `curl -I` | `status_code`, `headers{}`, `header_values{}` (repeated headers), `history[]` (earlier responses of `-L`) | O |
-| Network | `netstat` | `connections[]`: proto, local/foreign address, state | O |
-| Network | `lsof -i` | `entries[]`: PID, process name, protocol, local/remote address, state (also with `-u` user selection) | O |
-| Network | `ss` | `connections[]`: netid, state, recv/send queue, local/peer address and port | O |
-| Network | `dig` | `query`, `query_type` (empty without a QUESTION section), `answers[]`: type, value, TTL, `query_time_ms`. Several queries add `queries[]`, one per response | O |
-| Text | `grep -n` | `matches[]`: file, line number, text, `byte_offset` (`-b`), `context` (context lines of `-A/-B/-C`). Blank matching lines (`-v`, empty pattern) are rows. The file name column of `-r` is accepted with `-n` or `-b` | O |
-| Text | `wc` | `entries[]`: count and filename for one counter flag; with no counter flag or several, the chosen columns of `lines`, `words`, `chars`, `bytes`, `max_line_length` and the filename. Filenames keep their spaces. `--total=only` (one counter flag) gives `total` | O |
-| Text | `head`, `tail`, `cat` | `lines[]` | O |
-| Git | `git status` | `branch`, `staged[]`, `modified[]`, `untracked[]`, `renamed[]`, `ignored[]`, `unmerged[]`, `detached` | O |
-| Git | `git log --oneline` | `commits[]`: hash, message, `refs[]` (full ref names of `--decorate=full`), `author`, `date` (`--format=%h%x09%an%x09%aI%x09%s`) | O |
-| Git | `git diff` | `files_changed[]`, `files[]`: path, status, old_path, binary, hunks | O |
-| Git | `git branch -vv` | `branches[]`: name, current, upstream, ahead/behind (`null` when the upstream is gone), `upstream_gone`, `detached`, `points_to` | O |
-| DevOps | `kubectl get pods`, `kubectl get events` | `pods[]` / `events[]`: status, restarts, reasons, messages | O |
-| DevOps | `docker ps`, `docker stats --no-stream` | `containers[]`: image, status, ports, names / `stats[]`: CPU, memory, network, block I/O, pids | O |
-| DevOps | `gh pr list` | `pull_requests[]`: number, title, state, author, labels | O |
-| DevOps | `helm list` | `releases[]`: name, namespace, status, chart, app_version | O |
-| DevOps | `terraform plan` (build profile) | `summary`: to_add, to_change, to_destroy | O |
-| Env | `env` | `vars{}`: key-value map (secrets filtered) | O |
-| Env | `pwd` | `path` | O |
-| Env | `which` | `paths[]` | O |
-| System | `free` | `mem`, `swap`: total, used, free, available (default unit KB; `*_bytes` in bytes) | O |
-| System | `uname` | `kernel_name`, `hostname`, `kernel_release`, `machine`, `os` | O |
-| System | `id` | `uid`, `gid`, `user`, `group`, `groups[]`: id, name | O |
-| System | `systemctl list-units` | `units[]`: name, load, active, sub, description (Linux) | O |
-| System | `journalctl` (short `-o` formats) | `entries[]`: timestamp, hostname (empty with `--no-hostname`), unit, pid, message (Linux) | O |
-| System | `apt list`, `apt search` | `packages[]`: name, suite, version, arch, status, description (search) | O |
-| System | `brew list --versions` | `packages[]`: name, version | O |
-| Package | `npm list`, `pnpm list` | `dependencies[]`: name, version, depth, `deduped`, `problem` | O |
-| Package | `yarn list` (build profile) | `dependencies[]`: name, version, depth | X |
-| Package | `cargo tree` (build profile) | `crates[]`: name, version, path, source, depth, deduped, proc_macro | O |
-| Windows | `dir` | `directory`, `entries[]`: name, type, size, modified time, `free_bytes` | X |
-| Windows | `tasklist` | `processes[]`: name, PID, session, memory. CSV format supported | X |
-| Windows | `ipconfig` | `hostname`, `adapters[]`: IPv4/6, subnet, gateway, DNS, MAC | X |
-| Windows | `systeminfo` | `hostname`, `os_name`, memory, `hotfixes[]`, `network_cards[]` | X |
+43 commands have built-in parsers. For the fields a given command returns, ask `describe({ cmd: "…" })`.
 
-Default (O)=in DEFAULT_CONFIG. X=requires explicit allow in prism.config.json. "(build profile)" requires `guard.profile: "build"`.
+| Category | Commands | Allowed by default |
+|---|---|---|
+| Filesystem | `ls -l` `find` `stat` `du` `df` `tree` | yes |
+| Process | `ps aux` | yes |
+| Network | `ping` `curl -I` `netstat` `lsof -i` `ss` `dig` | yes |
+| Text | `grep -n` `wc` `head` `tail` `cat` | yes |
+| Git | `git status` `git log --oneline` `git diff` `git branch -vv` | yes |
+| Deployment | `kubectl get` `docker` `gh pr list` `helm list` | yes |
+| Environment | `env` `pwd` `which` | yes |
+| System | `free` `uname` `id` `systemctl list-units` `journalctl` `apt list` `apt search` `brew list --versions` | yes |
+| Packages | `npm list` | yes |
+| Packages | `pnpm list` `yarn list` | explicit allow (`yarn` also needs the build profile) |
+| Build | `terraform plan` `cargo tree` | build profile |
+| Process control | `kill` | explicit allow |
+| Windows | `dir` `tasklist` `ipconfig` `systeminfo` | explicit allow |
 
-Commands without a parser return `parsed: null`. `raw` is always present. When a parser throws, `stdout.parse_error` contains `{ reason: "parser_exception", message: string }` so you can distinguish "no parser" from "parser bug".
+**Explicit allow** means you add it to `guard.allowed_commands` yourself. **Build profile** means you also set `guard.profile` to `"build"`. `cargo`'s query subcommands (`tree` `metadata` `search` `pkgid`) are build-profile only because they can execute the rustc wrapper the repository configures; `yarn` is the same because it can execute the `yarnPath` script the repository configures. Both run project code, so turn them on only in repositories you trust.
 
-> When the command failed, or stdout is empty and only stderr has text, `result.failure` keeps the execution failure (`kind: "exec"` with the stderr text) and the parse error stays only in `stdout.parse_error`.
->
-> `stdout.parse_error.reason` takes four values: `"parser_exception"`, `"schema_violation"`, `"unsupported_format"` and `"unrecognized_output"`. `unsupported_format` means the parser does not handle the output format of the given args; `unrecognized_output` means data lines were present but the parser recognized no value. "No parser found" is not a `parse_error`; it surfaces as `result.failure.reason === "parser_not_found"` (`result.failure.kind === "parse"`).
+**A command with no parser returns `stdout.parsed: null` with `raw` untouched.** That is not a failure. `stdout.parse_error` is a separate field, filled in only when a parser throws, so a parser bug is distinguishable from having no parser.
 
-### Accepted Formats and Alternative Args
+| `parse_error.reason` | Meaning |
+|---|---|
+| `parser_exception` | The parser threw |
+| `schema_violation` | `strict_schemas` rejected the result |
+| `unsupported_format` | The parser does not handle that argument's output format |
+| `unrecognized_output` | There were data lines, but nothing could be read from them |
 
-Each built-in parser declares the argument range whose output format was verified on real output (accepted flags, positional rules, subcommands) in its contract (`src/parsers/contracts.ts`). Args outside that range do not run the parser and return `unsupported_format`, so a wrong result is reported as a failure instead of being returned silently. `raw` is kept, and when the output is a JSON document the native JSON passthrough fills `parsed`.
+When the command never ran, `result.failure` carries it (`kind: "exec"`, with stderr in the message) and `stdout.parse_error` stays empty. A missing parser surfaces as `result.failure.reason === "parser_not_found"` (`kind: "parse"`).
 
-When other args give the same information in a handled format, `result.failure.hint` (same value in `stdout.parse_error.hint`) carries `{ args, reason }`. `args` is the full argument list for the same command and passes the readonly default policy.
+### Arguments outside a parser's format
 
-| Request | `failure.hint.args` |
-|-|-|
-| `uname -r` | `["-a"]` |
-| `ls -lh` | `["-l"]` |
-| `git status -s` | `["status"]` |
-| `git status -s --ignored` | `["status", "--ignored"]` |
-| `git log --oneline --graph` | `["log", "--format=%h %s"]` |
-| `git log -n 5` | `["log", "-n", "5", "--format=%h%x09%an%x09%aI%x09%s"]` |
-| `git log --oneline --decorate` | `["log", "--oneline", "--decorate=full"]` |
-| `git diff --stat HEAD~1` | `["diff", "HEAD~1"]` |
-| `git branch --show-current` | `["branch", "-v"]` |
-| `grep -r TODO src` | `["-n", "-r", "TODO", "src"]` |
-| `ps -e` | `["aux"]` |
-| `systemctl status cron` | `["list-units", "--all", "cron.service"]` |
-| `journalctl -o json -n 20` | `["-n", "20", "-o", "short-iso"]` |
-| `kubectl get pods -o yaml` | `["get", "pods", "-o", "json"]` |
-| `gh issue list` | `["issue", "list", "--json", "number,title,state,author,labels,updatedAt"]` |
-| `npm ls --parseable` | `["ls", "--json"]` |
+Each parser declares the argument range it was actually verified against (accepted flags, positional rules, subcommands) as its contract. Given an argument outside that range, it does not run at all and returns `unsupported_format`. Surfacing a failure beats quietly interpreting the value wrong. `raw` is untouched, and if the output is a JSON document the native JSON passthrough fills `parsed`.
 
-There is no `hint` when no args give the same information (`ls -li`, `ps -ef`, `grep -z`, and so on).
+When another argument form yields the same information, it is returned alongside.
 
-### Native JSON Passthrough
+```json
+{ "reason": "unsupported_format", "hint": { "args": ["log", "--format=%h %s"] } }
+```
 
-Commands without a dedicated parser still get JSON output passed through when the output is valid JSON (e.g. `kubectl get pods -o json`, `docker inspect`). Parism detects this and puts it in `parsed`. Guard checks and envelope wrapping apply the same. No extra configuration needed.
+`uname -r` → `["-a"]` · `git status -s --ignored` → `["status", "--ignored"]` · `kubectl get pods -o yaml` → `["get", "pods", "-o", "json"]`. The full list is in [SPECIFICATION.md](SPECIFICATION.md) §3.2.
+
+### JSON has a parser for free
+
+When the command's output is itself JSON (`kubectl get pods -o json`, `docker inspect`), it lands in `parsed` without going through a parser. Guard checks and envelope wrapping apply exactly as they do otherwise. No configuration.
 
 ---
 
-## Installation
-
-### npx
+## Install
 
 ```bash
 npx @nerdvana/parism
 ```
 
-### Local Build
+To build it locally:
 
 ```bash
 git clone https://github.com/JinHo-von-Choi/parism
@@ -317,272 +266,262 @@ node dist/index.js
 
 ---
 
-## Claude Desktop Integration
+## Library mode
 
-`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+Call Parism directly from Node.js, with no MCP server.
 
-```json
-{
-  "mcpServers": {
-    "parism": {
-      "command": "npx",
-      "args": ["-y", "@nerdvana/parism"]
-    }
-  }
-}
+```typescript
+import { createEngine } from "@nerdvana/parism/engine";
+
+const engine = await createEngine();
+const result = await engine.run("ls", { args: ["-la"] });
+console.log(result.stdout.parsed);
 ```
 
-Claude Code (Linux):
+`createEngine()` loads `prism.config.json`, attaches registered external parsers, and returns a `ParismEngine`. To use a different file, pass `createEngine({ configPath: "…" })`.
 
-```json
-{
-  "mcpServers": {
-    "parism": {
-      "command": "node",
-      "args": ["/path/to/parism/dist/index.js"],
-      "cwd": "/path/to/parism"
-    }
-  }
-}
-```
+Run options: `args` / `cwd` / `format` / `includeDiff` / `select` / `where` / `sort_by` / `limit` / `array`, plus `page` / `page_size` for paged output. `engine.describe("git")` returns a capability summary for one command.
 
-Once connected, seven tools are exposed: `run`, `run_paged`, `describe`, `dry_run`, `explain_result`, `fetch_result`, and `compare_results`.
+Details are in [SPECIFICATION.md](SPECIFICATION.md) §1.1.
 
-The agent should call `describe` first to discover allowed commands and available parsers, then use `dry_run` to pre-check guard compliance before executing with `run` or `run_paged`. The last three tools never run a command.
+---
+
+## MCP client setup
+
+Parism connects over the MCP stdio protocol. Per-client setup files are in `docs/mcp-clients/`.
+
+| Client | Setup file |
+|---|---|
+| Claude Desktop | [claude-desktop.md](docs/mcp-clients/claude-desktop.md) |
+| Claude Code | [claude-code.md](docs/mcp-clients/claude-code.md) |
+| Cursor | [cursor.md](docs/mcp-clients/cursor.md) |
+| Gemini CLI | [gemini-cli.md](docs/mcp-clients/gemini-cli.md) |
+| Codex CLI | [codex.md](docs/mcp-clients/codex.md) |
+| GitHub Copilot CLI | [copilot-cli.md](docs/mcp-clients/copilot-cli.md) |
+
+Running `parism` with no arguments starts the MCP server. Once connected, seven tools are exposed. A new agent should call `describe` to learn the environment and its limits, `dry_run` to confirm the guard will pass, and then `run`.
 
 ---
 
 ## Tools
 
+| Tool | Runs a command | When to use it |
+|---|---|---|
+| `run` | yes | The default. Includes budget, evidence, and filter options |
+| `run_paged` | yes | When the output is large and you want it page by page |
+| `explain_result` | **no** | To see where a value came from (stored results only) |
+| `fetch_result` | **no** | To continue reading a result the budget cut short |
+| `compare_results` | **no** | To diff two stored results |
+| `describe` | no | To learn the environment before the first call |
+| `dry_run` | no | To check the guard before running |
+
+`explain_result`, `fetch_result`, and `compare_results` **never re-run a command under any circumstance.** An unknown id, an expired one, or an evicted one is reported and the call ends. Stored results live in session memory only and never touch disk (2 MiB per result, 32 MiB total, 16 results, 60-second TTL).
+
 ### run
 
-Default tool for most commands. Use when output is small or structured parsing is needed.
+The default tool for every command. Use it when the output is small or you need structured parsing.
 
-Parameters:
-- `cmd` — command name (e.g. `ls`, `git`)
-- `args` — argument array (default: `[]`)
-- `cwd` — working directory (default: current directory)
-- `format` — output format (`"json"` default, `"compact"`, `"json-no-raw"`)
-- `includeDiff` — include filesystem diff (default: `false`). `false` skips snapshot for lower latency. Recommended for MCP.
-- `contract_version` — `"stable"` (default) or `"next"`. Only `"next"` adds a `review` object (see Field evidence).
-- `evidence` — `"none"` (default), `"rows"`, `"fields"`. How much field evidence to compute. Use with `contract_version: "next"`.
-- `retain` — keep the result in session memory so `explain_result` can revisit it. Use with `contract_version: "next"`.
-- `budget` — `{ max_tokens, tokenizer, required_fields, overflow }`. Fits the response into a budget and reports what was dropped (see Token budget).
-- `select`, `where`, `sort_by`, `limit`, `array`: server-side projection and filtering, see below.
+| Parameter | Default | Meaning |
+|---|---|---|
+| `cmd` | — | Command name |
+| `args` | `[]` | Argument array |
+| `cwd` | current directory | Working directory |
+| `format` | `"json"` | `"json"` · `"compact"` · `"json-no-raw"` |
+| `includeDiff` | `false` | Include the filesystem diff. Keep it `false` in busy MCP sessions |
+| `contract_version` | `"stable"` | `"next"` adds a `review` block |
+| `evidence` | `"none"` | `"rows"` · `"fields"`. Computes per-field evidence |
+| `retain` | `false` | Store the result in session memory to revisit later |
+| `budget` | — | See "Token budget" below |
+| `select` `where` `sort_by` `limit` `array` | — | See "Projection and filtering" below |
 
-**The four new arguments (`contract_version`, `evidence`, `retain`, `budget`) are all opt-in.** Without them the response carries no new fields.
+`contract_version`, `evidence`, `retain`, and `budget` are **all opt-in.** Leave them out and the response is byte-for-byte what it always was.
+
+`format: "compact"` compresses list-shaped output into `schema` + `rows` to cut token cost.
+
+```json
+{
+  "schema": ["name", "type", "size_bytes"],
+  "rows": [["src", "directory", 4096], ["main.ts", "file", 1200]]
+}
+```
 
 #### Projection and filtering
 
-`select` (field names), `where` (conditions), `sort_by` (`{ field, order }`) and `limit` (row count) apply only to the top-level array of the parsed result (`entries` for `ls`, `commits` for `git log`, and so on), in the order `where`, `sort_by`, `limit`, `select`. When the result has several arrays, pick one with `array`.
+`select` (field list), `where` (condition list), `sort_by` (`{ field, order }`), and `limit` (row count) apply only to the top-level array of the parsed result (`entries` for `ls`, `commits` for `git log`, and so on). The order is `where` → `sort_by` → `limit` → `select`, and `array` picks which array when there are several.
 
 ```json
 {
   "cmd": "ls", "args": ["-l"],
-  "where":   [{ "field": "type", "op": "eq", "value": "file" }, { "field": "size_bytes", "op": "gt", "value": 1000 }],
+  "where":   [{ "field": "type", "op": "eq", "value": "file" },
+              { "field": "size_bytes", "op": "gt", "value": 1000 }],
   "sort_by": { "field": "size_bytes", "order": "desc" },
   "limit":   10,
   "select":  ["name", "size_bytes"]
 }
 ```
 
-- Operators: `eq`, `ne` (string, number, boolean or `null`), `prefix`, `contains` (string, case-sensitive), `gt`, `gte`, `lt`, `lte` (number). All conditions must hold.
-- The result carries `_summary: { total, matched, shown }` and omits `stdout.raw`. The summary is `parsed._summary` when the array sits inside the result object, or `stdout._summary` when the result itself is an array.
-- Sorting is stable and rows without the field go last. Works with `format: "compact"`; the adaptive format thresholds see the reduced row count.
-- An unknown field or a comparison on the wrong type returns `failure.kind = "config"` (`unknown_field`, `type_mismatch`) and keeps raw. Malformed arguments are rejected before execution.
-- For `ls -l` on a 500-entry directory, `select: ["name","size_bytes"], limit: 50` cuts the response from 28,609 to 1,066 tokens (96%, default config, gpt-tokenizer).
+- Operators: `eq` `ne` `prefix` `contains` (strings, numbers, booleans, `null`), `gt` `gte` `lt` `lte` (numbers). Every condition must hold.
+- The result gains `_summary: { total, matched, shown }` and `stdout.raw` is not sent. It is `parsed._summary` when the array is inside the result object, and `stdout._summary` when the result is the array.
+- Sorting is stable, and rows with no value sort last. It composes with `format: "compact"`.
+- A missing field or a type mismatch is `failure.kind = "config"` (`unknown_field`, `type_mismatch`) with raw preserved. A malformed argument never runs.
+- On a 500-entry directory, `ls -l` with `select: ["name","size_bytes"], limit: 50` cuts the parsed result by 97.6% of its tokens (30,122 → 725, `parism/approx`). Reproduce with `node experiments/token-cost.mjs --entries=500`.
 
 ### run_paged
 
-Use for large stdout (`ps aux`, `find`, `grep -r`).
+Reads large output one page at a time. Use it for `ps aux`, `find`, `grep -r`, and the like.
 
-Parameters:
-- `cmd`, `args`, `cwd` — same as `run`
-- `page` — 0-indexed page number (default: `0`)
-- `page_size` — lines per page (default: `default_page_size`, 100 by default)
-- `page_size` limit: `max_page_size` (1000 by default). Larger requests are reduced to it and the request is kept in `page_info.requested_page_size`
-- `includeDiff` — include filesystem diff (default: `false`)
+- `cmd` `args` `cwd` `includeDiff` — same as `run`
+- `page` — zero-indexed page number (default `0`)
+- `page_size` — lines per page (default 100). The ceiling is `max_page_size` (default 1000); a larger request is clamped and the requested value is kept in `page_info.requested_page_size`
 
-Extra fields:
-- `page_info.total_lines` — total line count
-- `page_info.has_next` — whether next page exists
-- `page_info.cache` - `{ hit, age_ms }`. Later pages reuse the first run's result for 30 seconds
-- `stdout.parsed` — always `null` (partial output cannot be safely parsed)
+The response adds `page_info.total_lines`, `page_info.has_next`, and `page_info.cache` (`{ hit, age_ms }`, reusing the first execution's result for 30 seconds). A partial listing cannot be structured, so `stdout.parsed` is always `null`.
+
+```
+1. run_paged(cmd, page=0) → read page_info.total_lines for the overall scale
+2. If it is small, use it as is
+3. If it is large, narrow it with grep first, then use run
+4. Fetch only the pages you need with run_paged(page=N)
+```
 
 ### describe
 
-Agent onboarding tool. Returns allowed commands, available parsers, guard limits, and version info.
+The onboarding tool. Returns the allowed commands, available parsers, guard limits, and version for the current environment.
 
-Parameters:
-- `cmd`: optional. When given, returns only that command's capability summary (below).
+Called without arguments it returns `version`, `allowed_commands`, `available_parsers`, `guard_summary` (`timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns`, `allowed_paths`), and `telemetry_enabled`. `stats` (per-command result counts) is added only when telemetry is on.
 
-Response:
-- `version` — Parism package version
-- `allowed_commands` — commands permitted by guard
-- `available_parsers` — registered parser names
-- `guard_summary` — `timeout_ms`, `max_output_bytes`, `max_items`, `block_patterns` (full array), `allowed_paths`
-- `telemetry_enabled` — whether telemetry is active
-- `stats`: only when telemetry is enabled. Outcome counts per command
+`describe({ cmd: "git" })` returns one command's information in under 2 KB.
 
-Call this first when the agent encounters Parism for the first time.
+- `policy` — the subcommands, flags, and positional rules the guard allows, plus the policy's origin (`origin`: `default`, `build`, `config`, `none`)
+- `parser` — the formats the parser handles: `requires`, `values`, `flags`, `rows_key`, `row_fields`
+- `alternatives` — arguments that substitute for out-of-format ones (`{ from, args, reason }`)
+- `examples` — example arguments that pass the current guard
 
-`describe({ cmd: "git" })` returns one command's details in at most 2 KB, to check before a retry caused by a guard denial or an unsupported format.
-- `policy`: subcommands, flags and positional rule the guard allows, and where the policy comes from (`origin`: `default`, `build`, `config`, `none`)
-- `parser`: formats the parser handles. `requires` (at least one needed), `values` (value patterns), `flags`, `rows_key`, `row_fields`, and the same shape per subcommand
-- `alternatives`: arguments that replace out-of-format ones (`{ from, args, reason }`)
-- `examples`: example arguments that pass the current guard
-- Name lists are space-separated strings. A command that is not allowed returns a result with `failure` (`command_not_allowed`).
+A command that is not allowed comes back as a result carrying `failure` (`command_not_allowed`).
 
 ### dry_run
 
-Guard pre-check tool. Validates whether a command would pass guard without executing it.
+Checks the guard without running anything.
 
-Parameters:
-- `cmd` — command name (e.g. `rm`, `git`)
-- `args` — argument array (default: `[]`)
-- `cwd` — working directory (default: current directory)
+Takes `cmd` `args` `cwd` and returns `would_pass`, the refusal reason (`command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`), and a message.
 
-Response:
-- `would_pass` — whether guard would allow execution
-- `reason` — block reason (`command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`) or `null`
-- `message` — detailed block message or `null`
+```json
+{ "would_pass": false, "reason": "command_not_allowed", "message": "Command 'rm' is not in the allowed list" }
+```
 
-Example: `dry_run("rm", ["-rf", "/"])` → `{ would_pass: false, reason: "command_not_allowed", message: "..." }`
+### Evidence — `run` + `explain_result`
 
-### Field evidence — `run(contract_version: "next")` + `explain_result`
+**Answers "which bytes of the original did this value come from?"** without running a new command.
 
-**Answers "where in the raw output did this value come from" as a byte span.** It never runs a command.
+Request `contract_version: "next"` to get the `review` block, and `retain: true` to store the result for later. Passing `evidence: "rows"` or `"fields"` also computes per-field evidence.
 
-Three new `run` arguments. **All opt-in, all off by default** — without them the response is exactly what it was.
-
-- `contract_version` — `"stable"` (default) or `"next"`. Only `"next"` attaches `review`.
-- `evidence` — `"none"` (default), `"rows"`, `"fields"`. Anything other than `"none"` also needs `contract_version: "next"`.
-- `retain` — keep the result in session memory so `explain_result` can revisit it. Also needs `contract_version: "next"`.
-
-`review` sits beside the existing envelope fields and changes none of their meanings.
+`review` is added alongside the existing envelope fields without changing what any of them mean.
 
 | Field | Meaning |
 |---|---|
-| `result_id` | the id you pass to `explain_result`, `compare_results`, `fetch_result` |
-| `parser_id` / `parser_version` / `schema_version` | which parser and schema produced this |
-| `content_hash` | hash of the raw output, to tell repeats apart |
-| `source_complete` | did capture finish (1. `parse_complete`: did parsing finish. 2. `representation_lossless`: did compression or conversion lose values) |
+| `result_id` | The id you pass to `explain_result`, `compare_results`, `fetch_result` |
+| `parser_id` / `parser_version` / `schema_version` | The parser and schema that produced this result |
+| `content_hash` | Hash of the raw output, to tell repeated executions apart |
+| `source_complete` | Whether collection finished (`parse_complete` is whether parsing finished, `representation_lossless` is whether compression or transformation lost a value) |
 | `privacy_transform` | `"none"` / `"masked"` / `"unknown"` |
-| `retained` | can `explain_result` still see it |
-| `warnings` | why it is incomplete, or why there is no evidence |
+| `retained` | Whether `explain_result` can reopen it |
+| `warnings` | Why the result is incomplete or has no evidence |
 
-**Completeness takes three values: `true`, `false`, and `unknown`.** `unknown` exists so that "not confirmed" is not reported as "false". When the capture limit is hit, `source_complete` is `false` and `warnings` says so — evidence covers the retained prefix only.
-
-`explain_result(result_id, pointer)` takes a JSON Pointer such as `"/processes/0/pid"` and returns the value plus its evidence.
+**Completeness has three values: `true`, `false`, and `unknown`.** `unknown` exists so that an unverified claim is not stated as a false one. When a collection ceiling is hit, `source_complete` is `false` and `warnings` says so — the evidence then covers only the preserved prefix.
 
 ```json
 {
   "ok": true, "result_id": "r_...", "pointer": "/processes/0/pid",
   "value": 1,
-  "source_kind": "derived", "source_spans": [{ "source": "stdout", "start": 90, "end": 91, "line": 2, "transform": "parseInt" }],
+  "source_kind": "derived",
+  "source_spans": [{ "source": "stdout", "start": 90, "end": 91, "line": 2, "transform": "parseInt" }],
   "transform": "parseInt", "age_ms": 12
 }
 ```
 
-- Spans are UTF-8 byte offsets `[start, end)` into the **masked canonical output**. When the parser converted the value, `source_kind` is `derived` and the conversion is named.
-- **Evidence links to what the command printed at that moment. It is not proof that the value is true.**
-- An unknown pointer returns `unknown_pointer`; an expired or evicted id fails saying so. **Nothing is re-executed automatically.**
+- A span is a `[start, end)` range of UTF-8 byte offsets into the masked canonical raw output. When a parser transformed the value, `source_kind` is `derived` and the transform is named.
+- **Evidence is a link to what the command printed at that moment. It is not proof that the value is true.**
+- An unknown pointer returns `unknown_pointer`; an expired or evicted id fails with that fact attached. **Nothing is re-executed automatically.**
 
-`ps` and `git status --porcelain` produce evidence. Other parsers report the absence in `warnings` rather than inventing it.
+Only `ps` and `git status --porcelain` produce evidence. The rest report that absence in `warnings`.
 
-**Asking for evidence or a budget turns adaptive compact off.** Both rewrite the result shape, which would erase what evidence pointers and required fields refer to. If you set `format: "compact"` explicitly it still compresses, and the reason is listed in `warnings`.
+Computing evidence changes the result's shape, which would erase the evidence pointers and the required-field calculation targets. So **asking for `evidence` or `budget` turns adaptive compaction off.** If you pass `format: "compact"` explicitly, it compacts anyway and records the reason in `warnings`.
 
 ### Token budget — `run(budget)` + `fetch_result`
 
-**Get a large result inside a budget and still know what was dropped.** The point is to keep "dropped for budget reasons" separate from "dropped because the parser failed".
+**Takes a large result inside a budget and tells you what fell outside it.** The point is to keep "dropped for budget reasons" separate from "dropped because the parser failed".
 
 ```json
 { "max_tokens": 2000, "required_fields": ["path"], "overflow": "page" }
 ```
 
-- **A budget does not reduce execution time or how much is captured.** It decides how much of what you already have to send out.
-- `required_fields` survives in every returned row, as do the row identity fields the parser declares. **If a required field cannot fit, parism fails explicitly instead of quietly sending a partial result** — partial success is silent loss.
-- A budget too small for the minimal envelope (about 1,200 tokens) is refused **before execution** with `budget_too_small`.
+- **A budget does not reduce runtime or collection.** It decides how much of an already-obtained result to send.
+- `required_fields` are never dropped from any row, and the row identity the parser declared is kept too. **If required fields cannot fit, it fails explicitly instead of quietly sending a partial result** — a partial success is silent loss.
+- A budget below the minimum envelope (about 1,200 tokens) is refused with `budget_too_small` **before** execution.
 
 The response gains a `budget` report and an `omission` list.
 
 - `budget` — `requested`, `measured_tokens`, `tokenizer_id`, `tokenizer_version`, `budget_met`, `tokenizer_exact`, `tokenizer_scope`
-- `omission[]` — `stage` (`capture`/`parse`/`projection`/`budget`/`privacy`) with `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `next_cursor`
+- `omission[]` — `stage` (`capture`/`parse`/`projection`/`budget`/`privacy`) and `reason`, `rows_total`/`rows_returned`/`rows_omitted`, `omitted_fields`, `next_cursor`
 
-The **fixed tokenizers** are `parism/approx` (an estimate) and `byte` (exact by character count). No new runtime dependency. An unsupported tokenizer is refused with `tokenizer_unsupported` rather than silently substituted — an estimate is never packaged as an exact budget. This promise holds for the parism JSON payload only; it does **not** cover transport, client, or model-internal tokens (`tokenizer_scope` says so).
+The **fixed tokenizers** are `parism/approx` (approximate) and `byte` (exact per character), with no new runtime dependency. An unsupported tokenizer is refused with `tokenizer_unsupported` rather than silently substituted. That guarantee covers the Parism JSON payload only — **transport, client, and model-internal tokens are not included**, which `tokenizer_scope` states.
 
-`fetch_result(result_id, cursor, budget)` returns the next page of a retained result **without re-running the command**. Pass the `continuation.cursor` through unchanged. The cursor binds the snapshot, projection, and policy, so **a client cannot assemble an arbitrary offset** — another result's cursor gives `cursor_mismatch`, a tampered one gives `cursor_invalid`. An expired or evicted id says so and is never re-run.
+`fetch_result(result_id, cursor, budget)` returns the next page of the same stored result **without re-executing.** Pass `continuation.cursor` through unchanged. A cursor binds the progression rules (snapshot identity, projection, policy, schema) to the position, so **a client cannot assemble an arbitrary offset.** A cursor from a different result is refused with `cursor_mismatch`, and a tampered one with `cursor_invalid`.
 
 ```
 1. run(cmd, { budget: { max_tokens: 2000, overflow: "page" }, retain: true })
-2. check budget.budget_met, read omission to see what was dropped
-3. while continuation.cursor: fetch_result(result_id, cursor)
-4. stop when done, or tell the user what omission still reports
+2. Check budget.budget_met and omission for what was dropped
+3. If continuation.cursor is present, repeat fetch_result(result_id, cursor)
+4. Stop when you have read it all, or tell the user about any remaining omission
 ```
 
 ### Semantic diff — `compare_results`
 
-**Compares two results that already exist.** It never runs a command, never connects anywhere, never polls.
+**Compares two results that already exist.** It does not run a new command, does not reach the network, and does not set up a watch loop.
 
-Parameters: `base_id`, `current_id` (from `run(retain=true)`), optionally `keys`, `ignore_fields`, `strict`.
+Takes `base_id` and `current_id` (the `review.result_id` from `run(retain: true)`), optionally `keys`, `ignore_fields`, and `strict`. The response is `comparable`, `refusals`, `added`/`removed`/`changed`/`unchanged_count`, `ignored_fields`, `partial`, and `key_conflicts`; changed fields carry the evidence pointers from both sides.
 
-Response: `comparable`, `refusals`, `added`/`removed`/`changed`/`unchanged_count`, `ignored_fields`, `partial`, `key_conflicts`. Field changes carry the before and after evidence pointers.
+**Zero false deletions** — if either side is incomplete (collection truncated, parser failure, representation loss), a missing row is not declared deleted; the hold is recorded in `partial.withheld_reasons`. A row whose identity could not be established is not declared added or deleted either — not finding it is not the same as it being new. Duplicate identities stop the comparison with `duplicate_identity` rather than silently dropping a row.
 
-**Zero false deletions** — when either side is incomplete (capture truncated, parser failed, representation lossy) a missing row is never called a deletion; it becomes a hold in `partial.withheld_reasons`. Rows whose identity could not be established do not become "added" or "removed" either: not finding something is not evidence that it appeared. Duplicate identity stops the comparison with `duplicate_identity` instead of quietly dropping a row.
-
-- Row identity rules: git uses repository identity (real path) plus normalized path. Kubernetes uses context/namespace/kind plus `metadata.uid`, and **a table without uid is not enough to call it the same resource**. **ps is withheld rather than compared on PID alone** (PIDs get reused).
-- **A fingerprint is not a certificate of world state.** The same fingerprint does not mean nothing changed in between.
-- Secret safety: **argv is identified by hash and only masked values are shown**. **Environment variables are recorded by name only — never their values** — and names are not part of the identity key.
-
-### Tool summary
-
-| Tool | Runs a command | When |
-|---|---|---|
-| `run` | yes | default; takes `contract_version`, `evidence`, `retain`, `budget` |
-| `run_paged` | yes | large output, page by page |
-| `explain_result` | **no** | check where a value came from (retained copy only) |
-| `fetch_result` | **no** | continue a budget-truncated result (retained copy only) |
-| `compare_results` | **no** | see what changed between two retained results |
-| `describe` | no | learn the environment first |
-| `dry_run` | no | check guard compliance before running |
-
-**`explain_result`, `fetch_result`, and `compare_results` never re-run a command under any circumstance.** An unknown, expired, or evicted id is reported and that is all. Storage is session-memory TTL/LRU (2MiB per result, 32MiB total, 16 results, 60s). Nothing is written to disk.
+- Row identity rules: git uses repository identity (real path) plus the normalized path. kubernetes uses context/namespace/kind plus `metadata.uid`, and **a table listing without a uid is not enough to call two rows the same resource.** **ps does not use PID as identity and withholds the comparison** (PIDs get reused).
+- **A fingerprint is not a certificate of world state.** The same fingerprint can hide a file that changed in between.
+- To avoid leaking secrets, **argv is identified by hash and only masked values are displayed.** **Environment variables are recorded by name only; values are never kept.**
 
 ---
 
-## Migration from 2.0.2
+## Migration — from 2.0.2
 
-2.x **does not change the meaning of any existing envelope field.** `contract_version` defaults to `"stable"`, so a consumer that passes none of the new arguments gets exactly the previous response. New features require explicitly opting in.
+2.x **does not change the meaning of any existing envelope field.** `contract_version` defaults to `"stable"`, so an existing consumer that passes no new arguments gets exactly the response it got before. Using a new feature requires naming the opt-in argument.
 
-**Cases that need a code change (breaking)**
+**Cases that require a code change**
 
-| Audience | Before | Now | How to keep the old behaviour |
-|---|---|---|---|
-| External ParserPack authors | `contract.noise`/`rowLine`/`acceptedValues` are `RegExp` on the main thread | descriptors and `facts` computed in the worker. No `RegExp` on the main thread | set `parsers.external_isolation: "none"` in global config |
-| `toCompact()` / `parism inspect` callers | returns `unknown` | returns `CompactOutcome` (`{ok:true,value}` \| `{ok:false,reason,message}`) | — (reverting is not the fix; handle `representation_not_lossless`) |
-| Configs that omitted `guard.secrets.output_patterns` | default `[]`, so the 7 default patterns were never used | no default; omitting uses the default patterns | set `output_patterns: []` explicitly |
-| Consumers of `git status --porcelain` | an `failure.hint` "try this format instead" target | a supported format, parsed into an `entries` row array | — |
-| Code serializing porcelain entries wholesale | `xy`/`index`/`worktree`/`path`/`orig_path` | same fields plus `quoted` (only set in line mode). **The meaning of `path` is identical in both modes** | — |
+| Affected | Before | Now |
+|---|---|---|
+| External ParserPack authors | `contract.noise` / `rowLine` / `acceptedValues` were `RegExp` on the main thread | Descriptors and `facts` computed in the worker; no `RegExp` on the main thread |
+| `toCompact()` / `parism inspect` callers | Returned `unknown` | `CompactOutcome` (`{ok:true,value}` \| `{ok:false,reason,message}`) |
+| Configs that omit `guard.secrets.output_patterns` | The 7 default patterns were not applied | The default patterns are used. Pass `output_patterns: []` to disable them |
+| Consumers of `git status --porcelain` | Targeted by a `failure.hint` alternative-format suggestion | A supported format. An `entries` row array |
+| Code that serialized porcelain entries wholesale and stored them | `xy`/`index`/`worktree`/`path`/`orig_path` | The same fields plus `quoted` (populated only in short mode). **The meaning of the path value is the same in both modes** |
 
-**The `output_patterns` default change is security-relevant.** Previously, leaving the key out made redaction effectively off, so with redaction enabled all five synthetic secrets (`sk-`, `ghp_`, `AKIA`, `xoxb-`, `glpat-`) came back untouched. Now omitting the key uses the default patterns, and only an explicit `[]` disables them.
+The first two are not reversible. `toCompact()` callers must handle `representation_not_lossless`, and ParserPack authors who need the old behavior can set `parsers.external_isolation: "none"` in the global config to run on the main thread again.
 
-**What does not need migrating**
+**The `output_patterns` default change is a security matter.** Previously, omitting the key left the defaults inactive, so with redaction enabled the five synthetic secrets (sk-, ghp_, AKIA, xoxb-, glpat-) were returned verbatim.
 
-- MCP client configuration — no tool was renamed. Three tools were added.
-- Existing `run` calls — without the new arguments the response is unchanged.
-- The 44 built-in parsers — unchanged except `git status --porcelain`.
+**What does not need changing**
+
+- MCP client setup — no tool was renamed. Three tools were added.
+- Existing `run` calls — pass no new arguments and the response is what it always was.
+- Built-in parser responses — unchanged except for `git status --porcelain`.
 
 ---
 
 ## Configuration
 
-Place `prism.config.json` in the project root to control Guard behavior.
+Put `prism.config.json` at the project root to control the guard.
 
 ```json
 {
   "guard": {
-    "allowed_commands": ["ls", "git", "find", "grep", "env", "ps", "kubectl", "docker", "gh", "terraform", "helm", "cargo", "systemctl", "journalctl", "apt", "brew"],
+    "allowed_commands": ["ls", "git", "find", "grep", "env", "ps"],
     "allowed_paths": ["/home/user/projects"],
     "timeout_ms": 10000,
     "max_output_bytes": 102400,
@@ -594,8 +533,16 @@ Place `prism.config.json` in the project root to control Guard behavior.
       "npx":  { "blocked_flags": ["--yes", "-y"] }
     },
     "secrets": {
-      "env_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"]
+      "env_patterns": ["TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"],
+      "output_patterns": ["Bearer [A-Za-z0-9._\\-]+", "ghp_[A-Za-z0-9]+"],
+      "output_redaction_enabled": false
     }
+  },
+  "parsers": {
+    "strict_schemas": false,
+    "external_isolation": "worker",
+    "external_time_limit_ms": 500,
+    "external_memory_limit_mb": 128
   },
   "telemetry": {
     "enabled": false
@@ -603,31 +550,28 @@ Place `prism.config.json` in the project root to control Guard behavior.
 }
 ```
 
-`allowed_paths` being empty means no path restriction. That decision is yours.
+- An empty `allowed_paths` means no path restriction. That call is yours to make.
+- Environment variables matching `guard.secrets.env_patterns` are removed from the child process before execution, so running `env` does not expose them.
+- `guard.secrets.output_redaction_enabled` defaults to `false`. Set it to `true` and strings matching `output_patterns` are replaced with `[REDACTED]` in the raw output. It applies before parsing, so `stdout.parsed` is unaffected.
+- `command_arg_restrictions` is merged with the defaults. Overriding a few commands keeps the remaining default restrictions in place.
+- `parsers.strict_schemas: true` validates each parser's result against its Zod schema and returns `failure.reason === "schema_violation"` on a violation. Default `false`.
+- `telemetry.enabled: true` adds a `telemetry` field to the response envelope with per-stage timings in milliseconds and the raw output size in bytes. It also accumulates per-command result counts, surfaced through `describe` as `stats`. Nothing is sent anywhere or written to disk.
 
-`guard.secrets.env_patterns` strips matching environment variables from child processes before execution. The `env` command will not expose them. The legacy `env_secret_patterns` key was removed in 2.0.0; if present it is ignored with a warning on stderr.
+`guard.profile` defaults to `"readonly"`, which allows lookup subcommands only. Changing it to `"build"` additionally allows build and test subcommands such as `npm run`, `npm test`, `cargo build`, `terraform plan`, and `docker compose ps`. **These execute project code, so turn them on only in repositories you trust.** `node`, `npx`, and `yarn` must be added to `allowed_commands` directly and work only under the build profile; `npx` gets `--no` appended. Per-command rules are overridden with `guard.command_policies`.
 
-`parsers.external_isolation` (`"worker"` by default, or `"none"`), `parsers.external_time_limit_ms` (default 500) and `parsers.external_memory_limit_mb` (default 128) control how external parser packs run (see "External Parser Isolation" below). Set them in the global config; an untrusted project config cannot disable isolation or raise the limits.
+**A project `prism.config.json` cannot widen the guard.** To allow that, set `"trust_project_config": true` in the global `~/.parism/prism.config.json`.
 
-`guard.profile` defaults to `"readonly"`, which allows read-only subcommands only. `"build"` additionally allows build and test subcommands such as `npm run`, `npm test`, `cargo build`, `terraform plan` and `docker compose ps`. These run project code, so enable it only for repositories you trust. `cargo` query subcommands (`tree`, `metadata`, `search`, `pkgid`) also require the `build` profile, since they can run a rustc wrapper configured by the repository. `node`, `npx` and `yarn` must be added to `allowed_commands` explicitly and work only under the `build` profile; `npx` runs with `--no`, so only locally installed binaries run. Override per-command rules with `guard.command_policies`. A project `prism.config.json` cannot widen the guard; to allow that, set `"trust_project_config": true` in the global `~/.parism/prism.config.json`.
+### Configuration layers and environment variables
 
-The `prism.config.json` in the repository is an example and is not included in the npm package.
-
-`command_arg_restrictions` is deep-merged with defaults. Overriding one command does not remove restrictions for others.
-
-`telemetry.enabled` set to `true` adds a `telemetry` field to every response envelope, including per-stage timing (`guard_ms`, `exec_ms`, `parse_ms`, `redact_ms`, `total_ms`) and `raw_bytes`. Default `false`; opt-in. It also keeps in-process outcome counts per command (`parsed`, `unsupported_format`, `unrecognized_output`, `parser_exception`, `schema_violation`, `parser_not_found`, `guard` and `exec` by reason), shown as `stats` in `describe`. Nothing is sent or stored.
-
-### Config Layers and Environment Variables
-
-Configuration merges three layers in order; later layers override earlier ones.
+Three layers are merged in order. Each layer overrides the one before it.
 
 1. Global: `~/.parism/prism.config.json`
 2. Project: `<cwd>/prism.config.json`
-3. Environment: `PARISM_`-prefixed variables
+3. Environment variables prefixed `PARISM_`
 
-Both the MCP server and library mode (`createEngine()`) use the same three-layer merge. `createEngine({ configPath })` loads only the specified file.
+Both the MCP server and library mode (`createEngine()`) use the same three layers. Passing `createEngine({ configPath })` loads only that one file.
 
-| Environment variable | Target setting | Format |
+| Environment variable | Setting | Format |
 |---|---|---|
 | `PARISM_ALLOWED_COMMANDS` | `guard.allowed_commands` | comma-separated list |
 | `PARISM_ALLOWED_PATHS` | `guard.allowed_paths` | comma-separated list |
@@ -643,162 +587,162 @@ Both the MCP server and library mode (`createEngine()`) use the same three-layer
 
 ---
 
-## Custom Parsers -- Build and Use Immediately
+## Custom parsers
 
-When 44 built-in parsers are not enough, build your own. Parism v0.5.0 includes a CLI toolkit.
-
-### Create a Parser in 5 Minutes
+When 43 are not enough, write your own. Two things must be in place first, or the scaffold will not compile.
 
 ```bash
-# 1. Capture command output
-parism capture "htop -b -n 1"
-
-# 2. Scaffold a parser pack
-parism init-parser htop
-
-# 3. Edit parser.ts and verify fixtures (fixture replay is planned; use parism inspect for manual comparison today)
-
-# 4. Register -- available immediately, no restart needed
-parism add ./htop
-
-# 5. Verify -- raw/parsed/compact comparison + token counts
-parism inspect "htop -b -n 1"
+npm install @nerdvana/parism zod@^3
+# add { "type": "module" } to package.json — Parism is ESM-only, and ParserPack.schema is a zod 3 type
 ```
-
-Registered parsers are stored in `~/.parism/parsers/` and automatically loaded when the MCP server starts.
-
-### A closed loop for reproducing failures
-
-`parism capture` → a human writes the expected values → `parism test` → the changed paths come back. This one path is the plan's section 8, "parser tests that reproduce failures".
 
 ```bash
-parism capture "git status --porcelain"
-# Fixture saved: ~/.parism/fixtures/git-20261005-122126.json
-# Exit code: 0
-# This fixture replays but has no expected values yet.
+parism capture "htop -b -n 1"   # 1. capture the command's output
+parism init-parser htop          # 2. generate the parser pack scaffold
 
-# ── a human fills in the expected block ──
-#   "expected": {
-#     "parsed": { "entries": [ … ] },
-#     "evidence": { "pointers": { "/entries/0/path": [ { "source": "stdout", "line": 0, "start": 3, "end": 13 } ] } },
-#     "reviewed_by": "your name",
-#     "note": "why this value is right"
-#   }
+# 3. write the expected values into the captured fixture yourself — the machine does not fill them in
+#    { "expected": { "parsed": { … }, "reviewed_by": "name", "note": "why this value is right" } }
 
-parism test ~/.parism/fixtures
-# fixture 12
-#   reviewed expectations 9 — matched 8, changed 1
-#   unreviewed expectations 3 (a person must review before it becomes a contract)
-#
-# unintended contract changes: 2 — do not make a release call before checking these:
-#   git-20261005-122126  (git)
-#   [evidence] 2
-#     /evidence/entries/0/path/0/line  value  expected 0 → actual 1
+parism test ~/.parism/fixtures   # 3-1. replay it — changed paths come back as a list
+parism add ./htop                # 4. register it — usable immediately, no restart
+parism inspect "htop -b -n 1"    # 5. compare raw/parsed/compact side by side and count tokens
 ```
 
-**What you need to know**
+Registered packs are stored in `~/.parism/parsers/` and loaded automatically when the MCP server starts.
 
-- **Capture does not store raw output.** Secrets, home paths, and `--token=`-style argument values are redacted, and *what* was redacted is kept in `redactions`. Sensitive values keep their shape and lose only the value — deleting them outright would make the fixture look fabricated. Argv keeps the option name and the length, because argv also feeds the comparison key (`--token=<redacted:12>`).
-- ### `parism eval` — three separate judgments
+### Two ways to pass arguments
 
-`parism eval` actually runs commands on this host and checks whether they met expectations.
-It does not report a single success rate, because three things with different causes are
-being measured at once:
+| Call | Handling | Quotes and spaces |
+|---|---|---|
+| `parism inspect ls -l /path` | argv mode — passed through verbatim | preserved |
+| `parism inspect "ls -l /path"` | string mode — split on whitespace | **not preserved** |
 
-| Level | What it looks at |
+In string mode, `parism inspect 'echo "hello   world"'` passes the quotes through to the child as literal characters. That is why string mode warns before it runs. Pass arguments separately to pass them exactly.
+
+### `parism eval` — three separate verdicts
+
+`parism eval` actually runs commands on this host to check **whether expectations were met.** It does not reduce this to a single success rate. The three layers below have different causes and are judged separately.
+
+| Layer | What it looks at |
 |---|---|
-| `execution` | Did the command **actually run?** A guard refusal is not an execution failure |
-| `parse` | Was it read structurally · **no parser exists** · explicit parse failure |
-| `task` | Did it do its job. **Finding something absent succeeds by failing** |
+| `execution` | Whether the command **actually ran.** Separates a guard refusal from an execution failure |
+| `parse` | Whether it was read as structure · **having no parser** · an explicit parse failure |
+| `task` | Whether it accomplished its assignment. **A task that looks for something absent succeeds by failing** |
 
-Two of these are deliberately *not* failures — counting them as such would report the policy
-working as a parism failure. A guard refusal shows up as `execution: blocked` on its own.
+When the guard blocks something, it comes out separately as `execution: blocked`. **A command with no parser is not a failure** — it means Parism does not know the format, not that something went wrong. **An unsupported format does fail explicitly** — no empty result goes out quietly, and a usable alternative argument comes with it. **An item with no expected value stays out of the ratio.**
 
-- **No parser is not a failure.** It is the fact that parism does not know the format.
-- **An unsupported format fails explicitly.** It does not return an empty result quietly; it suggests a usable substitute.
-- **An item with no stated expectation is left out of the rates.** Unknown things are not reported as known.
-
-The `retry-rate` scenario measures one contract directly: **a retained result is never re-executed.**
-It retains a result from an empty temporary repository, then **creates a new file**. If the new
-file shows up in the retained result, the command was re-run.
+The `retry-rate` scenario measures the "stored results are never re-executed" contract directly. It stores a result in an empty temporary repository, then creates a new file; if the later-created file shows up, the command was re-run.
 
 ```bash
-parism eval                    # all scenarios
+parism eval                    # everything
 parism eval execution-parse    # one scenario
 parism eval --verbose          # every observation
 ```
 
-Exit code is 1 if any item with an expectation does not match.
+If any item deviates from its expectation, the exit code is `1`.
 
-**Without `reviewed_by` an expectation is a proposal, not a contract.** `parism test` does not count it as a contract violation. It also never *writes* expectations — auto-updating them is the cheapest way to hide a regression.
-- **Replay does not re-execute the command.** It uses the stored stdout only. Re-running would mix in the environment at that moment and make "the parser changed" indistinguishable from "the machine changed".
-- **Evidence expectations check only the pointers you list.** Turn on `evidence.exhaustive: true` for a full sweep.
-- The manifest contract is SPECIFICATION 5.2.4.
+### A closed loop that reproduces regressions with fixtures
 
-### CLI Commands
+`parism capture` → a human writes the expected values → `parism test` → what drifted comes back as a path.
+
+```console
+$ parism capture "ls -l src"
+Fixture saved: /home/you/.parism/fixtures/ls-20261005-163909.json
+Exit code: 0
+This fixture replays but has no expected values yet.
+Add expected (and reviewed_by) by hand, then run: parism test /home/you/.parism/fixtures
+
+# ── a human writes the expected values after checking them against the raw output ──
+#   "expected": {
+#     "parsed": { "entries": [ … ] },     ← list only some fields and the rest all come back as "extra"
+#     "reviewed_by": "name",
+#     "note": "why this value is right"
+#   }
+
+$ parism test ~/.parism/fixtures
+fixture 4개
+  검토된 기대값 1개 중 일치 0 · 변화 1
+  미검토 기대값 3개 (사람이 검토해야 계약이 된다)
+  매니페스트 오류 0개
+
+의도치 않은 계약 변화 10건 — 이걸 확인하기 전에는 배포 판정을 하지 않는다:
+  ls-20261005-163909  (ls)
+  [parsed] 10건
+    /entries/0/name  value  기대 "WRONG" → 실제 "cli"
+    /entries/2  extra  기대 undefined → 실제 { … "name":"config" … }
+    …
+```
+
+**The comparison is exhaustive.** List only some fields in the expectation and every unlisted one comes back as `extra` — nine of the ten above. **An expectation has to be written in the exact shape the parser actually returns.**
+
+- **A capture does not store the raw output verbatim.** Secrets, home paths, and `--token=`-style argument values are masked, with what was masked recorded in `redactions`. A sensitive value keeps its shape and loses only its value — blanking it entirely would make the fixture look fabricated.
+- **Without `reviewed_by`, an expected value is a proposal.** `parism test` does not count it as a contract violation. `parism test` also **never writes** expected values — auto-updating is the cheapest way to hide a regression.
+- **Replaying does not re-run the command.** It uses only the stored stdout. Re-running mixes in the environment of that moment, which makes "the parser changed" and "the machine changed" indistinguishable.
+- Expected evidence checks only the pointers you listed. Use `evidence.exhaustive: true` for a full comparison.
+
+The manifest format and the full contract are in [SPECIFICATION.md](SPECIFICATION.md) §5.2.4.
+
+### CLI commands
 
 | Command | Description |
 |---|---|
-| `parism capture "<command>"` | Execute a command and save its **sanitized** output as a fixture manifest |
-| `parism init-parser <name>` | Scaffold a TypeScript parser pack (parser.ts + schema.json + fixtures/) |
-| `parism test [dir]` | Replay a fixture set offline and report **which paths changed** (exit 1 on a broken fixture) |
-| `parism add <path>` | Register a local parser pack permanently to ~/.parism/parsers/ |
-| `parism inspect <command> [args...]` | Compare raw / parsed / compact output + token counts |
+| `parism capture "<command>"` | Run a command and store its sanitized output as a fixture manifest |
+| `parism init-parser <name>` | Generate a TypeScript parser pack scaffold (parser.ts + schema.json + fixtures/) |
+| `parism test [dir]` | Replay a fixture set offline and report changed paths (exit 1 if any fixture is broken) |
+| `parism add <path>` | Permanently register a local parser pack in `~/.parism/parsers/` |
+| `parism inspect <command> [args...]` | Compare raw / parsed / compact output and count tokens |
+| `parism eval [scenario]` | Judge, in three layers, whether behavior matches expectations on this host |
 
-### ParserPack Interface
-
-External parsers implement this interface:
+### The ParserPack interface
 
 ```typescript
 import type { ParserPack } from "@nerdvana/parism/types";
 
 const pack: ParserPack = {
   name: "my-command",
-  parse(raw, args, ctx?) { /* return structured result */ },
-  schema: { /* JSON Schema */ },
+  parse(raw, args, ctx?) { /* return a structured result */ },
+  schema: { /* Zod schema */ },
   fixtures: [{ input: "...", args: [], expected: { /* ... */ } }],
-  acceptedFlags: { "-a": "bool", "-n": "value" }, // optional: flags whose output format is handled; others yield unsupported_format
-  acceptedPositionals: { max: 1 },                // optional: positional argument rule
-  supports: (args) => args.length < 4,            // optional: extra rule applied after the declaration
-  headerLines: 1,                                 // optional: number of non-data header lines
-  noise: /^Total /,                               // optional: pattern for non-data lines
-  rowsKey: "items",                               // optional: array holding one row per data line (invariant checks)
+  acceptedFlags: { "-a": "bool", "-n": "value" }, // optional: flags that were verified to select the output format. Anything else is unsupported_format
+  acceptedPositionals: { max: 1 },                // optional: positional argument rules
+  supports: (args) => args.length < 4,            // optional: extra rules applied after the declarations
+  headerLines: 1,                                 // optional: leading lines that are not data
+  noise: /^Total /,                               // optional: line patterns that are not data
+  rowsKey: "items",                               // optional: the array holding one row per data line
 };
 
 export default pack;
 ```
 
-### External Parser Isolation
+### External parser isolation
 
-Registered packs run, by default, in one worker thread per pack (`parsers.external_isolation: "worker"`). The server thread never executes the pack module; it receives only the declared contract, and function-valued declarations such as `supports` and `hint` are evaluated in the worker on each call. When a single `parse()` exceeds `external_time_limit_ms` (default 500 ms), the worker exits abnormally, or its heap exceeds `external_memory_limit_mb` (default 128 MB), the call reports `parse_error.reason = "parser_exception"` and the worker is restarted on the next call. The server keeps responding. With `strict_schemas`, the worker validates the result against the pack schema.
+Registered packs are read and executed in a worker thread, one per pack, by default (`parsers.external_isolation: "worker"`). The server thread never executes pack modules; it receives only contract declarations, and function declarations such as `supports` and `hint` are evaluated in the worker on every call.
 
-- `parse()` must return structured-clone-able data. Values containing functions, Promises or Symbols yield `parser_exception`.
-- `parse()` cannot see server-thread global state. `console` output inside a pack goes to stderr.
-- Each call copies the input and the result: about 0.1 ms extra per call for a 20-line input and about 1.6 ms for 500 lines (`npm run benchmark:external`).
-- To run packs on the server thread as before, set `"parsers": { "external_isolation": "none" }` in the global `~/.parism/prism.config.json`.
-- `parism add` also reads the pack name in a worker. The fixture replay helper (`runFixtureTests`) is an author tool and runs the pack on the calling thread.
+If a single `parse()` call (including `supports` and `hint` round trips) exceeds `external_time_limit_ms` (default 500 ms), if the worker dies, or if the V8 heap exceeds `external_memory_limit_mb` (default 128 MB), the result is reported as `parse_error.reason = "parser_exception"`. For the following backoff period (starting at 2 seconds and doubling while the failure persists, up to 30 seconds) no worker is spawned and calls fail immediately; once the period elapses, the next call spawns a worker again. The server keeps responding throughout. `strict_schemas` checking is performed by the worker against the pack's schema.
 
-Worker isolation is fault isolation, not a security sandbox. A worker has the same permissions as the server process (files, network, child processes, environment variables). Register only packs you wrote or reviewed, and run Parism inside a container or VM when you need third-party packs you do not trust. See [SECURITY.md](SECURITY.md).
+- `parse()` must return a value that survives structured clone. Functions, Promises, and Symbols are `parser_exception`.
+- `parse()` cannot see the server thread's global state. Output from `console` and `process.stdout.write` inside a pack goes to stderr.
+- The heap ceiling limits the V8 heap only. Memory allocated outside it, such as a `Buffer`, is not limited.
+- Every call pays to clone the input and the result. That is about 0.1 ms per call for 20 lines of input and about 1.6 ms for 500 lines (`npm run benchmark:external`).
+- To run on the server thread as before, put `"parsers": { "external_isolation": "none" }` in the global `~/.parism/prism.config.json`.
 
-Running `parism` without arguments starts the MCP server as before.
+**Worker isolation contains defects; it is not a security sandbox.** A worker holds the server process's full privileges — files, network, child processes, environment variables. Register only packs you wrote or reviewed, and run Parism itself inside a container or VM if you need to load third-party packs you do not trust. See [SECURITY.md](SECURITY.md).
 
 ---
 
-## What Parism Is Not
+## What Parism is not
 
-Parism is not a new shell. It does not replace bash. It sits above bash, receives output, and structures it.
+Parism is not a new shell. It does not replace bash. It sits on top of bash, captures the output, and structures it.
 
-Parism is not an operating system for AI. Its concern is singular: when an agent issues a command, return the result in a form the agent can understand.
+Parism is not an operating system for AI. There is one concern: when an agent issues a command, hand the result back in a form the agent can read.
 
-Parism does **not** invent evidence. It can answer where a value came from as a byte span, but that is not proof the value is true. Completeness that was never confirmed is `unknown`, not `false`.
+Parism **does not manufacture evidence.** It can tell you which bytes a value came from, but not that the value is true. Completeness that could not be verified is `unknown`, not `false`.
 
-Parism does **not** re-run the same command to answer evidence, budget, or comparison questions. It reads a retained copy, continues a truncated result, or compares two stored results. It will not execute a command on your behalf to fill a gap.
+Parism **does not re-run the same command to look up evidence, apply a budget, or compare results.** Those read stored results, continue reading a truncated one, and diff two results. It is not a tool that re-executes what has gone missing.
 
-Parism is **not** a watch loop. Comparison is between two results that already exist. When to look again is the caller's decision.
+Parism **is not a watch loop.** A comparison works on two results that already exist. When to look again is the caller's decision.
 
-Parism does **not** promise an exact model token count. The fixed tokenizers (`parism/approx`, `byte`) hold for the parism JSON payload only — not transport, client, or model-internal tokens.
-
-The Unix philosophy was "do one thing well." Parism understands that.
+Parism **does not promise an exact model token count.** The fixed tokenizers (`parism/approx`, `byte`) cover the Parism JSON payload only. Transport, client, and model-internal tokens are not included.
 
 ---
 

@@ -24,7 +24,7 @@ function configWithSecrets(secrets: Record<string, unknown>) {
   return file;
 }
 
-/** 기본 패턴이 잡아야 하는 합성 비밀. 전부 실제 서/providers 형식이다. */
+/** 기본 패턴이 잡아야 하는 합성 비밀. 전부 실제 서비스/providers 형식이다. */
 const CANARIES: Array<[string, string]> = [
   ["OpenAI/Anthropic", "sk-" + "a".repeat(32)],
   ["GitHub PAT", "ghp_" + "b".repeat(36)],
