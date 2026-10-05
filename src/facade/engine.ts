@@ -37,7 +37,7 @@ import { buildFingerprint, type UserContext }                                   
 import { compareResults, type CompareOptions, type CompareResult, type CompareSide } from "../engine/compare/index.js";
 import { ResultStore, resolvePointer, type StoredResult }                           from "../engine/result-store.js";
 import { buildLineIndex, hashContent, type FieldEvidence, type RawEvidence, type SourceSpan } from "../engine/evidence.js";
-import { buildReview, evidenceToByteSpans, mintResultId, verifySpans, ENVELOPE_SCHEMA_VERSION } from "../engine/review.js";
+import { buildReview, evidenceToByteSpans, mintResultId, sliceByBytes, verifySpans, ENVELOPE_SCHEMA_VERSION } from "../engine/review.js";
 import { maskWithRanges, type MaskedRange }                                          from "../engine/mask-map.js";
 import type { ReviewField }                                                          from "../types/envelope.js";
 
@@ -920,7 +920,7 @@ export class ParismEngine {
       age_ms: lookup.age_ms,
       review: stored.review,
       /** 사람이 확인할 수 있게 마스킹된 정규 원문의 해당 구간 텍스트를 함께 준다 */
-      quoted: last.source_spans.map(span => text.slice(span.start, span.end)),
+      quoted: last.source_spans.map(span => sliceByBytes(text, span.start, span.end)),
     };
   }
 

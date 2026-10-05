@@ -48,7 +48,7 @@
 
 import { createRegistry } from "../dist/parsers/index.js";
 import { buildLineIndex } from "../dist/engine/evidence.js";
-import { evidenceToByteSpans, verifySpans } from "../dist/engine/review.js";
+import { evidenceToByteSpans, sliceByBytes, verifySpans } from "../dist/engine/review.js";
 import { maskWithRanges } from "../dist/engine/mask-map.js";
 import { DEFAULT_OUTPUT_REDACT_PATTERNS } from "../dist/engine/redactor.js";
 
@@ -374,8 +374,15 @@ const byCheck = { value: 0, count: 0, span: 0, unknown: 0, secret: 0 };
  * 이 게이트는 판정하는 도구이므로, 그 도구가 헷갈리지 않는 것이 정확성보다 앞선다.
  */
 const observed = { explicitFailure: 0, unparseableCases: 0 };
-/** 구간이 원문 안에는 있으나 그 값을 담지 못한 건수 — 결함이 아니라 '모른다고 말한 것' 이다. */
+/**
+ * 구간이 원문 안에는 있으나 그 값을 담지 못한 건수 — 결함이 아니라 '모른다고 말한 것' 이다.
+ *
+ * **총합만 세지 않는다.** 어느 transform 에서 남았는지 알지 못하면 숫자가 무엇을 말하는지
+ * 모른다. 변환별로 갈라 세어야 다음에 무엇을 볼지가 보인다.
+ */
 let unverified = 0;
+let maskedSpans = 0;
+const unverifiedBy = new Map();
 const started = Date.now();
 
 for (let i = 0; i < TOTAL; i++) {
@@ -509,7 +516,25 @@ for (let i = 0; i < TOTAL; i++) {
          * 그래서 관측치로만 세고 결함 수에는 넣지 않는다.
          */
         const check = verifySpans(masked.text, [sp], value);
-        if (!check.ok) unverified++;
+        if (check.ok) continue;
+        /**
+         * **가려진 값은 검증할 수 있는 것이 아니다.**
+         *
+         * 시크릿이 가려지면 구간이 치환 토큰을 담고 값은 원래 문자열이므로, 물리적으로
+         * 같을 수 없다. 엔진은 이런 구간을 `masked` 로 따로 보고하므로 **올바른 처리**다.
+         * 처음에는 그것을 '검증 실패' 로 세어, 마스킹이 근거를 약화시키지 않는데도
+         * 약화시키는 것처럼 세고 있었다. 마스킹 표식의 수치를 따로 센다.
+         */
+        const slice = sliceByBytes(masked.text, sp.start, sp.end);
+        const bucket = slice.includes(REDACTED) ? "가려진 값 (masked — 검증 불가이므로 낮추는 것이 맞다)" : "그 밖에 못 담음";
+        maskedSpans += bucket === "가려진 값 (masked — 검증 불가이므로 낮추는 것이 맞다)" ? 1 : 0;
+        if (bucket.startsWith("그 밖에")) {
+          unverified++;
+          /** 포인터의 인덱스를 지워 필드 이름만 남긴다 — 항목마다 번호가 다르므로 */
+          const field = pointer.replace(/\/\d+/g, "/*");
+          const key = `${field}  ${sp.transform ?? "(transform 없음)"}`;
+          unverifiedBy.set(key, (unverifiedBy.get(key) ?? 0) + 1);
+        }
       }
     }
   }
@@ -527,6 +552,14 @@ console.log(`  파싱 성공 ${tally.pass} · 파싱 실패 ${tally.fail} · 예
 
 console.log(`\n  관측: 구간은 원문 안에 있으나 그 값을 담지 못해 '근거 없음' 으로 낮춘 건 ${unverified}건`);
 console.log("        (결함이 아니다 — 모른다고 말한 것을 그렇게 말한 것)");
+console.log(`  관측: 그 밖에 못 담은 게 아니라 **가려져서** 담을 수 없는 구간 ${maskedSpans}건`);
+console.log("        (시크릿이 [REDACTED] 로 바뀌었으므로 낮추는 것이 옳다. 엔진도 masked 로 따로 보고한다)");
+if (unverifiedBy.size > 0) {
+  console.log("        transform 별로 갈라 보면:");
+  for (const [k, v] of [...unverifiedBy.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`          ${k.padEnd(24)} ${v}건`);
+  }
+}
 
 if (failures.length === 0) {
   console.log(`\n  ${"=".repeat(76)}`);

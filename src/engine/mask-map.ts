@@ -76,26 +76,71 @@ export function maskWithRanges(text: string, patterns: string[]): MaskResult {
   if (stages.length === 0) return { text, ranges: [], count: 0 };
 
   /**
-   * 뒤 단계의 구간을 최초 좌표계로 옮긴다.
-   * 앞 단계에서 같은 길이로 치환된 구간은 겹치지 않으므로, 앞에서 누적된 치환량만큼만 빼면 된다.
+   * 뒤 단계의 구간을 **최초 좌표계**로 옮긴다.
+   *
+   * k 번째 단계에서 발견된 구간은 **k-1 단계까지 치환된 문자열의 좌표**다.
+   * 그 문자열은 최초 문자열보다 짧으므로, 같은 내용이 최초 좌표에서는 **더 뒤**에 있다.
+   *   최초 위치 = 단계 좌표 + (앞선 치환이 줄인 만큼)
+   *
+   * ## 여기서 두 가지를 반드시 지켜야 한다
+   *
+   * **1) 같은 단계의 구간에는 감소량을 적용하지 않는다.**
+   * 같은 단계의 모든 구간은 **같은 문자열**에서 나온 것이다. 앞 구간을 치환한 **뒤에**
+   * 뒤 구간을 찾은 것이 아니므로, 앞 구간의 길이 감소는 뒤 구간의 좌표에 반영되어 있지 않다.
+   * 반영하면 구간이 **앞당겨진다.**
+   *
+   * 실측(시크릿 두 개가 있는 출력):
+   *   참 구간  `[282, 324)` — `ghp_CANARY…` 42글자
+   *   잘못된 값 `[250, 292)` — 32글자 앞당겨져 앞 레코드의 끝, 개행,
+   *            다음 레코드의 **상태 두 글자**까지 삼켰다. 그래서 그 레코드의 상태 근거가
+   *            경로 한가운데를 가리켰다. 틀린 값이 아니라 근거가 없는 값이라 드러나지 않는다.
+   *
+   * **2) 감소량은 더한다.** 치환은 문자를 **줄였다**니 뒤 구간의 최초 좌표가 뒤로 밀린다.
+   * 빼면 앞당겨진다.
    */
+  type Placed = { range: MaskedRange; stage: number };
+  const placed: Placed[] = [];
   const original: MaskedRange[] = [];
-  for (const step of stages) {
-    for (const range of step) {
-      let delta = 0;
-      for (const earlier of original) {
-        if (earlier.start >= range.end) break;
-        delta += earlier.maskedLength - (earlier.end - earlier.start);
+
+  for (let k = 0; k < stages.length; k++) {
+    for (const range of stages[k]!) {
+      /**
+       * k 보다 앞선 단계의 구간만 이 구간의 좌표를 밀어 놓았다.
+       * 그 구간들의 끝을 **k 단계 좌표로 되돌린 뒤에** 앞에 있는지 비교한다.
+       */
+      const earlierStages = placed.filter(p => p.stage < k);
+      let shrink = 0;
+      for (const p of earlierStages) {
+        const pEndHere = p.range.end + shrinkOf(earlierStages, p);
+        if (pEndHere <= range.start) shrink += (p.range.end - p.range.start) - p.range.maskedLength;
       }
-      const start = range.start + delta;
-      const end   = range.end + delta;
+      const start = range.start + shrink;
+      const end   = range.end + shrink;
       /** 앞 단계에서 이미 가려진 구간이면 건너뛴다 */
-      if (original.some(earlier => start < earlier.end && end > earlier.start)) continue;
-      original.push({ start, end, maskedLength: range.maskedLength });
+      if (original.some(e => start < e.end && end > e.start)) continue;
+      const entry: MaskedRange = { start, end, maskedLength: range.maskedLength };
+      original.push(entry);
+      placed.push({ range: entry, stage: k });
     }
   }
+
   original.sort((a, b) => a.start - b.start);
   return { text: current, ranges: original, count: original.length };
+}
+
+/**
+ * `target` 보다 앞에 있는 구간들이 **줄인 글자 수**의 합.
+ *
+ * `all` 은 발견 순서(같은 단계 안에서는 오름차순)다. 단계가 순서대로 적용되므로
+ * 먼저 발견된 구간이 항상 앞에 온다.
+ */
+function shrinkOf(all: readonly { range: MaskedRange }[], target: { range: MaskedRange }): number {
+  let sum = 0;
+  for (const p of all) {
+    if (p === target) break;
+    sum += (p.range.end - p.range.start) - p.range.maskedLength;
+  }
+  return sum;
 }
 
 /**
