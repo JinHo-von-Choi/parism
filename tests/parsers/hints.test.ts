@@ -128,7 +128,7 @@ describe("failure.hint 안내 인자", () => {
       ["ls", ["-li"]], ["git", ["diff", "--word-diff"]], ["git", ["log", "-p"]], ["grep", ["-z", "x", "f"]],
       ["ps", ["-ef"]], ["ps", ["-eo", "pid,ppid,comm"]], ["systemctl", ["is-enabled", "cron"]], ["systemctl", ["status"]], ["systemctl", ["status", "1234"]],
       ["systemctl", ["list-unit-files"]],
-      ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["images"]], ["stat", ["-c", "%s", "a"]],
+      ["curl", ["-s", "https://example.com"]], ["ss", ["-s"]], ["apt", ["show", "bash"]], ["docker", ["images", "--format", "json"]], ["stat", ["-c", "%s", "a"]],
     ] as Array<[string, string[]]>) {
       const r = reg.parse(cmd, args, "");
       expect(r.parse_error?.reason).toBe("unsupported_format");
