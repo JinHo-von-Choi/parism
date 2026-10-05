@@ -846,7 +846,7 @@ MCP 서버 진입(`src/index.ts`)과 라이브러리 `createEngine()`은 동일�
 - [SECURITY.md](SECURITY.md) — 위협 모델, 4겹 방어선 한계, 취약점 신고 채널
 - [Requirements.md](Requirements.md) — v0.4 피드백 기반 요구사항 원본 (보안·테스트·기능 확장)
 - [docs/failure-cases-2026-10-05.md](docs/failure-cases-2026-10-05.md) — 실측으로 잡은 결함과 **재현하지 못한 주장**. 근거 조회·예산·의미 diff 도입 기간의 측정 기록
-- [docs/plans/2026-03-06-benchmark.md](docs/plans/2026-03-06-benchmark.md) — 토큰 비용·CFR 벤치마크 프레임워크 원본 플랜
+- ~~`docs/plans/2026-03-06-benchmark.md`~~ — **이 파일은 더 이상 존재하지 않는다.** 토큰 비용·CFR 벤치마크 프레임워크의 원본 플랜이었고, README 가 인용하던 CFR 수치(4.18%·28.6%)의 출처였다. 수치까지 함께 지웠다(README 의 파싱 오류 절). 현재 재현 가능한 것은 `experiments/` 아래 스크립트들이다.
 - [docs/plans/2026-03-06-issue-remediation.md](docs/plans/2026-03-06-issue-remediation.md) — Guard 경로 인자 검증, config 깊은 병합, 버전 정합화 플랜
 - [docs/plans/2026-03-07-safe-os-gateway.md](docs/plans/2026-03-07-safe-os-gateway.md) — v0.2 Safe OS Gateway 구현 플랜 (compact 포맷, native JSON 패스스루)
 - [docs/plans/2026-03-12-feedback-critical-acceptance.md](docs/plans/2026-03-12-feedback-critical-acceptance.md) — v0.4 비판적 수용 플랜 (경로 가드 완성, 스냅샷 성능, 파서 실패 관측)

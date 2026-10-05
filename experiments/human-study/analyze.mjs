@@ -35,7 +35,19 @@ function rng(seed) {
 }
 
 const MIN_N = 5;
+/**
+ * 실험군. **A/B 를 손으로 반복해서 쓰지 않는다.**
+ *
+ * 이 상수가 코드에 있는데 쓰이지 않았다. 쓰이지 않는 채로 "A" 와 "B" 가 여덟 곳에
+ * 흩어져 있었다 — 실험군 이름을 한 군데서 바꿔야 할 때 여덟 군데를 함께 바꿔야 하는
+ * 상태였고, 하나만 빠지면 한쪽 실험군이 조용히 0건이 된다.
+ *
+ * 키가 곧 채점 시트의 `arm` 열 값이다. 여기 없는 값이 들어오면 **거절한다**
+ * (알 수 없는 실험군을 조용히 버리지 않는다).
+ */
 const ARMS = { A: "기준선(평소 쓰는 도구)", B: "후보(parism)" };
+const ARM_KEYS = Object.keys(ARMS);
+const isArm = v => ARM_KEYS.includes(v);
 
 /**
  * 비율의 신뢰구간 — Wilson.
@@ -147,8 +159,8 @@ const badKind = rows.filter(r => r.wrong_kind === "none" && r.correct !== 1);
 if (badKind.length) problems.push(`wrong_kind=none 인데 correct=1 이 아닌 기록 ${badKind.length}건`);
 const badKind2 = rows.filter(r => r.correct === 1 && r.wrong_kind !== "none");
 if (badKind2.length) problems.push(`correct=1 인데 wrong_kind=none 이 아닌 기록 ${badKind2.length}건`);
-const badArm = rows.filter(r => r.arm !== "A" && r.arm !== "B");
-if (badArm.length) problems.push(`arm 이 A/B 가 아닌 기록 ${badArm.length}건`);
+const badArm = rows.filter(r => !isArm(r.arm));
+if (badArm.length) problems.push(`arm 이 ${ARM_KEYS.join("/")} 가운데 어느 것도 아닌 기록 ${badArm.length}건`);
 const noTime = rows.filter(r => !Number.isFinite(r.verify_seconds) || r.verify_seconds <= 0);
 if (noTime.length) problems.push(`verify_seconds 가 없는 기록 ${noTime.length}건`);
 
@@ -180,9 +192,11 @@ console.log("  팔별 정확률 (기계 채점)");
 console.log("=".repeat(74));
 console.log("\n  팔    시도   정확     95% 신뢰구간");
 console.log(`  ${"-".repeat(52)}`);
+/** A/B 가 무엇인지 표에 적는다 — 팔만 보여주면 읽는 사람이 무슨 비교인지 모른다 */
+console.log(`  ${ARM_KEYS.map(a => `${a} = ${ARMS[a]}`).join("  ·  ")}`);
 
 const byArm = {};
-for (const arm of ["A", "B"]) {
+for (const arm of ARM_KEYS) {
   const rs = rows.filter(r => r.arm === arm);
   if (rs.length === 0) continue;
   const ok = rs.filter(r => r.correct === 1).length;
@@ -216,7 +230,7 @@ console.log("  사람이 매긴 것 (분포를 본다 — 평균을 쓰지 않�
 console.log("=".repeat(74));
 console.log("\n  팔    시도횟수  중앙값    p90   |  확인초  중앙값    p90");
 console.log(`  ${"-".repeat(62)}`);
-for (const arm of ["A", "B"]) {
+for (const arm of ARM_KEYS) {
   const rs = rows.filter(r => r.arm === arm && Number.isFinite(r.attempts) && r.attempts > 0);
   if (rs.length === 0) continue;
   const att = rs.map(r => r.attempts);
@@ -246,8 +260,8 @@ const heavy = [
   ["refused_wrongly",      "답할 수 있는데 거절함"],
 ];
 for (const [code, desc] of heavy) {
-  const a = rows.filter(r => r.arm === "A" && r.wrong_kind === code).length;
-  const b = rows.filter(r => r.arm === "B" && r.wrong_kind === code).length;
+  const a = rows.filter(r => r.arm === ARM_KEYS[0] && r.wrong_kind === code).length;
+  const b = rows.filter(r => r.arm === ARM_KEYS[1] && r.wrong_kind === code).length;
   console.log(`  ${code.padEnd(22)} ${desc.padEnd(28)} ${String(a).padStart(5)}  ${String(b).padStart(5)}`);
 }
 
@@ -261,8 +275,8 @@ console.log("\n  코드                  전체    A      B");
 console.log(`  ${"-".repeat(40)}`);
 for (const k of kinds) {
   const all = rows.filter(r => r.wrong_kind === k).length;
-  const a = rows.filter(r => r.arm === "A" && r.wrong_kind === k).length;
-  const b = rows.filter(r => r.arm === "B" && r.wrong_kind === k).length;
+  const a = rows.filter(r => r.arm === ARM_KEYS[0] && r.wrong_kind === k).length;
+  const b = rows.filter(r => r.arm === ARM_KEYS[1] && r.wrong_kind === k).length;
   console.log(`  ${k.padEnd(20)} ${String(all).padStart(5)}  ${String(a).padStart(5)}  ${String(b).padStart(5)}`);
 }
 

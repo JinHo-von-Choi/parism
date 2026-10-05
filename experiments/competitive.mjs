@@ -36,15 +36,12 @@
  * 작성일: 2026-10-05
  */
 
-import { execFileSync, execFile } from "node:child_process";
-import { writeFileSync, mkdtempSync, readFileSync, rmSync, statSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { promisify } from "node:util";
+import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { createEngine } from "../dist/facade/engine.js";
 import { expectedTsOver, makeListRepo, withTemp } from "./lib/harness.mjs";
 
-const execFileAsync = promisify(execFile);
 
 const MIN_BYTES = 2048;
 const WANT = 3;
@@ -292,7 +289,6 @@ await withTemp(async (root) => {
     /** jc 의 find 파서는 크기를 주지 않는다 — '큰 순' 을 낼 수 없다는 뜻이며, 실패가 아니다. */
     const canRank = key !== "jc";
 
-    const hit = paths.filter(p => wantPaths.includes(p));
     /** 큰 순 3개를 낼 수 없는 팔은 recall/order 를 조작해 만들지 않는다. */
     const first3   = canRank ? paths.slice(0, WANT) : [];
     const recallHit = canRank ? wantPaths.filter(p => paths.includes(p)).length : NaN;

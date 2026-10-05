@@ -9,7 +9,7 @@
     "./types": "./dist/parsers/registry.js",
     "./engine": {
       "import": "./dist/facade/engine.js",
-      "types":  "./dist/facade/engine.d.ts"
+      "types": "./dist/facade/engine.d.ts"
     }
   },
   "bin": {
@@ -22,7 +22,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src tests",
+    "lint": "eslint src tests experiments",
     "benchmark": "npx tsx benchmarks/index.ts",
     "benchmark:external": "npx tsx benchmarks/external-parse.ts"
   },

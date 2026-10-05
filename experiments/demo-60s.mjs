@@ -103,7 +103,6 @@ await withTemp(async (root) => {
   console.log(`${"=".repeat(72)}\n`);
 
   const pick = entries[0];
-  const idx = 0;
   console.log(`고른 값: ${pick?.name ?? pick?.path} (${pick?.type}, ${pick?.size_bytes} 바이트)`);
 
   const ex = engine.explainResult(r1.review.result_id, "/entries/0/size_bytes");

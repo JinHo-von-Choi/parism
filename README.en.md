@@ -38,9 +38,13 @@ This has a cost. Running `ls` once looks simple, but the agent may spend dozens 
 
 When building Parism, the expectation was token savings. Structured data should be more efficient than raw text.
 
-Benchmarks across 17 scenarios flatly contradicted that. JSON output averages 205% heavier than raw text. For `ls -la` with 200 files: raw 5,807 tokens, Parism 15,531 tokens. Nearly triple, because key names repeat with every entry. What a human eye resolves from a single header row, JSON spells out N times.
+The expectation was wrong. JSON output is **considerably heavier** than raw text. Measured right next to this sentence (`node experiments/token-cost.mjs`), for `ls -la` with 200 entries: raw 5,044 tokens against JSON 12,204 tokens — **142.0% heavier.** At 500 entries: raw 12,545 against JSON 30,122, **140.1%.** Key names repeat with every entry. What a human eye resolves from a single header row, JSON spells out N times.
 
-But the same benchmarks revealed something else: the disappearance of "explanation tokens." With raw text, the agent needs context — "this format has permissions in the first column, owner in the third." That context prompt shrinks by an average of 61% with Parism. JSON describes its own structure. The agent just reads keys.
+The **205%** that used to stand here cited a `2026-03-06` benchmark document that **no longer exists**, and named no tokenizer, so it could not be compared with any other source. It was removed and replaced with a **runnable script** — the figure is now a measurement you can execute, not a sentence.
+
+The disappearance of "explanation tokens" is **not measured in this repository.** The `61%` that used to stand here came from the same missing benchmark document, and reproducing it would require measuring how much context a model actually writes — not something that can be done from here. So the number was removed.
+
+The qualitative argument stands. With raw text the agent needs context — "this format has permissions in the first column, owner in the third." JSON describes its own structure, so the agent just reads keys. **How much that shrinks is measurable by the human study (30 tasks, 5-8 people), which has not been run.**
 
 And there is a crossover point. For one-shot queries — run `ls` once, done — Parism costs more tokens. But the moment that result feeds into a next step, the cost structure inverts. An agent that misreads raw text writes to a nonexistent path, debugs the failure by scanning history, retries, fails again. Tokens snowball. An agent that starts with structured data never enters that cycle.
 
@@ -126,11 +130,19 @@ The information does not change. The shape does. The agent no longer parses. It 
 
 Text parsing breaks easily. `ps aux` has different column ordering on Linux and macOS. The `1K-blocks` header in `df -h` varies by environment. Filenames with spaces almost always break `ls` parsing.
 
-In numbers: raw text parsing by agents has an average CFR (Critical Failure Rate) of 4.18%. With filenames containing spaces, it climbs to 28.6%. That means 286 out of 1,000 calls produce a wrong file listing that the agent then acts on — reading wrong files, writing to nonexistent paths, deleting the wrong thing.
+Raw text parsing by agents does misread output. **But the rate is not measured here.** The `4.18%` and `28.6%` figures that used to stand here cited a `2026-03-06` benchmark document that **no longer exists**, and there is no way to reproduce them from this repository — that would require actually running an agent. Unreproducible numbers were removed rather than kept. The qualitative argument stands: a misread leads the agent to write to a path that does not exist, then to spend retries recovering from it, and then to misread again. Retry tokens and rollback cost.
 
-macOS `stat` is a starker example. Its output format is entirely different from Linux. Linux uses labeled lines like `Size: 4096`; macOS outputs a single unlabeled line. Apply a Linux parsing pattern and accuracy drops to 0%. Parism detects the OS and selects the correct parser. The agent never needs to know the difference.
+macOS `stat` is a starker example. Its output format is entirely different from Linux. Linux uses labeled lines like `Size: 4096`; macOS outputs a single unlabeled line. Apply a Linux parsing pattern unchanged and you get nothing at all — this is a **fact about the shapes, not a measured rate**. Parism detects the OS and selects the correct parser. The agent never needs to know the difference.
 
-Parism's CFR is 0%. Parsers are deterministic code, not probabilistic inference. The agent receives structured data.
+**Parism's CFR is 0% was removed.** That the parsers are deterministic code and that the parse is **correct** are two different claims. The first is a property of the implementation; the second has to be measured — **and it is not measured in this repository.** What stands in its place is only what was actually measured.
+
+| | Status |
+|---|---|
+| Accuracy gate (1,200 seed-fixed cases, five judgments) | **passes** — but only two parsers: `git status --porcelain` and `ps` |
+| Platform tests (Linux/macOS/Windows CI, runs real commands) | passes — commands that are absent are skipped |
+| Human study (30 tasks, 5-8 people) | **materials only, 0 participants run.** The scoring sheet is an empty template |
+
+It cannot fail because it is deterministic is an **inference**; we measured it is a **fact**. This document leads with the fact.
 
 ### Fewer Retries
 

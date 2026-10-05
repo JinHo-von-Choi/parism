@@ -74,7 +74,6 @@ const chance = p => rand() < p;
  * 어떤 패턴에도 걸리지 않아 아무것도 검증하지 않게 된다 — 안전장치가 없는 것처럼 보인다.
  */
 const CANARY_TOKEN = "ghp_CANARY0123456789abcdefghijKLmnopqrstuv";
-const CANARY_AWS   = "AKIACANARY0123456789";
 /** 마스킹 때 쓰는 표시자 — 이건 나와야 한다. */
 const REDACTED = "[REDACTED]";
 
