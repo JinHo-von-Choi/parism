@@ -1,4 +1,4 @@
 /**
  * 패키지 메타 정보. 순환 의존성을 피하기 위해 독립 모듈로 분리.
  */
-export const PACKAGE_VERSION = "2.0.2";
+export const PACKAGE_VERSION = "2.1.0";

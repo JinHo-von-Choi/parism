@@ -488,11 +488,11 @@ Takes `base_id` and `current_id` (the `review.result_id` from `run(retain: true)
 
 ---
 
-## Migration — from 2.0.2
+## Migration — 2.0.2 to 2.1.0
 
-2.x **does not change the meaning of any existing envelope field.** `contract_version` defaults to `"stable"`, so an existing consumer that passes no new arguments gets exactly the response it got before. Using a new feature requires naming the opt-in argument.
+2.1.0 **does not change the meaning of any existing envelope field.** `contract_version` defaults to `"stable"`, so an existing consumer that passes no new arguments gets exactly the response it got before. Using a new feature requires naming the opt-in argument.
 
-**Cases that require a code change**
+**But the five cases below need a code change.** They affect code that calls these APIs directly rather than going through MCP. A consumer that only calls `run` is unaffected.
 
 | Affected | Before | Now |
 |---|---|---|

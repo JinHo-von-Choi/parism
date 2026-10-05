@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-05
+
 ### Added — M1 근거 조회
 - **근거 조회(`contract_version: 'next'` + `explain_result`)** — 계획서 5장 M1. `run` 에 `contract_version`, `evidence`, `retain` 인자를 추가했다. `review` 는 기존 봉투 필드의 뜻을 바꾸지 않고 옆에 붙는다: `result_id`, `parser_id`, `content_hash`, `schema_version`, `source_complete`, `parse_complete`, `representation_lossless`, `privacy_transform`, `retained`, `warnings`. 완성도는 `true`/`false`/**`unknown`** 세 값을 쓴다 — 확인하지 못한 것을 거짓으로 말하지 않기 위해 `unknown` 을 도입했다.
 - 필드 근거는 **마스킹된 정규 원문의 UTF-8 바이트 구간**으로 준다. 원문에 그대로 있는 값은 `verbatim`, 변환이 끼면 `derived` 로 밝히고 그 변환(`parseInt`, `trim`, `strip_tree_prefix`)을 함께 준다. 구간이 정말 그 값을 담는지 검증해 맞지 않으면 근거가 아니라 "근거 없음"으로 남긴다.
