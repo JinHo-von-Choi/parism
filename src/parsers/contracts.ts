@@ -30,6 +30,7 @@ const SS_FIELDS      = ["netid", "state", "recv_q", "send_q", "local_address", "
 const LSOF_FIELDS    = ["command", "pid", "user", "fd", "type", "device", "name", "state"] as const;
 const DOCKER_PS      = ["container_id", "image", "command", "created", "status", "ports", "names"] as const;
 const DOCKER_STATS   = ["container_id", "name", "cpu_perc", "mem_usage", "mem_limit", "mem_perc", "net_io", "block_io", "pids"] as const;
+const DOCKER_IMAGES  = ["repository", "tag", "image_id", "digest", "created", "size", "content_size"] as const;
 const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "failed"] as const;
 
 /** 행이 NUL로 끝나는 출력(find -print0, du -0, grep -Z -l)의 모양 */
@@ -249,6 +250,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         acceptedFlags:       bools("--no-stream", "--no-trunc", "-a", "--all"),
         requiredFlags:       ["--no-stream"],
         rowsKey: "stats", rowFields: DOCKER_STATS,
+      },
+      images: {
+        acceptedFlags:       { ...bools("-a", "--all", "--digests", "--no-trunc"), ...values("-f", "--filter") },
+        acceptedPositionals: { max: 0 },
+        rowsKey: "images", rowFields: DOCKER_IMAGES,
       },
     },
     headerLines: 1,

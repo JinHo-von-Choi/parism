@@ -4,6 +4,8 @@ import { parseDocker }   from "../../src/parsers/devops/docker.js";
 import { parseGh }       from "../../src/parsers/devops/gh.js";
 import { parseHelm }     from "../../src/parsers/devops/helm.js";
 import { parseTerraform } from "../../src/parsers/devops/terraform.js";
+import { createRegistry } from "../../src/parsers/index.js";
+import { toCompact }      from "../../src/parsers/compact.js";
 
 describe("parseKubectl()", () => {
   it("kubectl get events 출력을 파싱한다", () => {
@@ -84,6 +86,105 @@ describe("parseKubectl()", () => {
 });
 
 describe("parseDocker()", () => {
+  it("docker images의 현재 표 출력을 파싱한다", () => {
+    const raw = [
+      "IMAGE                    ID             DISK USAGE   CONTENT SIZE   EXTRA",
+      "alpine:3                 294b683cb724         13MB         3.94MB",
+      "ghcr.io/acme/api:1.2.3   7052ffc66657        718MB          354MB   U",
+    ].join("\n");
+
+    const result = parseDocker("docker", ["images"], raw) as {
+      resource: string;
+      images: Array<{
+        repository: string;
+        tag: string | null;
+        image_id: string;
+        created: string | null;
+        size: string;
+        content_size: string | null;
+      }>;
+    };
+
+    expect(result).toEqual({
+      resource: "images",
+      images: [
+        {
+          repository: "alpine",
+          tag: "3",
+          image_id: "294b683cb724",
+          digest: null,
+          created: null,
+          size: "13MB",
+          content_size: "3.94MB",
+        },
+        {
+          repository: "ghcr.io/acme/api",
+          tag: "1.2.3",
+          image_id: "7052ffc66657",
+          digest: null,
+          created: null,
+          size: "718MB",
+          content_size: "354MB",
+        },
+      ],
+    });
+  });
+
+  it("docker images의 전통 표와 --digests 열을 파싱한다", () => {
+    const raw = [
+      "REPOSITORY          TAG       DIGEST                                                                    IMAGE ID       CREATED        SIZE",
+      "nginx               latest    sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   5ef79149e0ec   3 weeks ago    192MB",
+    ].join("\n");
+
+    expect(parseDocker("docker", ["images", "--digests"], raw)).toEqual({
+      resource: "images",
+      images: [{
+        repository: "nginx",
+        tag: "latest",
+        image_id: "5ef79149e0ec",
+        digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        created: "3 weeks ago",
+        size: "192MB",
+        content_size: null,
+      }],
+    });
+  });
+
+  it("docker images의 빈 출력은 빈 이미지 목록이다", () => {
+    expect(parseDocker("docker", ["images"], "")).toEqual({ resource: "images", images: [] });
+    expect(parseDocker("docker", ["images"], "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE\n"))
+      .toEqual({ resource: "images", images: [] });
+  });
+
+  it("docker images의 손상된 데이터 행은 unrecognized_output이다", () => {
+    const registry = createRegistry();
+    const result = registry.parse(
+      "docker",
+      ["images"],
+      "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE\nnot-an-image-row\n",
+      { maxItems: 0, format: "json" },
+    );
+
+    expect(result.parsed).toBeNull();
+    expect(result.parse_error?.reason).toBe("unrecognized_output");
+  });
+
+  it("docker images 다중 행은 compact 형식에서 필드명 반복을 제거한다", () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      `repo${i}              latest    id${String(i).padStart(10, "0")}   ${i + 1} days ago    ${i + 10}MB`,
+    );
+    const parsed = parseDocker("docker", ["images"], [
+      "REPOSITORY          TAG       IMAGE ID       CREATED        SIZE",
+      ...rows,
+    ].join("\n"));
+    const compact = toCompact(parsed);
+
+    expect(compact.ok).toBe(true);
+    if (compact.ok) {
+      expect(JSON.stringify(compact.value).length).toBeLessThan(JSON.stringify(parsed).length);
+    }
+  });
+
   it("docker ps 출력을 파싱한다", () => {
     const raw = [
       "CONTAINER ID   IMAGE          COMMAND                  CREATED         STATUS         PORTS                    NAMES",
@@ -100,8 +201,7 @@ describe("parseDocker()", () => {
     expect(result.containers[0]?.names).toBe("web");
   });
 
-  it("docker ps/stats 외 서브커맨드는 null", () => {
-    expect(parseDocker("docker", ["images"], "REPOSITORY TAG")).toBeNull();
+  it("docker ps/stats/images 외 서브커맨드는 null", () => {
     expect(parseDocker("docker", ["inspect", "abc"], "[]")).toBeNull();
   });
 
