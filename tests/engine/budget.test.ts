@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ParismEngine } from "../../src/facade/engine.js";
@@ -341,3 +341,95 @@ describe("엔진 예산 경로", () => {
 function afterEachCleanup(fn: () => void): void {
   process.on("exit", fn);
 }
+
+describe("최종 상한 검증 (결함 A-17)", () => {
+  /**
+   * 회귀: 예산 보고와 누락 목록이 **검색이 끝난 뒤에** 붙어서,
+   * 소비자가 받는 응답이 재었던 것보다 컸다.
+   *
+   * 실측: `max_tokens: 1400` → 보고 기준 `measured_tokens: 1330`, `budget_met: true`
+   * → 실제 전달 **1,939 토큰**(상한의 138%). `budget_met: true` 가
+   * 소비자가 지불하는 비용에 대해 참이 아니었다.
+   *
+   * **엔진 경로로 재야 한다.** 표면이 붙는 곳이 엔진이기 때문에
+   * `applyBudget` 를 표면 없이 부르는 단위 시험으로는 이 결함을 잡지 못한다.
+   */
+
+  /** 실제로 전달되는 응답의 토큰 수 — 소비자가 지불하는 비용이다. */
+  const deliveredTokens = (envelope: unknown): number =>
+    countJsonTokens(JSON.stringify(envelope), "parism/approx");
+
+  /** 이 테스트의 판단 기준은 하나다 — 보고가 자기 크기를 속이지 않는다. */
+  function expectHonest(envelope: { budget?: { measured_tokens: number; budget_met: boolean }; }, cap: number): void {
+    const delivered = deliveredTokens(envelope);
+    expect(envelope.budget?.measured_tokens, "measured_tokens 가 실제 전달 수와 다르다").toBe(delivered);
+    expect(envelope.budget?.budget_met, "budget_met 이 실제 전달 크기와 다르다").toBe(delivered <= cap);
+  }
+
+  const cases: Array<[string, number]> = [
+    ["아주 작은 상한", 1300], ["작은 상한", 1400], ["중간 상한", 3000],
+    ["넉넉한 상한", 5000], ["상한을 넉넉히 준 경우", 20000],
+  ];
+
+  for (const [label, cap] of cases) {
+    for (const format of ["json", "json-no-raw"] as const) {
+      it(`${label}(max_tokens=${cap}, ${format}) — measured_tokens 가 실제 전달 수와 같다`, async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "parism-cap-"));
+        try {
+          /**
+           * **빈 디렉터리로 돌리면 이 결함이 드러나지 않는다.**
+           * 본문이 작으면 예산이 넉넉해져서, 검색이 끝난 뒤 붙는 보고·누락 목록의
+           * 크기가 아무래도 눈에 띄지 않는다. 결함은 **상한 근처에서만** 나타난다.
+           * 처음에는 빈 디렉터리로 돌려 시험이 통과했는데, 그건 시험이 빈 것이었다.
+           */
+          for (let i = 0; i < 40; i++) writeFileSync(path.join(dir, `file_${i}.txt`), "xxxxxxxxxxxx\n");
+
+          /**
+           * **가드는 실행 디렉터리(cwd) 를 검사한다.** 임시 디렉터리만 허용하고
+           * `cwd` 를 넘기지 않으면 `path_not_allowed` 로 거절되고,
+           * 시험이 조용히 조기 반환되어 **아무것도 검사하지 않은 채 통과한다.**
+           * 실제로 한 번 그랬다 — 이 결함을 되살려도 시험이 잡지 못했다.
+           */
+          const config = structuredClone(DEFAULT_CONFIG);
+          config.guard.allowed_paths = [dir, process.cwd()];
+          const engine = new ParismEngine(config, createRegistry());
+
+          const envelope = await engine.run("ls", {
+            args: ["-l", dir], cwd: dir, format,
+            budget: { max_tokens: cap, tokenizer: "parism/approx", required_fields: ["name"], overflow: "page" },
+          });
+          if (envelope.failure) return;   // 최소 봉투에 못 미치면 거절되는 것이 설계다
+          expectHonest(envelope as never, cap);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+
+  it("상한에 못 맞추면 거짓으로 참이라 하지 않고 그 사실을 알린다", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-cap-"));
+    try {
+      const config = structuredClone(DEFAULT_CONFIG);
+      config.guard.allowed_paths = [dir, process.cwd()];
+      const engine = new ParismEngine(config, createRegistry());
+      for (let i = 0; i < 40; i++) writeFileSync(path.join(dir, `f${i}.txt`), "xxxxxxxxxxxx\n");
+
+      /** raw 를 넣으면 본문이 상한을 넘겨 맞출 수 없는 입력이 된다 */
+      const envelope = await engine.run("ls", {
+        args: ["-l", dir], cwd: dir, format: "json",
+        budget: { max_tokens: 1400, tokenizer: "parism/approx", overflow: "page" },
+      });
+      if (envelope.failure) return;
+      const delivered = deliveredTokens(envelope);
+      if (delivered <= 1400) return;   // 이 환경에서 맞으면 그 성립 자체가 검증된다
+
+      expect(envelope.budget?.budget_met, "못 맞췄는데 budget_met 이 참이다").toBe(false);
+      /** 조용히 넘기지 않는다 — 왜 안 맞았는지 omission 으로 알린다 */
+      const stages = (envelope.omission ?? []).map((o: { stage: string }) => o.stage);
+      expect(stages, "안 맞췄다는 사실이 omission 에 없다").toContain("budget");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -366,6 +366,54 @@ for (const [pointer, spans] of Object.entries(raw)) {
 
 **총합만 세지 않는 것이 중요하다.** 어느 transform·어느 필드에서 남았는지 알지 못하면 그 숫자가 무엇을 말하는지 모른다. 포인터와 transform 별로 갈라 세도록 했고, 그래서 위 두 결함(A-15·A-16)이 **이 지표를 통해 드러났다.**
 
+### A-17. 예산이 상한을 넘은 응답을 `budget_met: true` 로 보고했다 (**M2 가 빠뜨린 "최종 상한 검증"**)
+
+**결함이었다.** 계획서 M2 설명은 구현 항목에 **"최종 상한 검증"** 을 명시하는데, 그게 없었다.
+
+**증상.** 소비자가 받는 응답이 요청한 상한을 넘는데 `budget_met: true` 라고 했다.
+
+```
+max_tokens: 1400 → measured_tokens: 1330, budget_met: true → 실제 전달 1,939 토큰
+```
+
+상한의 **138%** 다. `budget_met: true` 는 **소비자가 지불하는 비용에 대해 참이 아니었다.**
+SPECIFICATION 의 정의("`measured_tokens` = 최종 payload 를 실제로 센 수", "`budget_met` = 상한 안에 들어갔는지")와 어긋난다.
+
+**원인.** 예산을 적용할 때 재는 것은 **본문 + 표면**(누락 내역·진행 정보) 까지다. 그런데
+**예산 보고(`budget`)와 누락 목록(`omission`) 은 검색이 끝난 뒤에 붙는다.** 그러면 실제 응답이 재었던 것보다 커진다.
+
+**수정 — 검색 단계부터 보고 자리를 함께 센다.** 자기 참조 필드(`measured_tokens`)만 자리표수로 두고 나머지 키는 실제와 같은 모양·길이를 준다. 그래야 이분 탐색이 **소비자가 실제로 받는 크기**를 기준으로 행 수를 고른다. 확인 단계에서 한 번 더 재고, 여전히 넘으면 `budget_met: false` 와 명시적 누락 항목으로 알린다.
+
+**실측 (40개 항목, `parism/approx`, 수정 후).** 12케이스 전부 `measured_tokens` 가 실제 전달 수와 **정확히 일치**하고 `budget_met` 도 참거짓이 없다.
+
+| format | 상한 | 전달 | measured | met | 행 |
+|---|---|---|---|---|---|
+| json | 1,300 | 2,074 | 2,074 | false | 0 |
+| json | 1,400 | 1,882 | 1,882 | false | 0 |
+| json | 3,000 | 2,812 | 2,812 | true | 8 |
+| json | 5,000 | 4,672 | 4,672 | true | 23 |
+| json | 20,000 | 6,320 | 6,320 | true | 40 |
+| json-no-raw | 1,300 | 1,141 | 1,141 | true | 3 |
+| json-no-raw | 5,000 | 5,331 | 5,331 | false | 40 |
+
+**`raw` 를 넣으면 상한이 자주 안 닫힌다.** 원문이 행 수와 무관한 고정 비용이기 때문이다. 실측에서 `json` 은 작은 상한에서, `json-no-raw` 는 거의 모든 상한에서 닫힌다. **상한이 제어하려는 비용이 원문 때문에 지배될 때** 상한은 애초에 비용 제어 수단이 아니다 — 이제 그 사실을 `budget_met: false` 로 말하고 omission 에 적는다.
+
+**수정하며 저지른 것 두 가지.**
+1. **행을 0개까지 줄였다.** 처음 구현은 상한에 못 맞으면 반복해서 행을 줄였다. 그런데 줄일 때마다 누락 항목이 자라 그만큼 다시 커진다 — 줄어드는 값과 자라는 값이 싸우다 끝내 상한을 못 맞췄다(실측: 5,000 상한을 3회 시도 후에도 5,340). **못 맞추는 것보다 아무 값도 못 받는 쪽이 나쁘다.** 그래서 못 맞으면 줄이지 않은 쪽을 그대로 두고 정직하게 알린다.
+2. **알림을 붙인 뒤에 다시 셌어야 한다.** 알림 항목을 붙인 **다음에** 재야 그 크기까지 `measured_tokens` 에 들어간다. 반대로 하면 70토큰 차이가 났다.
+
+**회귀 시험 11건.** `tests/engine/budget.test.ts` — 상한 5종 × format 2종. **결함을 되살려 10건이 실패하는 것을 확인했다.**
+
+**이 시험을 만들며 저지른 실수 하나 — 기록해 둔다.** 처음엔 **빈 임시 디렉터리**로 돌렸다. 가드는 **실행 디렉터리(cwd)** 를 검사하는데 `cwd` 를 넘기지 않아 `path_not_allowed` 로 거절됐고, 시험이 **조용히 조기 반환**했다. 결함을 되살려도 시험이 잡지 못했다. 데이터를 채우고 `cwd` 를 넘긴 뒤에야 잡았다. **조기 반환하는 시험은 아무것도 검사하지 않은 시험이다.**
+
+**게이트.** `experiments/budget-diff-gate.mjs` — M2·M3 종료 조건을 재는 게이트. 12종 통과, 결함 되살리면 14건 실패.
+
+**이 게이트가 재지 않는 것 — 분명히 적어 둔다.**
+- **"순서만 변경하면 diff 0"** 은 여기서 재지 않는다. 같은 명령을 두 번 돌려서는 순서만 다른 동일 내용을 만들 수 없다(파일이름을 바꿔야 하는데 그건 이름 변경이다). 억지로 만든 조건으로 게이트를 채우지 않는다. 이 조건은 단위 시험이 맡는다(`tests/engine/compare.test.ts` "행 순서만 바뀌면 변화 0").
+- **사람 실험의 `silent_loss`** 도 재지 않는다. 그것은 에이전트가 조용히 값을 잃었는가 라는 질문이고 사람이 답해야 한다. 게이트가 재는 것은 **엔진이 omission 으로 알렸는가** 다 — 다른 질문이다.
+
+---
+
 ### A-13. `parism eval` 이 help 에는 있는데 실행되지 않았다 — 조용히 MCP 서버가 되었다
 
 **이건 계획서가 이름 그대로 짚은 항목이다.** 4.5장: *"parism eval 진입점 누락을 고치고 결과 판정을 execution/parse/task로 분리한다."* 진입점은 있으나 **argv 라우팅이 빠져 있었다.**
@@ -542,15 +590,14 @@ stdin 을 열어둔 채로 멈추는 것이 결정적이었다. 평가였다면 
 3. **A-3** — `toCompact(["a|b","c"])` 를 본다. `"a|b|c"` 로 나오면 재현된 것이다.
 4. **A-5** — `kubectl get pods` 에서 RESTARTS 가 0 이 아닌 프로세스를 본다. `(5d ago)` 가 Age 로 새면 재현된 것이다.
 5. **A-6** — 개행·따옴표·탭 파일 이름이 있는 저장소에서 `git status --porcelain` 을 `-z` 없이 돌린다. 항목이 1개로 합쳐지면 재현된 것이다.
-6. **A-10** — 이모지 파일이 있는 저장소에서 `git status --porcelain` 을 `-z` 없이 돌린다. `path` 가 `emoji-��.ts` 면 재현된 것이다.
+6. **A-10** — 이모지 파일이 있는 저장소에서 `git status --porcelain` 을 `-z` 없이 돌린다. `path` 가 `emoji-??.ts` 면 재현된 것이다.
 7. **A-11** — `git mv "arrow -> here.txt" "new -> name.txt"` 후 `git status --porcelain` 을 `-z` 없이 돌린다. `path` 가 `name.txt"` 면 재현된 것이다(기대 `new -> name.txt`).
-8. **A-12** — `?? "with space.ts"` 한 줄을 파서에 넣어 `verifySpans` 로 `/entries/0/path` 를 대조한다. 실패하면 재현된 것이다(고치지 않고 기록만 한 항목).
-9. **A-12** — `?? "with space.ts"` 한 줄의 `/entries/0/path` 근거를 `verifySpans` 로 대조한다. 실패하면 재현된 것이다.
-10. **A-15** — `emoji-😀.ts` 와 `plain.ts` 가 있는 저장소에서 `git status --porcelain -z` 를 `evidence: "fields"` 로 돌린다. `plain.ts` 의 `source_kind` 가 `none` 이면 재현된 것이다.
-11. **A-16** — 시크릿 두 개(`ghp_` + 30자 이상)가 한 출력에 있는 `git status --porcelain` 결과를 `explain_result` 로 본다. `xy` 근거의 `quoted` 가 `??` 가 아니면 재현된 것이다.
-12. **A-13** — `parism eval parse-error` 를 실행한다. 아무것도 하지 않는다. **stdin 을 열어두면 멈춘다**(exit 124) — MCP 서버가 떴다는 증거다.
-13. **A-14** — `parism eval --verbose` 를 실행한다. 세 층이 따로 나오는지 본다. `node --version` 항목이 `execution=blocked` 로 나오면 가드가 막은 것이다(실패가 아니다).
-14. **정확성 게이트** — `node experiments/corpus.mjs --count=1200`. `exit 0` 이고 다섯 가지가 통과하면 현재 상태다. `src/parsers/git/paths.ts` 의 코드 포인트 읽기를 `i += 1` 로 되돌리면 192건이 깨진다.
-15. **B 부록** — 각 항목의 "재현 시도" 를 그대로 실행한다. **여전히 재현되지 않으면 그것도 정답이다.**
-
-**재현되지 않은 것을 고쳤다고 보고하지 않는다. 재현된 것만 고친다.**
+8. **A-12** — `?? "with space.ts"` 한 줄의 `/entries/0/path` 근거를 `verifySpans` 로 대조한다. 실패하면 재현된 것이다.
+9. **A-15** — `emoji-😀.ts` 와 `plain.ts` 가 있는 저장소에서 `git status --porcelain -z` 를 `evidence: "fields"` 로 돌린다. `plain.ts` 의 `source_kind` 가 `none` 이면 재현된 것이다.
+10. **A-16** — 시크릿 두 개(`ghp_` + 30자 이상)가 한 출력에 있는 `git status --porcelain` 결과를 `explain_result` 로 본다. `xy` 근거의 `quoted` 가 `??` 가 아니면 재현된 것이다.
+11. **A-17** — 40개 항목에 `ls -l` 을 `max_tokens: 1400` 으로 돌린다. `budget.measured_tokens` 와 실제로 받는 응답의 토큰 수가 다른지 본다.
+12. **정확성 게이트** — `node experiments/corpus.mjs --count=1200`. `exit 0` 이고 다섯 가지가 통과하면 현재 상태다. `src/parsers/git/paths.ts` 의 코드 포인트 읽기를 `i += 1` 로 되돌리면 192건이 깨진다.
+13. **예산·diff 게이트** — `node experiments/budget-diff-gate.mjs`. `exit 0` 이고 통과면 현재 상태다.
+14. **A-13** — `parism eval parse-error` 를 실행한다. 아무것도 하지 않는다. **stdin 을 열어두면 멈춘다**(exit 124) — MCP 서버가 떴다는 증거다.
+15. **A-14** — `parism eval --verbose` 를 실행한다. 세 층이 따로 나오는지 본다. `node --version` 항목이 `execution=blocked` 로 나오면 가드가 막은 것이다.
+16. **B 부록** — 각 항목의 "재현 시도" 를 그대로 실행한다. **여전히 재현되지 않으면 그것도 정답이다.**
