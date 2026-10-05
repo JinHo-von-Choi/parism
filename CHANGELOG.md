@@ -66,6 +66,18 @@
 - 발견(패키지 결함이 아니라 사용 방식): `createEngine({ configPath })` 는 다층 설정 대신 `loadConfig` 단일 층을 쓴다. 그래서 `PARISM_ALLOWED_PATHS` 같은 **환경변수 레이어가 반영되지 않는다** — 허용 경로를 설정 파일에 직접 적어야 한다. 기본 `allowed_paths` 는 프로세스 cwd 이므로 임시 디렉터리에서 시험하려면 명시적으로 지정해야 한다.
 - 발견(사용자 놀람 여부): `package.json` 의 `exports` 맵에 `./package.json` 과 `require` 조건이 없다. ESM 전용 패키지이므로 `require` 해석이 막히는 것은 의도된 것으로 보고 **보고만 한다**(패키징 결함으로 단정하지 않음). 다만 소비자가 버전 확인을 위해 `require.resolve('@nerdvana/parism/package.json')` 을 쓰는 패턴은 막힌다.
 - 회귀 시험 10건 추가(`tests/parsers/git-status-porcelain.test.ts`), 전체 시험 **59 파일 / 1,392 통과 / 9 생략**, `tsc --noEmit`·`eslint`(경고 0)·`npm run build` 통과.
+- **실험 A·B 하네스**(계획서 10장) — `experiments/`에 기계 채점 가능한 부분을 구현해 실행했다. A 19항목·B 21항목 전부 통과. fixture 는 고정 시드로 재현된다. `experiments/README.md` 에 측정한 것과 **측정하지 않은 것**(사람의 판단·확인 시간·토큰 절감률·경쟁 도구 비교)을 구분해 적었다.
+  - A: 조건 만족 37건에서 정답 recall 3/3, 근거 구간이 원문을 정확히 가리킴(불일치 0), 최종 payload 898/1400, 근사치임을 `tokenizer_exact: false` 로 밝힘.
+  - B: `git status` 는 `?? c.txt → A  c.txt`(새로 생긴 이상)와 `" M b.txt → M  b.txt"`(해결된 이상)를 `changed` 로 잡고 양쪽 근거 포인터를 붙인다. 단순 JSON 비교는 같은 109자를 1줄 어긋난 것으로 보인다.
+  - B: `kubectl get pods` 표에는 `metadata.uid` 가 없어 **`comparable: false` 로 보류한다.** 사람이 보면 CrashLoopBackOff(재시작 0→7)가 바로 보이지만, parism 은 그걸 비교로 말하지 않는다 — 재생성된 같은 이름과 구분이 안 되므로 확언할 근거가 없다.
+- **harness 자체가 잡은 제품 결함 3건**(모두 실제 저장소·원문과 대조하다 드러남).
+- **`retain: false` 로 발급한 id 의 거절 사유가 `unknown_id` 였다.** `not_retained`(처음부터 보관하지 않음)과 `unknown_id`(이 세션이 모르는 id)는 원인이 다른데 타입에 `not_retained` 이 선언돼 있고도 어디서도 나오지 않았다. `ResultStore.markNotRetained()` 로 그 사실을 기록하고 두 사유를 구분한다. 회귀 시험 3건.
+- **git 행 identity 가 프로세스 cwd 에 의존했다.** `normalizePath` 가 `resolve(value)` 를 써 저장소 identity 가 넘어와도 쓰이지 않았다. 같은 저장소의 같은 파일이 실행 위치마다 다른 key 를 갖는다. 저장소 기준으로 정규화했다. 회귀 시험 2건.
+- **`comparable` 이 항상 `true` 였고 `key_conflicts` 는 항상 빈 배열이었다.** identity 를 확정하지 못한 행이 있어 보류 사유를 남기면서 "비교가 성립했다"고 동시에 말했고, 중복 identity 를 찾아놓고 결과를 버렸다. 둘 다 고쳤다. 회귀 시험 2건.
+- `CompareRowResult` 에 `label` 추가. `key` 는 `저장소identity<NUL>경로` 형식이라 사람이 읽을 수 없었고, 무엇이 변했는지 말하려면 이름이 보여야 한다. `key` 는 비교·대조용으로 그대로 둔다.
+- 발견(하네스 작성 중): `git status --porcelain` 은 경로순으로 정렬해 **같은 파일 집합으로는 출력 순서를 뒤집을 수 없다.** 계획서가 "순서 변화와 잘린 결과를 섞어"라 한 그 부분은 이 도메인에서 성립하지 않는다. 하네스는 "목록이 1건 늘어남"으로 그 자리를 대신 채우고 그 사실을 주석에 남겼다.
+- 발견(실행 환경, 제품 결함 아님): 소스를 tsx 로 직접 실행하면 이 호스트에서 `spawn(detached=true)` 가 ENOENT 를 내 모든 명령이 `spawn_failed` 가 된다. `dist` 는 같은 인자로 정상이다. 실험이 제품에 대한 측정치가 되려면 `npm run build` 후 `dist` 를 재야 한다.
+- 회귀 시험 7건 추가(`tests/engine/compare.test.ts`, `tests/engine/result-store.test.ts`, `tests/engine/evidence.test.ts`), 전체 시험 **59 파일 / 1,398 통과 / 9 생략**.
 
 ## [2.0.2] - 2026-10-03
 

@@ -114,6 +114,26 @@ describe("결과 저장소", () => {
     expect(got.found === false && got.message).toMatch(/not re-executed/);
   });
 
+  it("처음부터 보관하지 않은 id 는 모르는 id 와 구분해 알려준다", () => {
+    const store = new ResultStore();
+    store.markNotRetained("r_안보관");
+    const marked = store.get("r_안보관");
+    expect(marked.found).toBe(false);
+    expect(marked.found === false && marked.reason).toBe("not_retained");
+    expect(marked.found === false && marked.message).toMatch(/not_retained/);
+
+    /** 둘의 원인이 다르므로 사유도 달라야 다음 행동이 정해진다 */
+    const unknown = store.get("r_모르는id");
+    expect(unknown.found === false && unknown.reason).toBe("unknown_id");
+  });
+
+  it("보관하지 않았다고 기록해도 재실행하지 않는다", () => {
+    const store = new ResultStore();
+    store.markNotRetained("r_안보관");
+    expect(store.get("r_안보관").found).toBe(false);
+    expect(store.size).toBe(0);
+  });
+
   it("보관 기간이 지나면 만료된다", () => {
     const store = new ResultStore({ ...DEFAULT_RESULT_STORE_LIMITS, ttlMs: 10 });
     store.put(stored("r1", 10, 1000));

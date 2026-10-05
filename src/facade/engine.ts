@@ -98,7 +98,7 @@ export type FetchResult =
     }
   | {
       ok: false; reason:
-        | "cursor_invalid" | "cursor_mismatch" | "not_retained" | "expired" | "evicted"
+        | "cursor_invalid" | "cursor_mismatch" | "unknown_id" | "not_retained" | "expired" | "evicted"
         | "no_continuation" | "tokenizer_unsupported";
       message: string;
     };
@@ -576,7 +576,11 @@ export class ParismEngine {
     if (!page) {
       const lookup = this.results.get(resultId);
       if (!lookup.found) {
-        return { ok: false, reason: lookup.reason === "unknown_id" ? "not_retained" : lookup.reason, message: lookup.message };
+        /**
+         * 사유를 그대로 돌려준다. '처음부터 보관하지 않았다'(not_retained)와
+         * '이 세션이 모르는 id'(unknown_id)는 원인이 다르다 — 둘을 합치면 무엇을 해야 하는지 알 수 없다.
+         */
+        return { ok: false, reason: lookup.reason, message: lookup.message };
       }
       return { ok: false, reason: "no_continuation", message: "this result was returned in one page; there is nothing to continue" };
     }
@@ -676,7 +680,15 @@ export class ParismEngine {
       input.resultId,
     );
 
-    if (!input.wantRetain) return review;
+    if (!input.wantRetain) {
+      /**
+       * result_id 는 review 에 실렸으므로 사용자가 이 id 로 explain_result 를 부를 수 있다.
+       * '처음부터 보관하지 않았다'는 사실을 남겨야 조회 시 그 사실로 거절한다.
+       * 남기지 않으면 모르는 id 와 구분되지 않아 '어디에 갔나' 알 수 없다.
+       */
+      this.results.markNotRetained(input.resultId);
+      return review;
+    }
 
     const evidence = this.buildEvidence(input);
     const stored: StoredResult = {

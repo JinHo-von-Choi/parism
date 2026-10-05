@@ -161,6 +161,16 @@ export class ResultStore {
     this.totalBytes -= found.bytes;
   }
 
+  /**
+   * 요청에서 보관하지 않기로 한 id 를 '보관하지 않았다'로 기록한다.
+   * result_id 는 이미 사용자에게 돌아갔으므로, 나중에 그 id 로 조회하면
+   * 모르는 id 와 구분되는 사유를 받아야 한다 — '어디로 갔나'를 알 수 있어야 한다.
+   */
+  markNotRetained(resultId: string): void {
+    if (this.entries.has(resultId)) return;
+    this.misses.set(resultId, { reason: "not_retained", at: Date.now() });
+  }
+
   private dropOldest(): void {
     const oldest = this.entries.keys().next();
     if (oldest.done) return;

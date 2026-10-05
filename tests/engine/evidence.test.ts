@@ -70,7 +70,12 @@ describe("근거 조회", () => {
       expect(res.review?.retained).toBe(false);
       const ex = f.engine.explainResult(res.review!.result_id, "/processes/0/pid");
       expect(ex.ok).toBe(false);
-      expect(ex.ok === false && ex.reason).toBe("unknown_id");
+      /**
+       * review 에 result_id 가 실렸으므로 사용자는 이 id 로 다시 부를 수 있다.
+       * 그렇다면 '이 세션이 모르는 id'(unknown_id)가 아니라 '처음부터 보관하지 않았다'(not_retained)로
+       * 알려야 한다 — 무엇을 해야 하는지가 다르다.
+       */
+      expect(ex.ok === false && ex.reason).toBe("not_retained");
     } finally { f.cleanup(); }
   });
 

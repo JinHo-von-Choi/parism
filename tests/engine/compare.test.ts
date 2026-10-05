@@ -127,6 +127,22 @@ describe("행 identity", () => {
     expect(a.key).toBe(b.key);
   });
 
+  it("git 경로는 저장소 기준으로 정규화한다 — 프로세스 cwd 에 의존하지 않는다", () => {
+    /**
+     * 회귀: `resolve(value)` 는 프로세스 cwd 기준이라, 같은 저장소 파일이 실행 위치마다 다른 키를 갖는다.
+     * 저장소 identity(실경로) 기준이어야 '같은 파일인가'가 뜻이 된다.
+     */
+    const id = gitStatusIdentity({ path: "src/a.ts" }, "/repo", {});
+    expect(id.key).toContain("/repo/src/a.ts");
+    expect(id.key).not.toContain(process.cwd());
+  });
+
+  it("상대 경로와 절대 경로가 같은 행을 가리킨다", () => {
+    const rel = gitStatusIdentity({ path: "src/a.ts" }, "/repo", {});
+    const abs = gitStatusIdentity({ path: "/repo/src/a.ts" }, "/repo", {});
+    expect(rel.key).toBe(abs.key);
+  });
+
   it("저장소가 다르면 key 가 다르다", () => {
     expect(gitStatusIdentity({ path: "a.ts" }, "/r1", {}).key).not.toBe(gitStatusIdentity({ path: "a.ts" }, "/r2", {}).key);
   });
@@ -177,6 +193,16 @@ describe("비교", () => {
     const out = compareResults({ base: side({ rows: [a, b] }), current: side({ rows: [b, a] }) });
     expect(out.changed).toHaveLength(0);
     expect(out.unchanged_count).toBe(2);
+  });
+
+  it("결과에는 사람이 읽는 행 이름을 함께 준다", () => {
+    /**
+     * key 는 저장소 identity 가 접두사로 붙은 내부 식별자라 사람이 읽기 어렵다.
+     * 무엇이 변했는지 말하려면 이름이 보여야 한다.
+     */
+    const out = compareResults({ base: side({ rows: [MODIFIED] }), current: side({ rows: [STAGED] }) });
+    expect(out.changed[0]!.label).toBe("/repo/src/a.ts");
+    expect(out.changed[0]!.key).toContain("\0");
   });
 
   it("필드 변화는 해당 행에서만 보고된다", () => {
@@ -236,6 +262,21 @@ describe("비교", () => {
     expect(out.added).toHaveLength(0);
     expect(out.removed).toHaveLength(0);
     expect(out.partial.withheld_reasons.join(" ")).toMatch(/uid|recreated/);
+  });
+
+  it("identity 를 확정하지 못한 행이 있으면 비교가 성립했다고 말하지 않는다", () => {
+    /**
+     * 회귀: 보류 사유를 남기면서 comparable=true 를 돌려주면 어느 쪽을 믿어야 하는지 알 수 없다.
+     * 비교가 성립하지 않았다는 사실과 보류 사유가 함께 있어야 한다.
+     */
+    const k8s = (over: Partial<Fingerprint>) => fingerprint({ cmd: "kubectl", parser_id: "kubectl", ...over });
+    const out = compareResults({
+      base:    side({ fingerprint: k8s({}), rows: [{ kind: "Pod", name: "p", metadata: {} }] }),
+      current: side({ fingerprint: k8s({ content_hash: "h2" }), rows: [{ kind: "Pod", name: "p", metadata: { uid: "u1" } }] }),
+    });
+    expect(out.comparable).toBe(false);
+    expect(out.refusals.comparable).toBe(false);
+    expect(out.partial.withheld_reasons.join(" ")).toMatch(/withheld rather than reported as complete/);
   });
 
   it("중복 identity 는 오류다 — 조용히 한 행을 버리지 않는다", () => {

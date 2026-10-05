@@ -41,11 +41,20 @@ export interface FieldChange {
 }
 
 export interface CompareRowResult {
+  /** 내부 식별자. 저장소 identity 가 접두사로 붙는다 — 대조용이며 사람이 읽는 값이 아니다 */
   key:        string;
+  /** 사람이 읽는 행 이름(경로 또는 자원 이름) */
+  label:      string;
   status:     "added" | "removed" | "changed" | "unchanged";
   changes:    FieldChange[];
   base_pointer?:     string;
   current_pointer?: string;
+}
+
+/** 내부 key 에서 사람에게 보여 줄 이름을 꺼낸다. 도메인 접두사(저장소 identity 등)는 뺀다. */
+function labelOf(key: string): string {
+  const cut = key.indexOf("\0");
+  return cut === -1 ? key : key.slice(cut + 1);
 }
 
 export interface CompareResult {
@@ -219,13 +228,13 @@ export function compareResults(input: CompareInput): CompareResult {
         partial.withheld_reasons.push(`withheld a removal claim: some rows could not be identified on either side`);
         continue;
       }
-      removed.push({ key, status: "removed", changes: [], base_pointer: before.pointer });
+      removed.push({ key, label: labelOf(key), status: "removed", changes: [], base_pointer: before.pointer });
       continue;
     }
     const changes = diffFields(before.row, after.row, ignored);
     if (changes.length === 0) { unchanged++; continue; }
     changed.push({
-      key, status: "changed", changes,
+      key, label: labelOf(key), status: "changed", changes,
       base_pointer: before.pointer, current_pointer: after.pointer,
     });
   }
@@ -239,15 +248,36 @@ export function compareResults(input: CompareInput): CompareResult {
       partial.withheld_reasons.push(`withheld an addition claim: some rows could not be identified on either side`);
       continue;
     }
-    added.push({ key, status: "added", changes: [], current_pointer: after.pointer });
+    added.push({ key, label: labelOf(key), status: "added", changes: [], current_pointer: after.pointer });
+  }
+
+  /**
+   * identity 를 확정하지 못한 행이 있으면 '비교가 성립했다'고 말할 수 없다.
+   * 성립했다면서 동시에 보류 사유를 남기면 어느 쪽을 믿어야 하는지 알 수 없다.
+   * 그래도 뺀 값(changed 등)은 그대로 준다 — 무엇을 봤는지는 숨기지 않는다.
+   */
+  const comparable = untrustworthyBase.length === 0 && untrustworthyCurrent.length === 0 && keyConflicts.length === 0;
+  if (!comparable && comparable_flag_source(keyConflicts, untrustworthyBase, untrustworthyCurrent)) {
+    partial.withheld_reasons.push(
+      "identity could not be established for some rows, so the comparison is withheld rather than reported as complete",
+    );
   }
 
   return {
-    ok: true, comparable: true,
-    refusals: { comparable: true, compatibility: verdict.compatibility, reasons: verdict.reasons, ignored: verdict.ignored },
+    ok: true, comparable,
+    refusals: { comparable, compatibility: verdict.compatibility, reasons: verdict.reasons, ignored: verdict.ignored },
     domain, added, removed, changed, unchanged_count: unchanged,
-    ignored_fields: ignored, partial, key_conflicts: [],
+    ignored_fields: ignored, partial, key_conflicts: keyConflicts,
   };
+}
+
+/** 보류 사유를 한 번만 적기 위한 표식. identity 미확정이 있거나 키가 충돌했다면 성립하지 않는다. */
+function comparable_flag_source(
+  keyConflicts: Array<{ key: string; count: number }>,
+  untrustworthyBase: string[],
+  untrustworthyCurrent: string[],
+): boolean {
+  return keyConflicts.length > 0 || untrustworthyBase.length > 0 || untrustworthyCurrent.length > 0;
 }
 
 function diffFields(before: unknown, after: unknown, ignore: string[]): FieldChange[] {
