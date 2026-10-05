@@ -1,3 +1,5 @@
+import { UnrecognizedOutputError, type ParseContext } from "../registry.js";
+
 export interface DockerPsEntry {
   container_id: string;
   image:        string;
@@ -19,6 +21,22 @@ export interface DockerStatsEntry {
   block_io:     string;
   pids:         number | null;
 }
+
+export interface DockerImageEntry {
+  repository: string;
+  tag:        string;
+  image_id:   string;
+  created:    string;
+  size:       string;
+}
+
+interface DockerImageSummary {
+  total:     number;
+  shown:     number;
+  truncated: boolean;
+}
+
+const IMAGES_HEADER = /^REPOSITORY\s+TAG\s+IMAGE ID\s+CREATED\s+SIZE\s*$/;
 
 function splitColumns(line: string): string[] {
   return line.trim().split(/\s{2,}/).map((v) => v.trim());
@@ -76,17 +94,53 @@ function parseDockerStats(raw: string): { resource: "stats"; stats: DockerStatsE
   return { resource: "stats", stats };
 }
 
+function parseDockerImages(
+  raw: string,
+  ctx?: ParseContext,
+): { resource: "images"; images: DockerImageEntry[]; _summary?: DockerImageSummary } {
+  const lines = raw.split("\n").filter(Boolean);
+  if (lines.length === 0) return { resource: "images", images: [] };
+  if (!IMAGES_HEADER.test(lines[0]!)) throw new UnrecognizedOutputError("docker images header was not recognized");
+  if (lines.length === 1) return { resource: "images", images: [] };
+
+  const images: DockerImageEntry[] = [];
+  for (const line of lines.slice(1)) {
+    const cols = splitColumns(line);
+    if (cols.length !== 5) continue;
+
+    images.push({
+      repository: cols[0] ?? "",
+      tag:        cols[1] ?? "",
+      image_id:   cols[2] ?? "",
+      created:    cols[3] ?? "",
+      size:       cols[4] ?? "",
+    });
+  }
+
+  const maxItems = ctx?.maxItems ?? 0;
+  if (maxItems > 0 && images.length > maxItems) {
+    return {
+      resource: "images",
+      images:   images.slice(0, maxItems),
+      _summary: { total: images.length, shown: maxItems, truncated: true },
+    };
+  }
+  return { resource: "images", images };
+}
+
 /**
  * docker 서브커맨드별 출력 파싱.
  * 현재 지원:
  * - docker ps
+ * - docker images
  * - docker stats --no-stream
  */
-export function parseDocker(_cmd: string, args: string[], raw: string): unknown | null {
+export function parseDocker(_cmd: string, args: string[], raw: string, ctx?: ParseContext): unknown | null {
   const sub = args[0];
 
-  if (sub === "ps")    return parseDockerPs(raw);
-  if (sub === "stats") return parseDockerStats(raw);
+  if (sub === "ps")     return parseDockerPs(raw);
+  if (sub === "images") return parseDockerImages(raw, ctx);
+  if (sub === "stats")  return parseDockerStats(raw);
 
   return null;
 }

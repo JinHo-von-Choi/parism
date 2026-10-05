@@ -29,6 +29,7 @@ const PS_FIELDS      = ["user", "pid", "cpu", "mem", "vsz", "rss", "tty", "stat"
 const SS_FIELDS      = ["netid", "state", "recv_q", "send_q", "local_address", "local_port", "peer_address", "peer_port"] as const;
 const LSOF_FIELDS    = ["command", "pid", "user", "fd", "type", "device", "name", "state"] as const;
 const DOCKER_PS      = ["container_id", "image", "command", "created", "status", "ports", "names"] as const;
+const DOCKER_IMAGES  = ["repository", "tag", "image_id", "created", "size"] as const;
 const DOCKER_STATS   = ["container_id", "name", "cpu_perc", "mem_usage", "mem_limit", "mem_perc", "net_io", "block_io", "pids"] as const;
 const SYSTEMCTL_ROWS = ["name", "load", "active", "sub", "description", "job", "failed"] as const;
 
@@ -244,6 +245,11 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         acceptedPositionals: { max: 0 },
         hint:                dockerPsHint,
         rowsKey: "containers", rowFields: DOCKER_PS,
+      },
+      images: {
+        acceptedFlags:       bools("-a", "--all", "--no-trunc"),
+        acceptedPositionals: { max: 1 },
+        rowsKey: "images", rowFields: DOCKER_IMAGES,
       },
       stats: {
         acceptedFlags:       bools("--no-stream", "--no-trunc", "-a", "--all"),

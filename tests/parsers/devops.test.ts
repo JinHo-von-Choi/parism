@@ -100,9 +100,46 @@ describe("parseDocker()", () => {
     expect(result.containers[0]?.names).toBe("web");
   });
 
-  it("docker ps/stats 외 서브커맨드는 null", () => {
-    expect(parseDocker("docker", ["images"], "REPOSITORY TAG")).toBeNull();
+  it("docker ps/images/stats 외 서브커맨드는 null", () => {
     expect(parseDocker("docker", ["inspect", "abc"], "[]")).toBeNull();
+  });
+
+  it("docker images 출력을 파싱한다", () => {
+    const raw = [
+      "REPOSITORY          TAG       IMAGE ID       CREATED        SIZE",
+      "nginx               1.27      a1b2c3d4e5f6   2 weeks ago    188MB",
+      "<none>              <none>    f6e5d4c3b2a1   3 months ago   72.8MB",
+    ].join("\n");
+
+    const result = parseDocker("docker", ["images"], raw) as {
+      resource: string;
+      images: Array<{ repository: string; tag: string; image_id: string; created: string; size: string }>;
+    };
+
+    expect(result).toEqual({
+      resource: "images",
+      images: [
+        { repository: "nginx", tag: "1.27", image_id: "a1b2c3d4e5f6", created: "2 weeks ago", size: "188MB" },
+        { repository: "<none>", tag: "<none>", image_id: "f6e5d4c3b2a1", created: "3 months ago", size: "72.8MB" },
+      ],
+    });
+  });
+
+  it("docker images 빈 목록과 maxItems 제한을 보존한다", () => {
+    const header = "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE";
+    expect(parseDocker("docker", ["images"], "")).toEqual({ resource: "images", images: [] });
+    expect(parseDocker("docker", ["images"], header)).toEqual({ resource: "images", images: [] });
+
+    const raw = [
+      header,
+      "one          latest   111111111111   1 day ago    10MB",
+      "two          latest   222222222222   2 days ago   20MB",
+    ].join("\n");
+    expect(parseDocker("docker", ["images"], raw, { maxItems: 1, format: "json-no-raw" })).toEqual({
+      resource: "images",
+      images: [{ repository: "one", tag: "latest", image_id: "111111111111", created: "1 day ago", size: "10MB" }],
+      _summary: { total: 2, shown: 1, truncated: true },
+    });
   });
 
   it("docker ps 7컬럼(ports 있음) 행을 파싱한다", () => {

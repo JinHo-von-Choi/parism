@@ -28,7 +28,14 @@ describe("파서 실패 계약", () => {
     expect(parse("ls", ["-l"], "total 0\n").parse_error).toBeUndefined();
     expect(parse("git", ["status"], "On branch main\nnothing to commit, working tree clean\n").parse_error).toBeUndefined();
     expect(parse("docker", ["ps"], "CONTAINER ID   IMAGE   COMMAND   CREATED   STATUS   PORTS   NAMES\n").parse_error).toBeUndefined();
+    expect(parse("docker", ["images"], "REPOSITORY   TAG   IMAGE ID   CREATED   SIZE\n").parse_error).toBeUndefined();
     expect(parse("gh", ["pr", "list", "--json", "title"], "[]\n").parse_error).toBeUndefined();
+  });
+
+  it("docker images 손상 출력은 unrecognized_output", () => {
+    const r = parse("docker", ["images"], "malformed output\n");
+    expect(r.parsed).toBeNull();
+    expect(r.parse_error?.reason).toBe("unrecognized_output");
   });
   it("systemctl list-units 단일 공백 열을 파싱한다", () => {
     const raw = "  UNIT LOAD ACTIVE SUB DESCRIPTION\n  cron.service loaded active running Regular background program processing daemon\n";
