@@ -608,6 +608,45 @@ compact 는 **값을 보존하지 않는다면 압축하지 않는다.**
 - OS·파서 버전이 달라졌다고 모든 비교를 막지는 않는다. `same`/`compatible`/`unknown`/`incompatible` 로 나누고 `unknown` 에서는 strict 비교를 거절한다.
 - **Kubernetes context 이름만으로 클러스터 동일성을 완벽히 입증할 수 없다는 한계를 남긴다.**
 
+### 5.2.4 fixture 매니페스트와 오프라인 replay
+
+`parism capture <command>` 는 실행 결과를 **정제한** fixture 매니페스트로 저장한다. 계획서 8장의 요구다: "fixture manifest 에는 cmd/args 의 정제본, stdout/stderr 의 정제본, exit 상태, parser/content/schema 버전, 플랫폼·도구 버전, expected 값·expected 실패·출처 span·완전성 기대값을 둔다. 마스킹 때문에 바뀐 필드도 명시한다."
+
+| 필드 | 뜻 |
+|---|---|
+| `manifest_version` | 매니페스트 형식 버전(현재 1) |
+| `id` | 안정 식별자. 파일명이 아니라 이 값을 쓴다 |
+| `tool.command` / `tool.args` | 정제된 대상 명령 |
+| `exit.code` / `exit.signal` | 실행 결과 |
+| `stdout` / `stderr` | 정제본 |
+| `content_hash` | 정제본 stdout 의 지문 |
+| `versions` | parism·파서·스키마·플랫폼·도구 버전 |
+| `redactions` | 가린 것의 종류·무엇으로·몇 번 |
+| `expected` | 사람이 검토한 기대값(아래) |
+
+**정제는 저장 전에 한다.** 시크릿성 토큰, 홈 경로, `--token=` 류 인자 값을 가리고 **무엇을 가렸는지** `redactions` 에 남긴다. 지운 흔적이 없으면 '원래 없던 것인지 가린 것인지' 구분할 수 없어 검증 자체가 무의미해진다. 민감한 값은 **형태를 남기고 값만 바꾼다** — 통째로 지우면 fixture 가 조립된 것처럼 보인다. argv 는 비교 키(identity)에도 들어가므로 옵션 이름과 **길이**를 남긴다(`--token=<redacted:12>`). **자동으로 사용자 원문을 서버에 업로드하지 않는다.** 정제는 로컬 파일 안에서 끝난다.
+
+**기대값에는 사람이 검토했다는 표시가 있어야 계약이 된다.** `expected.reviewed_by` 가 비면 그 fixture 는 **미검토** 다 — '계약'이 아니라 '제안' 이다. `parism test` 는 이를 계약 위반으로 세지 않는다. 필수로 두면 "기대값은 썼지만 아직 아무도 보지 않았다" 는 상태가 표현 불가능해져 그 상태의 fixture 가 매니페스트 검증에서 조용히 사라진다.
+
+`parism test <dir>` 는 저장된 stdout 만 써서(명령을 **다시 실행하지 않는다**) 현재 파서로 되짚는다. 다시 실행하면 그때의 환경이 섞여 "파서가 바뀌었다" 와 "기계가 바뀌었다" 를 구분할 수 없게 된다. 판정은 통과/실패가 아니라 **변화된 경로 목록**이다:
+
+```
+의도치 않은 계약 변화 3건
+  git-fixture-1  (git)
+  [parsed] 1건
+    /entries/5  extra  기대 undefined → 실제 {"xy":"??", …}
+  [evidence] 3건
+    /evidence/entries/0/path/0/line  value  기대 9 → 실제 0
+```
+
+- **키 순서만 바뀐 것은 변화로 보지 않는다.** 파서가 객체 키 순서를 바꿨다고 계약이 바뀐 것은 아니다. 배열 순서는 값이므로 변화로 센다.
+- **근거 기대는 부분 확인이 기본이다.** `expected.evidence.pointers` 에 적은 포인터만 확인한다 — 사람이 검토할 수 있는 것은 "내가 본 이 주장" 이지 "파서가 낼 수 있는 모든 주장" 이 아니다. 전수 대조가 필요할 때만 `exhaustive: true` 로 켠다.
+- **누락 내역은 replay 로 확인하지 않는다**(`not_checked` 로 밝힌다). 누락은 예산 층이 **실제 응답 표면**을 재서 결정하고, 저장된 stdout 을 되짚는 경로에는 그 표면이 없다. 수치를 지어내지 않는다.
+- **깨진 매니페스트와 매니페스트가 아닌 파일은 조용히 건너뛰지 않는다.** 형식이 다른 파일을 통과시키면 '회귀 0건' 이라는 거짓말이 된다.
+- **`parism test` 는 기대값을 쓰지 않는다.** 되짚기는 읽기만 한다. 자동 갱신은 회귀를 숨기는 가장 싼 방법이다.
+
+`runFixtureTests`(`src/cli/test-runner.ts`)는 **ParserPack 안의** fixture 를 되짚는 별개 경로로 그대로 둔다. 새로 포장한 기능이 아니라 양쪽을 잇는 고리다.
+
 ### 5.2.1 외부 ParserPack 격리 실행
 
 `loadExternalParsers`는 기본적으로 외부 팩마다 워커 스레드(`node:worker_threads`) 하나를 띄워 `parser.js`를 그 워커에서만 읽는다(`src/parsers/external/host.ts`, `src/parsers/external/worker.js`). 내장 파서는 서버 스레드에서 실행한다.

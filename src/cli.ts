@@ -1,5 +1,8 @@
 import { Command }        from "commander";
+import { existsSync }    from "node:fs";
+import { join }          from "node:path";
 import { PACKAGE_VERSION } from "./server.js";
+import { parismHome }     from "./cli/paths.js";
 
 /**
  * CLI 프로그램을 생성한다. 명령어 핸들러는 각 모듈에서 등록.
@@ -24,6 +27,13 @@ export function createCli(): Command {
       const result = await captureCommand(cmd, args, options.output);
       console.log(`Fixture saved: ${result.fixturePath}`);
       console.log(`Exit code: ${result.exitCode}`);
+      /** 무엇이 가려졌는지 모른 채 '저장했다'만 말하면 나중에 원문 유출 여부를 알 수 없다. */
+      if (result.redactions > 0) {
+        const kinds = result.manifest.redactions.map(r => `${r.pattern}×${r.count}`).join(", ");
+        console.log(`Redacted ${result.redactions} occurrence(s) (${kinds}) — manifest 의 redactions 에 남았다`);
+      }
+      console.log("This fixture replays but has no expected values yet.");
+      console.log("Add expected (and reviewed_by) by hand, then run: parism test " + (options.output ?? "~/.parism/fixtures"));
     });
 
   program
@@ -38,11 +48,25 @@ export function createCli(): Command {
     });
 
   program
-    .command("test [parser]")
-    .description("Run fixture replay tests for a parser pack (planned)")
-    .action(async (_parser: string | undefined) => {
-      console.log("[parism] test: not yet implemented");
-      process.exit(1);
+    .command("test [target]")
+    .description("Replay fixtures in a directory offline and report contract changes")
+    .option("--limit <n>", "How many changed paths to print per fixture", "20")
+    .action(async (target: string | undefined, options: { limit?: string }) => {
+      const dir = target ?? join(parismHome(), "fixtures");
+      if (!existsSync(dir)) {
+        console.log(`[parism] test: no such fixture directory: ${dir}`);
+        console.log("Capture one first: parism capture \"git status --porcelain\"");
+        process.exit(1);
+      }
+      const { replayDirectory, formatReport } = await import("./fixtures/run.js");
+      const limit  = Number(options.limit ?? "20");
+      const report = replayDirectory(dir, {});
+      console.log(formatReport(report, Number.isFinite(limit) && limit > 0 ? limit : 20));
+      /**
+       * 판정: 깨진 fixture 와 계약 변화가 있으면 실패다.
+       * 미검토 기대값은 실패로 세지 않는다 — 그것은 '틀렸다'가 아니라 '아직 보지 않았다' 다.
+       */
+      if (report.invalid > 0 || report.contractChanges > 0) process.exit(1);
     });
 
   program

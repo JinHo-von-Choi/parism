@@ -715,7 +715,12 @@ parism capture "htop -b -n 1"
 # 2. 파서 팩 스캐폴드를 생성한다
 parism init-parser htop
 
-# 3. parser.ts를 편집하고 fixture를 검증한다 (fixture replay 는 예정 기능, 현재는 parism inspect 로 수동 대조)
+# 3. 캡처한 fixture 에 사람이 검토한 기대값을 직접 적는다
+#    (기계가 채워 넣지 않는다 — "기계가 받아 적었으니 맞다" 는 거짓말이다)
+#    예: { "expected": { "parsed": { … }, "reviewed_by": "이름", "note": "왜 이 값이 맞는지" } }
+
+# 3-1. parism test 로 되짚는다 -- 변경된 경로가 목록으로 나온다
+parism test ~/.parism/fixtures
 
 # 4. 등록한다 -- 재시작 없이 즉시 사용 가능
 parism add ./htop
@@ -726,13 +731,50 @@ parism inspect "htop -b -n 1"
 
 등록된 파서는 `~/.parism/parsers/`에 저장되고, MCP 서버 시작 시 자동으로 로드된다.
 
+### fixture 로 회귀를 재현하는 닫힌 고리
+
+`parism capture` → 사람이 기대값을 적음 → `parism test` → 무엇이 어긋났는지 경로로 나옴. 이 한 경로가 계획서 8장 "실패를 재현하는 parser test" 다.
+
+```bash
+parism capture "git status --porcelain"
+# Fixture saved: ~/.parism/fixtures/git-20261005-122126.json
+# Exit code: 0
+# This fixture replays but has no expected values yet.
+
+# ── 사람이 기대값을 직접 넣는다 ──
+#   "expected": {
+#     "parsed": { "entries": [ … ] },
+#     "evidence": { "pointers": { "/entries/0/path": [ { "source": "stdout", "line": 0, "start": 3, "end": 13 } ] } },
+#     "reviewed_by": "이름",
+#     "note": "왜 이 값이 맞는지"
+#   }
+
+parism test ~/.parism/fixtures
+# fixture 12개
+#   검토된 기대값 9개 중 일치 8 · 변화 1
+#   미검토 기대값 3개 (사람이 검토해야 계약이 된다)
+#
+# 의도치 않은 계약 변화 2건 — 이걸 확인하기 전에는 배포 판정을 하지 않는다:
+#   git-20261005-122126  (git)
+#   [evidence] 2건
+#     /evidence/entries/0/path/0/line  value  기대 0 → 실제 1
+```
+
+**알아야 할 것**
+
+- **캡처는 원문을 그대로 저장하지 않는다.** 시크릿, 홈 경로, `--token=` 류 인자 값을 가리고 무엇을 가렸는지 `redactions` 에 남긴다. 민감한 값은 형태를 남기고 값만 바꾼다 -- 통째로 지우면 fixture 가 조립된 것처럼 보인다. argv 는 비교 키가 사라지지 않게 옵션 이름과 길이를 남긴다(`--token=<redacted:12>`).
+- **`reviewed_by` 가 없으면 기대값이 아니라 제안이다.** `parism test` 는 이를 계약 위반으로 세지 않는다. `parism test` 도 기대값을 **쓰지 않는다** — 자동 갱신은 회귀를 숨기는 가장 싼 방법이다.
+- **되짚기는 명령을 다시 실행하지 않는다.** 저장된 stdout 만 쓴다. 다시 실행하면 그때의 환경이 섞여 "파서가 바뀌었다" 와 "기계가 바뀌었다" 를 구별할 수 없게 된다.
+- **근거 기대는 적은 포인터만 확인한다.** 전수 대조가 필요하면 `evidence.exhaustive: true`.
+- 매니페스트 형식과 자세한 계약은 SPECIFICATION 5.2.4.
+
 ### CLI 명령어
 
 | 명령어 | 설명 |
 |---|---|
-| `parism capture "<command>"` | 명령어를 실행하고 raw 출력을 fixture로 저장 |
+| `parism capture "<command>"` | 명령어를 실행하고 **정제한** 출력을 fixture 매니페스트로 저장 |
 | `parism init-parser <name>` | TypeScript 파서 팩 스캐폴드 생성 (parser.ts + schema.json + fixtures/) |
-| `parism test [parser]` | fixture replay 테스트 실행 (예정, 미구현) |
+| `parism test [dir]` | fixture 집합을 오프라인으로 되짚고 **변화된 경로**를 보고 (깨진 fixture 가 있으면 exit 1) |
 | `parism add <path>` | 로컬 파서 팩을 ~/.parism/parsers/에 영구 등록 |
 | `parism inspect "<command>"` | raw / parsed / compact 출력 비교 + 토큰 수 |
 

@@ -655,13 +655,50 @@ parism inspect "htop -b -n 1"
 
 Registered parsers are stored in `~/.parism/parsers/` and automatically loaded when the MCP server starts.
 
+### A closed loop for reproducing failures
+
+`parism capture` → a human writes the expected values → `parism test` → the changed paths come back. This one path is the plan's section 8, "parser tests that reproduce failures".
+
+```bash
+parism capture "git status --porcelain"
+# Fixture saved: ~/.parism/fixtures/git-20261005-122126.json
+# Exit code: 0
+# This fixture replays but has no expected values yet.
+
+# ── a human fills in the expected block ──
+#   "expected": {
+#     "parsed": { "entries": [ … ] },
+#     "evidence": { "pointers": { "/entries/0/path": [ { "source": "stdout", "line": 0, "start": 3, "end": 13 } ] } },
+#     "reviewed_by": "your name",
+#     "note": "why this value is right"
+#   }
+
+parism test ~/.parism/fixtures
+# fixture 12
+#   reviewed expectations 9 — matched 8, changed 1
+#   unreviewed expectations 3 (a person must review before it becomes a contract)
+#
+# unintended contract changes: 2 — do not make a release call before checking these:
+#   git-20261005-122126  (git)
+#   [evidence] 2
+#     /evidence/entries/0/path/0/line  value  expected 0 → actual 1
+```
+
+**What you need to know**
+
+- **Capture does not store raw output.** Secrets, home paths, and `--token=`-style argument values are redacted, and *what* was redacted is kept in `redactions`. Sensitive values keep their shape and lose only the value — deleting them outright would make the fixture look fabricated. Argv keeps the option name and the length, because argv also feeds the comparison key (`--token=<redacted:12>`).
+- **Without `reviewed_by` an expectation is a proposal, not a contract.** `parism test` does not count it as a contract violation. It also never *writes* expectations — auto-updating them is the cheapest way to hide a regression.
+- **Replay does not re-execute the command.** It uses the stored stdout only. Re-running would mix in the environment at that moment and make "the parser changed" indistinguishable from "the machine changed".
+- **Evidence expectations check only the pointers you list.** Turn on `evidence.exhaustive: true` for a full sweep.
+- The manifest contract is SPECIFICATION 5.2.4.
+
 ### CLI Commands
 
 | Command | Description |
 |---|---|
-| `parism capture "<command>"` | Execute command and save raw output as fixture |
+| `parism capture "<command>"` | Execute a command and save its **sanitized** output as a fixture manifest |
 | `parism init-parser <name>` | Scaffold a TypeScript parser pack (parser.ts + schema.json + fixtures/) |
-| `parism test [parser]` | Run fixture replay tests (planned, not implemented) |
+| `parism test [dir]` | Replay a fixture set offline and report **which paths changed** (exit 1 on a broken fixture) |
 | `parism add <path>` | Register a local parser pack permanently to ~/.parism/parsers/ |
 | `parism inspect "<command>"` | Compare raw / parsed / compact output + token counts |
 
