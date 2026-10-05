@@ -102,6 +102,45 @@ function readPath(
 }
 
 /**
+ * 줄 레코드 모드에서 `orig -> new` 의 구분자 위치를 찾는다.
+ *
+ * ## 왜 단순 `lastIndexOf(" -> ")` 로는 안 되는가
+ *
+ * 경로 자체에 ` -> ` 가 들어갈 수 있다. git 은 그런 경로를 **따옴표로 감싸 출력**한다
+ * (실측: `A  "a b.txt"` — 공백이 하나만 있어도 감싼다). 그래서 원문은 이렇게 된다.
+ *
+ *   `R  "arrow -> here.txt" -> "new -> name.txt"`
+ *
+ * 여기서 " -> " 가 세 번 나온다. 마지막 위치는 **새 경로의 따옴표 안쪽**이다.
+ * `lastIndexOf` 는 그 위치를 고르고, 오른쪽 경로를 `name.txt"` 로 잘라내
+ * **닫는 따옴표까지 경로에 남긴 채** 돌려준다. 조용히 틀린 값이다.
+ * 실측: `path` = `name.txt"` (기대 `new -> name.txt`), `orig_path` 는 맞았다.
+ *
+ * 구분자는 **따옴표 밖에만** 존재한다. 그래서 따옴표 상태를 따라가며 바깥의 화살표만 센다.
+ *
+ * @param text 상태 두 자리와 구분 공백을 제외한 나머지
+ * @returns 구분자 시작 위치. 없으면 -1
+ */
+function lastArrowOutsideQuotes(text: string): number {
+  let inQuotes = false;
+  let escaped  = false;
+  let last     = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (escaped) { escaped = false; continue; }
+    if (inQuotes) {
+      /** C 이스케이프 안의 따옴표는 닫는 따옴표가 아니다. */
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === "\"") inQuotes = false;
+      continue;
+    }
+    if (ch === "\"") { inQuotes = true; continue; }
+    if (ch === " " && text.startsWith(" -> ", i)) { last = i; i += 3; }
+  }
+  return last;
+}
+
+/**
  * `git status --porcelain` 출력을 파싱한다.
  * 행 배열로 돌려줘야 근거 포인터(`/entries/0/path`)가 값 하나를 정확히 가리킨다.
  *
@@ -153,8 +192,10 @@ export function parseGitStatusPorcelain(
 
     /**
      * 줄 레코드 모드에서는 이름 변경이 `원래경로 -> 새경로` 한 줄로 온다.
-     * 화살표는 오른쪽에서 찾아야 한다 — 경로 자체에 ' -> '가 들어갈 수 있기 때문이다.
+     * 화살표는 **따옴표 밖에서만** 찾아야 한다 — 경로 안에 ` -> ` 가 들어갈 수 있기 때문이다.
      *   - 실측: 개행·탭 파일이 있는 저장소에서 `?? line -> x.txt` 도 그대로 나온다.
+     *   - 실측: `R  "arrow -> here.txt" -> "new -> name.txt"` — 화살표가 세 번이고
+     *     마지막 것은 새 경로의 따옴표 안이다(`lastArrowOutsideQuotes` 참고).
      */
     const isRename = index === "R" || index === "C" || worktree === "R" || worktree === "C";
     /** 원문에서 차지하는 위치와 길이. 경로가 이스케이프되었다면 값 길이와 rawLength 가 다르다. */
@@ -162,7 +203,7 @@ export function parseGitStatusPorcelain(
     let   next: { value: string; from: number; rawLength: number; quoted: boolean };
 
     if (isRename && !nulRecords) {
-      const arrow = rest.lastIndexOf(" -> ");
+      const arrow = lastArrowOutsideQuotes(rest);
       if (arrow === -1) continue;
       const left  = readPathIn(rest, 0, arrow);
       const right = readPath(rest, arrow + 4);
@@ -173,8 +214,14 @@ export function parseGitStatusPorcelain(
       const only = readPath(rest, 0);
       if (!only) continue;
       next = { value: only.value, from: restFrom + only.start, rawLength: only.rawLength, quoted: only.quoted };
-      /** NUL 레코드 모드에서 이름 변경·복사면 다음 레코드가 원래 경로다 */
-      if (isRename && i + 1 < records.length) {
+      /**
+       * NUL 레코드 모드에서 이름 변경·복사면 다음 레코드가 원래 경로다.
+       *
+       * **빈 레코드는 원래 경로로 받지 않는다.** 실제 git 은 그런 출력을 내지 않지만,
+       * 넣으면 `orig_path: ""` 라는 **지어낸 값**이 항목에 붙는다.
+       * 모른다 하면 없는 것이지 빈 문자열이 아니다 — 값이 없으면 붙이지 않는다.
+       */
+      if (isRename && i + 1 < records.length && records[i + 1] !== "") {
         const record = records[i + 1]!;
         orig = { value: record, from: starts[i + 1]!, rawLength: record.length, quoted: false };
         i++;

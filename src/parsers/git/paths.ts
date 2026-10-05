@@ -20,8 +20,18 @@ export function readQuotedToken(text: string, start: number): { value: string; e
     const ch = text[i]!;
     if (ch === "\"") return { value: Buffer.from(bytes).toString("utf8"), end: i + 1 };
     if (ch !== "\\") {
-      bytes.push(...Buffer.from(ch, "utf8"));
-      i++;
+      /**
+       * **코드 포인트 단위로 읽는다.**
+       *
+       * `text[i]` 는 UTF-16 **코드 단위**다. 이모지처럼 서로게이트 쌍으로 표현되는 문자는
+       * 코드 단위 두 개이므로, 한 단위씩 인코딩하면 각각 U+FFFD 로 바뀌어 원문이 훼손된다.
+       * 실측: `?? "emoji-😀.ts"` → `emoji-��.ts` (한글 같은 BMP 문자는 멀쩡했다 —
+       * BMP 는 코드 단위 하나가 곧 코드 포인트라 드러나지 않는다).
+       */
+      const point = text.codePointAt(i)!;
+      const char  = String.fromCodePoint(point);
+      bytes.push(...Buffer.from(char, "utf8"));
+      i += char.length;
       continue;
     }
     const next = text[i + 1];

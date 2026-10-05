@@ -266,6 +266,147 @@ describe("porcelain 줄 레코드 모드 (-z 없음)", () => {
   });
 });
 
+/**
+ * 2026-10-05 정확성 게이트(`experiments/corpus.mjs`)가 잡은 두 결함의 회귀 시험.
+ *
+ * 두 개 모두 **실제 `git` 출력을 그대로 가져온 원문**이다. 손으로 만든 입력으로
+ * 재현하려고 하면 안 된다 — 생성기가 실제 git 과 다른 형식을 만들어 넣으면
+ * 그 차이를 파서 결함으로 잘못 읽게 된다(실제로 그랬다).
+ */
+describe("실측 git 출력 회귀 — Unicode 경로 (결함 A-10)", () => {
+  /**
+   * 회귀: 따옴표 안의 경로를 UTF-16 **코드 단위**로 읽어 인코딩했다.
+   *
+   * `text[i]` 는 코드 단위다. 이모지는 서로게이트 쌍이라 코드 단위 두 개이므로
+   * 각각 U+FFFD 로 바뀌어 원문이 훼손됐다.
+   * 실측: `?? "emoji-😀.ts"` → `emoji-��.ts`
+   * BMP 문자(한글·일본어)는 코드 단위 하나가 곧 코드 포인트라 드러나지 않아 통과했다.
+   */
+  const lineParse = (raw: string) =>
+    parseGitStatusPorcelain(["status", "--porcelain=v1"], raw, { maxItems: 0 });
+
+  it("이모지가 든 따옴표 경로를 그대로 되돌린다", () => {
+    const raw = '?? "emoji-😀.ts"\n';
+    const entry = lineParse(raw).parsed.entries[0]!;
+    expect(entry.path).toBe("emoji-😀.ts");
+    /** 훼손의 형태를 못 박아 둔다 — U+FFFD 로 바뀌면 이 시험이 잡는다. */
+    expect(entry.path).not.toContain("\uFFFD");
+  });
+
+  it("이모지가 여러 개여도 하나도 깨지지 않는다", () => {
+    const raw = '?? "a-😀-b-😀-c.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]!.path).toBe("a-😀-b-😀-c.txt");
+  });
+
+  it("BMP 문자는 코드 포인트 하나로 읽혀 값이 그대로다", () => {
+    const raw = '?? "이름-한글-日本語.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]!.path).toBe("이름-한글-日本語.txt");
+  });
+
+  it("BMP 와 이모지가 섞여도 각자 온전히 읽힌다", () => {
+    const raw = '?? "한글-😀-mixed-🚀.txt"\n';
+    const path = lineParse(raw).parsed.entries[0]!.path;
+    expect(path).toBe("한글-😀-mixed-🚀.txt");
+    expect([...path].every(c => c !== "\uFFFD")).toBe(true);
+  });
+
+  it("따옴표 안에 따옴표와 이모지가 함께 있어도 읽힌다", () => {
+    const raw = '?? "quo\\"te-😀.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]!.path).toBe('quo"te-😀.txt');
+  });
+
+  it("-z 모드도 이모지 경로를 가공하지 않는다", () => {
+    const raw = `?? emoji-😀.txt${NUL}`;
+    expect(parse(raw).parsed.entries[0]!.path).toBe("emoji-😀.ts".replace(".ts", ".txt"));
+  });
+
+  it("개행·탭·역슬래시 이스케이프와 이모지가 함께 있어도 읽힌다", () => {
+    const raw = '?? "line\\nbreak-😀-tab\\there-back\\\\slash.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]!.path).toBe("line\nbreak-😀-tab\there-back\\slash.txt");
+  });
+
+  it("8진 바이트 이스케이프는 UTF-8 로 합쳐진다", () => {
+    /** `n\303\251w.txt` 는 é 한 글자(U+00E9, UTF-8 로 \303\251)다 */
+    const raw = '?? "n\\303\\251w.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]!.path).toBe("néw.txt");
+  });
+});
+
+describe("실측 git 출력 회귀 — 화살표가 든 이름 변경 (결함 A-11)", () => {
+  /**
+   * 회귀: 줄 모드 이름 변경의 구분자를 `rest.lastIndexOf(" -> ")` 로 찾았다.
+   *
+   * 경로에 ` -> ` 가 들어갈 수 있는데 git 은 그런 경로를 **따옴표로 감싸 출력**한다.
+   * 원문은 아래와 같고 " -> " 가 세 번 나온다.
+   *   `R  "arrow -> here.txt" -> "new -> name.txt"`
+   * 마지막 위치는 **새 경로의 따옴표 안쪽**이라, 오른쪽을 잘라 `name.txt"` 가 나왔다.
+   * 닫는 따옴표가 값에 남은 **조용한 값 훼손**이다(오류도 없이).
+   */
+  const lineParse = (raw: string) =>
+    parseGitStatusPorcelain(["status", "--porcelain=v1"], raw, { maxItems: 0 });
+
+  it("새 경로에 화살표가 있어도 경로 전체를 낸다", () => {
+    const raw = 'R  "arrow -> here.txt" -> "new -> name.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]).toMatchObject({
+      path:       "new -> name.txt",
+      orig_path:  "arrow -> here.txt",
+    });
+  });
+
+  it("원래 경로에만 화살표가 있어도 둘 다 온전하다", () => {
+    const raw = 'R  "old -> name.txt" -> "plain.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]).toMatchObject({
+      path:       "plain.txt",
+      orig_path:  "old -> name.txt",
+    });
+  });
+
+  it("따옴표가 없는 일반 이름 변경은 그대로 읽는다", () => {
+    const raw = "R  old.txt -> new.txt\n";
+    expect(lineParse(raw).parsed.entries[0]).toMatchObject({
+      path: "new.txt", orig_path: "old.txt",
+    });
+  });
+
+  it("이름 변경의 경로 근거가 원문의 그 구간을 가리킨다", () => {
+    const raw = 'R  "arrow -> here.txt" -> "new -> name.txt"\n';
+    const { evidence } = lineParse(raw);
+    const raw2 = Buffer.from(raw, "utf8");
+    const path = evidence["/entries/0/path"]![0]!;
+    expect(raw2.subarray(path.start, path.end).toString("utf8")).toBe('"new -> name.txt"');
+    const orig = evidence["/entries/0/orig_path"]![0]!;
+    expect(raw2.subarray(orig.start, orig.end).toString("utf8")).toBe('"arrow -> here.txt"');
+  });
+
+  it("따옴표 안의 따옴표를 넘어 구분자를 찾지 않는다", () => {
+    const raw = 'R  "has \\" -> \\" inside.txt" -> "new.txt"\n';
+    expect(lineParse(raw).parsed.entries[0]).toMatchObject({
+      path: "new.txt", orig_path: 'has " -> " inside.txt',
+    });
+  });
+
+  it("-z 모드에서는 짝이 두 레코드라 결과가 같다", () => {
+    const raw = `R  new -> name.txt${NUL}arrow -> here.txt${NUL}`;
+    expect(parse(raw).parsed.entries[0]).toMatchObject({
+      path: "new -> name.txt", orig_path: "arrow -> here.txt",
+    });
+  });
+
+  it("원래 경로 레코드가 비면 orig_path 를 지어내지 않는다", () => {
+    /**
+     * 실제 git 은 이런 출력을 내지 않는다(NUL 이 하나 더 있다).
+     * 넣었을 때 `orig_path: ""` 가 붙으면 **값을 지어낸 것**이다 —
+     * 모른다 하면 없는 것이지 빈 문자열이 아니다.
+     * 빈 레코드가 남으려면 끝의 빈 조각 하나를 `pop` 한 뒤에도 조각이 있어야 하므로
+     * 구분자를 두 개 둔다.
+     */
+    const raw = `R  renamed.txt${NUL}${NUL}`;   // 끝에 빈 레코드가 하나 더 있다
+    const entry = parse(raw).parsed.entries[0]!;
+    expect(entry.path).toBe("renamed.txt");
+    expect(entry.orig_path).toBeUndefined();
+  });
+});
+
 describe("레지스트리 경로", () => {
   it("porcelain -z 는 행 배열로 파싱된다", () => {
     const registry = createRegistry();
