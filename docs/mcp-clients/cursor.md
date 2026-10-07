@@ -1,8 +1,4 @@
 # Cursor — Parism MCP 설정
-
-작성일: 2026-04-15
-대상 버전: Parism v1.0.0
-
 ## 개요
 
 Cursor 는 전역 또는 프로젝트 로컬 `mcp.json` 으로 MCP 서버를 등록한다. stdio 프로토콜을 지원한다.

@@ -1,8 +1,4 @@
 # Gemini CLI — Parism MCP 설정
-
-작성일: 2026-04-15
-대상 버전: Parism v1.0.0
-
 ## 개요
 
 Gemini CLI 는 `gemini mcp add` 명령 또는 `~/.gemini/settings.json` 직접 편집으로 MCP 서버를 등록한다.
