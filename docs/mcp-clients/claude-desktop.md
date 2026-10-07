@@ -1,4 +1,5 @@
 # Claude Desktop — Parism MCP 설정
+
 ## 개요
 
 Claude Desktop 은 `claude_desktop_config.json` 을 통해 MCP 서버를 등록한다. Parism 은 stdio 프로토콜로 연결된다.

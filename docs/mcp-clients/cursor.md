@@ -1,4 +1,5 @@
 # Cursor — Parism MCP 설정
+
 ## 개요
 
 Cursor 는 전역 또는 프로젝트 로컬 `mcp.json` 으로 MCP 서버를 등록한다. stdio 프로토콜을 지원한다.

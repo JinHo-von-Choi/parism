@@ -1,4 +1,5 @@
 # Codex CLI — Parism MCP 설정
+
 ## 개요
 
 OpenAI Codex CLI 는 `~/.codex/config.toml` 에서 MCP 서버 목록을 읽는다. v0.6.0 이후 MCP 기능이 stable 로 승격되었다.

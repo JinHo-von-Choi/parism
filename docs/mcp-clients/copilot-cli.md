@@ -1,4 +1,5 @@
 # GitHub Copilot CLI — Parism MCP 설정
+
 ## 개요
 
 GitHub Copilot CLI 는 `~/.copilot/mcp-config.json` 또는 `--additional-mcp-config` 플래그로 MCP 서버를 등록한다.

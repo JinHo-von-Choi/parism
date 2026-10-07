@@ -1,4 +1,5 @@
 # Claude Code — Parism MCP 설정
+
 ## 개요
 
 Claude Code 는 전역 또는 프로젝트 로컬 JSON 파일로 MCP 서버를 등록한다. stdio 프로토콜을 완전히 지원한다.
