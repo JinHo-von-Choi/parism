@@ -11,6 +11,7 @@ import { parseFree, parseUname, parseId, parseSystemctl, parseJournalctl, parseA
 import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./windows/index.js";
 import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
 import { parseNpm, parseCargo } from "./packages/index.js";
+import { vmstatPack } from "./system/vmstat.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
 
@@ -53,6 +54,7 @@ export function createRegistry(): ParserRegistry {
   register("env",     parseEnv);
   register("pwd",     parsePwd);
   register("which",   parseWhich);
+  registry.registerPack(vmstatPack);
   register("free",       parseFree);
   register("uname",      parseUname);
   register("id",         parseId);
