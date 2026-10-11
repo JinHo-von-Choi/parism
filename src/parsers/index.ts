@@ -14,6 +14,7 @@ import { parseNpm, parseCargo } from "./packages/index.js";
 import { vmstatPack } from "./system/vmstat.js";
 import { lsmodPack } from "./system/lsmod.js";
 import { swaponPack } from "./system/swapon.js";
+import { ipPack } from "./network/ip.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
 
@@ -48,6 +49,7 @@ export function createRegistry(): ParserRegistry {
   register("lsof",    parseLsof);
   register("ss",      parseSs);
   register("dig",     parseDig);
+  registry.registerPack(ipPack);
   register("grep",    parseGrep);
   register("wc",      parseWc);
   register("head",    parseHead);
