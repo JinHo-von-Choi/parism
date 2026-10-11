@@ -15,6 +15,7 @@ import { vmstatPack } from "./system/vmstat.js";
 import { lsmodPack } from "./system/lsmod.js";
 import { lsblkPack } from "./system/lsblk.js";
 import { swaponPack } from "./system/swapon.js";
+import { lscpuPack } from "./system/lscpu.js";
 import { ipPack } from "./network/ip.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
@@ -63,6 +64,7 @@ export function createRegistry(): ParserRegistry {
   registry.registerPack(lsmodPack);
   registry.registerPack(lsblkPack);
   registry.registerPack(swaponPack);
+  registry.registerPack(lscpuPack);
   register("free",       parseFree);
   register("uname",      parseUname);
   register("id",         parseId);
