@@ -12,11 +12,12 @@ import { parseDir, parseTasklist, parseIpconfig, parseSysteminfo }    from "./wi
 import { parseKubectl, parseDocker, parseGh, parseHelm, parseTerraform } from "./devops/index.js";
 import { parseNpm, parseCargo } from "./packages/index.js";
 import { vmstatPack } from "./system/vmstat.js";
+import { lsmodPack } from "./system/lsmod.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
 
 /**
- * 44개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
+ * 45개 내장 파서가 등록된 새 ParserRegistry 인스턴스를 생성한다.
  * 호출할 때마다 새 인스턴스를 반환하므로, 테스트나 CLI에서 독립적으로 사용 가능.
  */
 export function createRegistry(): ParserRegistry {
@@ -55,6 +56,7 @@ export function createRegistry(): ParserRegistry {
   register("pwd",     parsePwd);
   register("which",   parseWhich);
   registry.registerPack(vmstatPack);
+  registry.registerPack(lsmodPack);
   register("free",       parseFree);
   register("uname",      parseUname);
   register("id",         parseId);
