@@ -194,7 +194,7 @@ export function createCli(): Command {
         return;
       }
 
-      const report = await runEvalSuite(scenario ? [scenario] : undefined);
+      const report = await runEvalSuite(scenario ? { names: [scenario] } : undefined);
 
       console.log("\n=== parism eval ===");
       console.log("판정은 세 층으로 따로 본다. 섞지 않는다.\n");

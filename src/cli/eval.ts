@@ -262,6 +262,23 @@ export const SCENARIOS: Record<string, EvalCase[]> = {
 
 export const SCENARIO_NAMES: readonly string[] = Object.keys(SCENARIOS);
 
+/** `runEvalSuite` 의 선택지. */
+export interface EvalSuiteOptions {
+  /** 실행할 시나리오 이름. 없거나 비면 전부. */
+  names?:      readonly string[];
+  /**
+   * 시나리오 정의. 없으면 내장 `SCENARIOS` 를 쓴다.
+   *
+   * 왜 이틀이 있나 — **기대값이 어긋난 경로가 시나리오에 없다면 그 경로는 검증되지 않는다.**
+   * 내장 시나리오는 모두 기대와 일치하므로, 불일치가 뱉는 메시지("관측할 수 없었다",
+   * "기대와 다르다")는 아무도 지나가지 않는다. 사용자 정의 시나리오로 그 경로를
+   * 집어 확인할 수 있게 한다.
+   */
+  scenarios?:  Record<string, EvalCase[]>;
+  /** 엔진 설정 파일 경로. 없으면 cwd 의 `prism.config.json` 을 다층으로 로드한다. */
+  configPath?: string;
+}
+
 /**
  * 재실행 금지 계약을 직접 관측한다.
  *
@@ -367,15 +384,18 @@ async function observeNoReExecution(c: EvalCase): Promise<EvalCaseResult> {
 /**
  * 시나리오를 돌린다.
  *
- * @param names 실행할 시나리오 이름. 없거나 비면 전부.
+ * @param options 시나리오 선택지. 없으면 내장 시나리오를 전부 돌린다.
  */
-export async function runEvalSuite(names?: readonly string[]): Promise<EvalReport> {
-  const engine = await createEngine();
-  const chosen = names && names.length > 0 ? names : SCENARIO_NAMES;
+export async function runEvalSuite(options?: EvalSuiteOptions): Promise<EvalReport> {
+  const pool    = options?.scenarios ?? SCENARIOS;
+  const engine  = await createEngine(
+    options?.configPath ? { configPath: options.configPath } : undefined,
+  );
+  const chosen  = options?.names && options.names.length > 0 ? options.names : Object.keys(pool);
   const scenarios: Record<string, EvalScenarioReport> = {};
 
   for (const name of chosen) {
-    const cases = SCENARIOS[name];
+    const cases = pool[name];
     if (!cases) continue;
 
     const results: EvalCaseResult[] = [];

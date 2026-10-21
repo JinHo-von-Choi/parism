@@ -46,5 +46,30 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # 릴리즈 게이트 — 세 곳에 버전이 적힌다.
+      #
+      #   1. git 태그        (v2.1.1)
+      #   2. package.json    ("version": "2.1.1")
+      #   3. dist/version.js (PACKAGE_VERSION = "2.1.1")  ← 실제로 배포되는 값
+      #
+      # 셋 중 하나만 올리면 조용히 어긋난다. 특히 3번이 어긋나면 배포본이 옛말을 한다.
+      # 어긋남이 조용할수록 되돌리기 어렵기 때문에 배포 전에 막는다.
+      - name: Verify version consistency
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          DIST_VERSION="$(node --input-type=module -e "import { PACKAGE_VERSION } from './dist/version.js'; console.log(PACKAGE_VERSION)")"
+
+          echo "tag=$TAG_VERSION package=$PKG_VERSION dist=$DIST_VERSION"
+
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag($TAG_VERSION) != package.json($PKG_VERSION)"
+            exit 1
+          fi
+          if [ "$PKG_VERSION" != "$DIST_VERSION" ]; then
+            echo "::error::package.json($PKG_VERSION) != dist($DIST_VERSION) — stale build"
+            exit 1
+          fi
+
       - name: Publish with provenance
         run: npm publish --provenance --access public

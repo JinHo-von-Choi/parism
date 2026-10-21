@@ -8,7 +8,7 @@
 
 import { realpathSync }                                                             from "node:fs";
 import path                                                                         from "node:path";
-import { loadConfig, loadConfigMultiLayer } from "../config/loader.js";
+import { loadConfig, loadConfigMultiLayer }                                         from "../config/loader.js";
 import type { PrismConfig }                                                         from "../config/loader.js";
 import { createRegistry }                                                           from "../parsers/index.js";
 import type { ParserRegistry }                                                      from "../parsers/registry.js";
@@ -20,232 +20,66 @@ import { buildExecArgs, resolvePolicies }                                       
 import { PageCache }                                                                from "../engine/page-cache.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
 import { Semaphore }                                                                from "../engine/semaphore.js";
-import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS }                 from "../engine/redactor.js";
+import { redact, validatePatterns }                                                 from "../engine/redactor.js";
 import { toCompact }                                                                from "../parsers/compact.js";
 import { loadExternalParsers, externalParserOptions }                               from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
 import { OutcomeStats, PipelineTimer, type CommandOutcomeCounts }                  from "../engine/telemetry.js";
 import { describeCommand, type CommandDescription, type CommandDescriptionFailure } from "./capabilities.js";
-import { PROJECTION_SHAPE, applyProjection, hasProjection, parseProjection,
-         type ProjectionOptions, type ProjectionSummary }                          from "../engine/projection.js";
+import { applyProjection, hasProjection, parseProjection,
+         type ProjectionSummary }                                                   from "../engine/projection.js";
 import { PACKAGE_VERSION }                                                          from "../version.js";
-import { countJsonTokens }                                                       from "../engine/budget/tokenizer.js";
+import { countJsonTokens }                                                          from "../engine/budget/tokenizer.js";
 import { applyBudget, decodeCursor, makeCursor, validateTokenizer, budgetTooSmall,
          findRowArray, replaceRows, MINIMUM_ENVELOPE_TOKENS }                    from "../engine/budget/index.js";
-import type { Continuation, CursorBinding }                                        from "../engine/budget/index.js";
-import { buildFingerprint, type UserContext }                                      from "../engine/compare/fingerprint.js";
 import { compareResults, type CompareOptions, type CompareResult, type CompareSide } from "../engine/compare/index.js";
 import { ResultStore, resolvePointer, type StoredResult }                           from "../engine/result-store.js";
-import { buildLineIndex, hashContent, type FieldEvidence, type RawEvidence, type SourceSpan } from "../engine/evidence.js";
-import { buildReview, evidenceToByteSpans, mintResultId, sliceByBytes, verifySpans, ENVELOPE_SCHEMA_VERSION } from "../engine/review.js";
+import { type FieldEvidence, type RawEvidence }                                      from "../engine/evidence.js";
+import { mintResultId, sliceByBytes }                                               from "../engine/review.js";
 import { maskWithRanges, type MaskedRange }                                          from "../engine/mask-map.js";
-import type { ReviewField }                                                          from "../types/envelope.js";
 
 /**
- * 예산 보고의 **크기만** 재는 자리표.
+ * 분리된 모듈들.
  *
- * 예산을 적용할 때 응답에 예산 보고가 붙는데, 그 보고는 **검색이 끝난 뒤에** 붙는다.
- * 그러면 소비자가 실제로 받는 응답이 재었던 것보다 커진다.
+ * `envelope.ts`  — 봉투를 만드는 순수 함수와 공개 타입
+ * `review.ts`    — 재검토(review)와 근거(evidence) 조립
+ * `run-budget.ts`— 토큰 예산 적용
  *
- * 실측: `max_tokens: 1400` 요청 → 보고 기준 `measured_tokens: 1330`, `budget_met: true`
- * → **실제 전달 1,939 토큰. 상한의 138%다.** `budget_met: true` 는 소비자가 지불하는
- * 비용에 대해 참이 아니었고, SPECIFICATION 의 정의("최종 payload 를 실제로 센 수")와 어긋났다.
- *
- * 그래서 **검색 단계부터 보고 자리를 함께 센다.** 자기 참조 필드(`measured_tokens`)만
- * 자리표수로 두고 나머지 키는 실제와 같은 모양·길이를 준다. 자릿수 차이는 확인 단계에서 잡는다.
+ * 이 세 모듈은 `ParismEngine` 을 모른다. 엔진이 이들을 부르는 방향으로만 의존한다.
  */
-function budgetReportPlaceholder(maxTokens: number, tokenizerId: string): Record<string, unknown> {
-  return {
-    requested: { max_tokens: maxTokens, tokenizer: tokenizerId },
-    /** 실제 값과 같은 자릿수가 되도록 4자리로 맞춘다 */
-    measured_tokens: 1000,
-    tokenizer_id: tokenizerId,
-    tokenizer_version: "1.0.0",
-    budget_met: true,
-    tokenizer_exact: false,
-    tokenizer_scope: "parism-json-payload-only",
-  };
-}
-
-export interface ExecOptions {
-  args?:        string[];
-  cwd?:         string;
-  format?:      "json" | "compact" | "json-no-raw";
-  includeDiff?: boolean;
-}
-
-/** run 옵션. select, where, sort_by, limit, array는 파싱 결과의 최상위 배열에 적용한다(engine/projection.ts). */
-export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {
-  /**
-   * 응답 계약 버전. 'next' 를 주면 review 와 근거가 실린다.
-   * 기본값은 'stable' 이고, 결과에 새 필드가 붙지 않아 기존 소비자는 그대로 동작한다.
-   */
-  contract_version?: "stable" | "next";
-  /** 근거를 어디까지 구할지. 'none' 이면 review 만 두고 근거는 계산하지 않는다(기본값). */
-  evidence?:      "none" | "rows" | "fields";
-  /** 결과를 세션에 보관해 explain_result 로 다시 볼 수 있게 한다. */
-  retain?:        boolean;
-  /**
-   * 토큰 예산. 이미 얻은 결과를 어디까지 내보낼지 정한다 — 실행시간이나 수집량을 줄이는 기능이 아니다.
-   * 필요한 필드가 빠지면 조용히 내보내지 않고 명시적으로 실패한다.
-   */
-  budget?: {
-    max_tokens:      number;
-    tokenizer?:      string;
-    required_fields?: string[];
-    overflow?:       "page" | "error";
-  };
-  /**
-   * 사용자가 명시한 실행 문맥(예: kubectl context).
-   * 지문의 일부로 비교에 쓰이지만 env 전체를 담지 않는다 — 환경 변수는 '이름'만 관찰 기록에 남긴다.
-   */
-  context?:      UserContext;
-}
-
-/** explain_result 의 결과. 재실행 없이 보관된 값만 돌려준다. */
-/**
- * 보관본이 차지하는 바이트를 센다.
- *
- * **이미 한도를 넘었으면 계산을 멈춘다.** 원문만으로 한도를 넘긴 결과는
- * 그 뒤를 재어도 '버려질 결과' 라는 사실이 바뀌지 않는다. 그런데 1MB 출력을
- * 파싱한 본문 전체를 직렬화해 재는 비용은 크고, 그 결과는 아무것도 바꾸지 못한다.
- *
- * 순서도 의미가 있다 — 싼 것(문자열 길이)부터 재고, 비싼 것(직렬화)을 마지막에 본다.
- */
-function storedBytesOf(
-  input: { canonicalStdout: string; canonicalStderr: string; final: unknown },
-  evidence: Record<string, FieldEvidence[]>,
-  cap: number,
-): number {
-  let total = Buffer.byteLength(input.canonicalStdout, "utf8") + Buffer.byteLength(input.canonicalStderr, "utf8");
-  if (total > cap) return cap + 1;
-
-  total += Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8");
-  if (total > cap) return cap + 1;
-
-  return total + evidenceBytes(evidence, cap - total);
-}
+import {
+  buildGuardErrorEnvelope,
+  buildRejectedEnvelope,
+  concurrencyLimit,
+  projectionInput,
+  resolveRedactPatterns,
+  DEFAULT_MAX_PAGE_SIZE,
+  type ExplainResult,
+  type FetchResult,
+  type RunOptions,
+  type RunPagedOptions,
+} from "./envelope.js";
+import { attachReview }                                                    from "./review.js";
+import { applyRunBudget, type PageStore }                                  from "./run-budget.js";
 
 /**
- * 근거 맵이 차지하는 바이트를 센다.
+ * 공개 타입을 이 자리에서 다시 내보낸다.
  *
- * 항목 하나씩 직렬화해 누적하고, **상한을 넘으면 즉시 멈춘다.** 이미 "거절"이라는 결론이
- * 났으므로 그 이상 정확한 값은 쓸 곳이 없다. 이 조기 종료가 없으면 한도를 초과할수록
- * 버릴 결과를 끝까지 재게 되어, 한도를 정한 것 자체가 비용이 된다.
+ * 이 파일은 패키지의 `@nerdvana/parism/engine` 서브패스 export 다.
+ * 타입의 **실체**는 다른 모듈로 옮겼지만, **import 경로**는 바꾸지 않는다 —
+ * 소비자가 `@nerdvana/parism/engine` 에서 꺼내던 이름이 그대로여야 한다.
  */
-function evidenceBytes(evidence: Record<string, FieldEvidence[]>, cap: number): number {
-  let total = 0;
-  for (const [pointer, list] of Object.entries(evidence)) {
-    for (const item of list) {
-      total += Buffer.byteLength(JSON.stringify([pointer, item.value, item.source_kind, item.source_spans, item.transform, item.masked, item.reason]), "utf8");
-      if (total > cap) return cap + 1;
-    }
-  }
-  return total;
-}
-
-export type ExplainResult =
-  | {
-      ok: true;  result_id: string; pointer: string; value: unknown;
-      source_kind: "verbatim" | "derived" | "none"; source_spans: SourceSpan[];
-      transform?: string; masked?: boolean; quoted?: string[];
-      age_ms: number; review: ReviewField; reason?: string;
-    }
-  | {
-      ok: false; result_id: string; pointer?: string;
-      reason: "unknown_id" | "expired" | "evicted" | "not_retained" | "unknown_pointer";
-      message: string;
-    };
-
-/** fetch_result 의 결과. 재실행 없이 저장된 같은 결과에서 다음 페이지만 돌려준다. */
-export type FetchResult =
-  | {
-      ok: true; result_id: string; offset: number; returned: number; total: number;
-      value: unknown; continuation?: Continuation;
-    }
-  | {
-      ok: false; reason:
-        | "cursor_invalid" | "cursor_mismatch" | "unknown_id" | "not_retained" | "expired" | "evicted"
-        | "no_continuation" | "tokenizer_unsupported";
-      message: string;
-    };
-
-export interface RunPagedOptions extends ExecOptions {
-  page?:      number;
-  page_size?: number;
-}
-
-/**
- * config에서 effective 리댁션 패턴을 결정한다.
- * - output_patterns가 undefined(미설정) → DEFAULT_OUTPUT_REDACT_PATTERNS 사용
- * - output_patterns가 [] (빈 배열 명시) → 빈 배열 사용 (사용자 의도적 비활성)
- * - output_patterns가 비어있지 않은 배열  → 해당 배열 사용 (defaults와 병합하지 않음)
- */
-function resolveRedactPatterns(config: PrismConfig): string[] {
-  const patterns = config.guard.secrets?.output_patterns;
-  if (patterns === undefined) return DEFAULT_OUTPUT_REDACT_PATTERNS;
-  return patterns;
-}
-
-/**
- * Guard 차단 시 반환하는 에러 봉투를 생성한다.
- * 직렬화된 출력과의 하위 호환성을 위해 guard_error 필드를 유지한다.
- */
-function buildGuardErrorEnvelope(
-  cmd: string, args: string[], cwd: string, err: GuardError,
-): ResponseEnvelope {
-  return buildRejectedEnvelope(cmd, args, cwd, { kind: "guard", reason: err.reason, message: err.message }, { reason: err.reason, message: err.message });
-}
-
-/**
- * 실행하지 않고 거부한 요청의 봉투. 메시지는 stderr.raw와 failure에 함께 둔다.
- */
-function buildRejectedEnvelope(
-  cmd: string, args: string[], cwd: string, failure: FailureInfo, guardError?: { reason: string; message: string },
-): ResponseEnvelope {
-  return {
-    ok:          false,
-    exitCode:    -1,
-    cmd,
-    args,
-    cwd,
-    duration_ms: 0,
-    stdout:      { raw: "", parsed: null },
-    stderr:      { raw: failure.message, parsed: null },
-    diff:        null,
-    ...(guardError && { guard_error: guardError }),
-    failure,
-  };
-}
-
-/** RunOptions에서 값이 있는 투영 인자만 모은다. */
-function projectionInput(opts: RunOptions | undefined): Record<string, unknown> {
-  const input: Record<string, unknown> = {};
-  if (!opts) return input;
-  for (const key of Object.keys(PROJECTION_SHAPE) as (keyof ProjectionOptions)[]) {
-    if (opts[key] !== undefined) input[key] = opts[key];
-  }
-  return input;
-}
+export type {
+  ExecOptions,
+  ExplainResult,
+  FetchResult,
+  RunOptions,
+  RunPagedOptions,
+} from "./envelope.js";
 
 const PAGE_CACHE_TTL_MS      = 30_000;
 const PAGE_CACHE_MAX_ENTRIES = 16;
 const PAGE_CACHE_MAX_BYTES   = 32 * 1024 * 1024;
-
-/** 설정에 동시 실행 상한이 없을 때(이전 형식의 설정 객체) 쓰는 값 */
-const DEFAULT_MAX_CONCURRENCY = 4;
-
-/** 설정에 page_size 상한이 없을 때(이전 형식의 설정 객체) 쓰는 값 */
-const DEFAULT_MAX_PAGE_SIZE = 1000;
-
-/**
- * 세마포어에 쓸 동시 실행 상한. 검증을 거치지 않은 설정 객체도 받으므로
- * 값이 없거나 유한한 수가 아니면 기본값을, 1 미만이면 1을 쓰고 소수는 버린다.
- */
-function concurrencyLimit(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_CONCURRENCY;
-  return Math.max(1, Math.floor(value));
-}
 
 export class ParismEngine {
   private readonly pageCache = new PageCache(PAGE_CACHE_TTL_MS, PAGE_CACHE_MAX_ENTRIES, PAGE_CACHE_MAX_BYTES);
@@ -256,7 +90,7 @@ export class ParismEngine {
   /** retain=true 로 요청한 결과를 보관해 explain_result 로 다시 본다. 메모리에만 있고 디스크에 남지 않는다. */
   private readonly results:   ResultStore;
   /** 예산 안에 잘라 낸 결과의 원본 행을 보관해 이어 읽기가 재실행 없이 되게 한다. */
-  private readonly pages:     Map<string, { rows: unknown[]; binding: CursorBinding }> = new Map();
+  private readonly pages:     PageStore = new Map();
 
   constructor(
     private readonly config:   PrismConfig,
@@ -483,7 +317,7 @@ export class ParismEngine {
     timer?.markEnd("redact");
 
     if (wantReview) {
-      const review = this.attachReview(enriched, {
+      const review = attachReview(enriched, {
         cmd, args, cwd,
         resultId:        mintResultId(),
         parsed,          final,
@@ -501,7 +335,7 @@ export class ParismEngine {
         wantRetain,
         projection,
         context: opts?.context,
-      });
+      }, { results: this.results, registry: this.registry, config: this.config });
       enriched = { ...enriched, review };
     }
 
@@ -514,11 +348,11 @@ export class ParismEngine {
      * 리댁션과 review 가 끝난 뒤에 한다 — 사용자에게 나가는 payload 에 대한 약속이어야 한다.
      */
     if (opts?.budget) {
-      const outcome = this.applyRunBudget(enriched, opts.budget, {
+      const outcome = applyRunBudget(enriched, opts.budget, {
         cmd, args, cwd, maskRanges,
         parsed, projection, native,
         resultId: wantReview ? enriched.review?.result_id : undefined,
-      });
+      }, { registry: this.registry, pages: this.pages });
       /**
        * 예산으로 줄인 결과를 그대로 응답에 실어야 한다.
        * 표면(예산·누락 내역·진행 정보)만 붙이고 본문을 그대로 두면 예산이 거짓말이 된다.
@@ -532,210 +366,6 @@ export class ParismEngine {
     }
 
     return enriched as ResponseEnvelope;
-  }
-
-  /**
-   * 이미 얻은 결과를 예산 안에 넣고 표면에 예산·누락 내역을 실는다.
-   * 실행시간이나 수집량을 줄이지 않는다 — 어디까지 내보낼지만 정한다.
-   */
-  private applyRunBudget(
-    envelope: ResponseEnvelope,
-    budget: NonNullable<RunOptions["budget"]>,
-    ctx: {
-      cmd: string; args: string[]; cwd: string; maskRanges: readonly MaskedRange[];
-      parsed: unknown; projection: ReturnType<typeof parseProjection> | undefined;
-      native: boolean; resultId?: string;
-    },
-  ): { budget: unknown; omission: unknown; shrunkParsed: unknown; continuation?: Continuation } {
-    const tokenizer = validateTokenizer(budget.tokenizer);
-    if (!tokenizer.ok) {
-      return {
-        budget: {
-          requested: { max_tokens: budget.max_tokens, tokenizer: budget.tokenizer ?? "parism/approx" },
-          measured_tokens: 0, tokenizer_id: "", tokenizer_version: "",
-          budget_met: false, tokenizer_exact: false, tokenizer_scope: "", error: tokenizer.message,
-        },
-        omission: [{ stage: "budget", reason: tokenizer.message }],
-        shrunkParsed: envelope.stdout.parsed,
-      };
-    }
-
-    const shape      = this.registry.contractFor(ctx.cmd, ctx.args);
-    const identity   = shape?.rowFields ?? [];
-    const parsed     = (envelope.stdout.parsed ?? ctx.parsed) as unknown;
-    const value      = findRowArray(parsed) === null ? parsed : parsed;
-    const silentEmpty = envelope.failure?.reason === "unrecognized_output";
-    const parseFailed = envelope.failure?.kind === "parse" && envelope.failure.reason === "parser_not_found";
-
-    const outcome = applyBudget({
-      value,
-      budget: { ...budget, tokenizer: tokenizer.id },
-      identityFields: [...identity],
-      resultId: ctx.resultId ?? "unretained",
-      binding: {
-        content_hash:   hashContent(envelope.stdout.raw),
-        schema_version: ENVELOPE_SCHEMA_VERSION,
-        policy:         JSON.stringify({
-          args: ctx.args, cwd: ctx.cwd,
-          where: ctx.projection?.ok ? ctx.projection.options.where ?? null : null,
-          sort: ctx.projection?.ok ? ctx.projection.options.sort_by ?? null : null,
-          array: ctx.projection?.ok ? ctx.projection.options.array ?? null : null,
-          required: budget.required_fields ?? [],
-        }),
-      },
-      captureTruncated:  envelope.truncated === true,
-      silentEmpty,
-      parseFailed,
-      privacyApplied:    ctx.maskRanges.length > 0,
-      projectionOmitted: 0,
-      /**
-       * '후보 값을 넣은 실제 응답' 전체를 재야 한다.
-       * 값만 재면 표면이 빠져 실제 응답이 상한을 넘는데도 budget_met 이 참이 된다.
-       */
-      measure: (candidate, surface) => countJsonTokens(
-        { ...envelope, budget: budgetReportPlaceholder(budget.max_tokens, tokenizer.id), ...surface,
-          stdout: { ...envelope.stdout, parsed: candidate } },
-        tokenizer.id,
-      ),
-    });
-
-    /**
-     * 이어 읽기는 재실행 없이 같은 결과에서 이어 가야 한다.
-     * 원본 행 전체를 이 세션에 담아 두고, cursor 에는 진행 규칙과 오프셋만 싣는다.
-     */
-    if (outcome.continuation && ctx.resultId) {
-      const found = findRowArray(parsed);
-      if (found) {
-        this.pages.set(ctx.resultId, {
-          rows:    found.rows,
-          binding: {
-            result_id: ctx.resultId,
-            content_hash:   hashContent(envelope.stdout.raw),
-            schema_version: ENVELOPE_SCHEMA_VERSION,
-            policy:         outcome.continuation ? "" : "",
-          },
-        });
-      }
-    }
-
-    /**
-     * ## 최종 상한 검증 — 계획서 M2 "최종 상한 검증"
-     *
-     * 예산을 적용할 때 재는 것은 **본문 + 표면**(누락 내역·진행 정보) 까지다.
-     * 그런데 **예산 보고(`budget`)와 누락 목록(`omission`) 은 그 뒤에 붙는다.**
-     * 그러면 소비자가 실제로 받는 응답이 재었던 것보다 커진다.
-     *
-     * 실측: `max_tokens: 1400` 요청 → `measured_tokens: 1330`, `budget_met: true`
-     * → **실제 전달 응답 1,939 토큰. 상한의 138%다.**
-     * `budget_met: true` 는 소비자가 지불하는 비용에 대해 참이 아니었고,
-     * SPECIFICATION 의 정의("최종 payload 를 실제로 센 수")와 어긋났다.
-     *
-     * 보고가 자기 크기를 담는 자기 참조 필드(`measured_tokens`)를 가지므로 한 번의 측정으로는
-     * 닫히지 않는다. 그래서 **확인 단계에서 실제 응답을 한 번 더 재고**, 아직 넘으면 넘은 만큼
-     * 상한을 낮춰 **한 번만** 다시 적용한다.
-     *
-     * **한 번만**인 이유: 줄일 때마다 누락 항목이 자라 그만큼 다시 커진다. 줄이는 값과
-     * 자라는 값이 싸우다 끝내 상한을 못 맞췄다(실측: 5,000 상한을 3회 시도 후에도 5,340).
-     * 그래도 못 맞추면 **거짓으로 참이라 하지 않고** `budget_met: false` 와 명시적 누락 항목으로
-     * 알린다. **못 맞추는 것보다 아무 값도 못 받는 쪽이 나쁘다** — 그래서 줄이지 않은 쪽을
-     * 그대로 둔다.
-     */
-    const measureDelivered = (o: typeof outcome): number =>
-      countJsonTokens(JSON.stringify({
-        ...envelope,
-        budget: o.report,
-        omission: o.omissions,
-        ...(o.continuation && { continuation: o.continuation }),
-        stdout: { ...envelope.stdout, parsed: o.value },
-      }), tokenizer.id);
-
-    const applyWith = (maxTokens: number) => applyBudget({
-      value, budget: { ...budget, max_tokens: maxTokens, tokenizer: tokenizer.id },
-      identityFields: [...identity],
-      resultId: ctx.resultId ?? "unretained",
-      binding: {
-        content_hash:   hashContent(envelope.stdout.raw),
-        schema_version: ENVELOPE_SCHEMA_VERSION,
-        policy: JSON.stringify({
-          args: ctx.args, cwd: ctx.cwd,
-          where: ctx.projection?.ok ? ctx.projection.options.where ?? null : null,
-          sort: ctx.projection?.ok ? ctx.projection.options.sort_by ?? null : null,
-          array: ctx.projection?.ok ? ctx.projection.options.array ?? null : null,
-          required: budget.required_fields ?? [],
-        }),
-      },
-      captureTruncated:  envelope.truncated === true,
-      silentEmpty,
-      parseFailed,
-      privacyApplied:    ctx.maskRanges.length > 0,
-      projectionOmitted: 0,
-      measure: (candidate, surface) => countJsonTokens(
-        { ...envelope, ...surface, stdout: { ...envelope.stdout, parsed: candidate } },
-        tokenizer.id,
-      ),
-    });
-
-    /**
-     * 넘은 만큼만큼 상한을 낮춰 다시 적용한다.
-     *
-     * **맞으면 줄인 쪽을 쓴다. 안 맞으면 줄이지 않은 쪽을 그대로 둔다.**
-     * 상한을 맞�다는 이유로 행을 0개까지 지우면 값이 사라지는 방향으로 나아간다 —
-     * 상한에 못 미치는 것과 아무 값도 못 받는 것 중 어느 쪽이 나은지 자명하다.
-     * 그래서 **들어온 시점에서 멈추고, 정직하게 '못 맞췄다' 고 말한다.**
-     */
-    const original = outcome;
-    let   final    = original;
-    let   delivered = measureDelivered(final);
-    /**
-     * 위에서 **검색 단계가 이미 보고 비용을 포함해 쟀으므로** 여기서는 한 번 확인하면 된다.
-     * 이전처럼 반복해서 행을 줄이면, 줄일 때마다 누락 항목이 자라 그만큼 다시 커진다 —
-     * 줄어드는 값과 자라는 값이 싸우다 끝내 상한을 못 맞춘다.
-     * (실측: 5,000 상한을 3회 시도하고도 못 맞췄다.)
-     */
-    if (delivered > budget.max_tokens) {
-      const tighter = budget.max_tokens - (delivered - budget.max_tokens);
-      if (tighter > 0) {
-        const next = applyWith(tighter);
-        const size = measureDelivered(next);
-        if (size <= budget.max_tokens) { final = next; delivered = size; }
-      }
-    }
-
-    if (delivered > budget.max_tokens) {
-      /**
-       * **알림 항목부터 붙인 뒤에 다시 잰다.**
-       *
-       * 순서가 중요했다. 알림을 붙인 **다음에** 재야 그 알림이 차지하는 크기까지
-       * `measured_tokens` 에 들어간다. 알림을 붙이고 이전 수치를 적으면
-       * '최종 payload 를 실제로 센 수' 라는 SPEC 정의와 어긋난다(실측: 70토큰 차이).
-       */
-      const notice = {
-        stage: "budget",
-        reason: `the response does not fit the ${budget.max_tokens} token cap even after trimming rows: the envelope and this report alone cost more than the cap`,
-      };
-      const omissions = [...final.omissions, notice];
-      const real = countJsonTokens(JSON.stringify({
-        ...envelope,
-        budget: { ...final.report, measured_tokens: 0, budget_met: false },
-        omission: omissions,
-        ...(final.continuation && { continuation: final.continuation }),
-        stdout: { ...envelope.stdout, parsed: final.value },
-      }), tokenizer.id);
-      return {
-        budget: { ...final.report, measured_tokens: real, budget_met: false },
-        omission: omissions,
-        shrunkParsed: final.value,
-        ...(final.continuation && { continuation: final.continuation }),
-      };
-    }
-
-    return {
-      /** SPEC 의 정의대로 — 보고와 누락 목록까지 붙인 **최종 응답**의 토큰 수를 실린다 */
-      budget:        { ...final.report, measured_tokens: delivered },
-      omission:      final.omissions,
-      shrunkParsed:  final.value,
-      ...(final.continuation && { continuation: final.continuation }),
-    };
   }
 
   /**
@@ -794,170 +424,6 @@ export class ParismEngine {
       value,
       ...(hasMore && { continuation: { result_id: resultId, cursor: makeCursor(page.binding, nextOffset), rows_left: rows.length - nextOffset, total: rows.length } }),
     };
-  }
-
-  /**
-   * 결과의 재검토 정보를 붙이고, 보관 요청이 있으면 세션에 담아 둔다.
-   * 재검토 정보는 기존 봉투 필드의 뜻을 바꾸지 않는다.
-   */
-  private attachReview(
-    envelope: ResponseEnvelope,
-    input: {
-      cmd: string; args: string[]; cwd: string; resultId: string; context?: UserContext;
-      parsed: unknown; final: unknown; native: boolean; truncated: boolean;
-      silentEmpty: boolean; representation: boolean; evidenceReason?: string; compactApplied: boolean;
-      rawEvidence: RawEvidence; unmaskedStdout: string;
-      canonicalStdout: string; canonicalStderr: string;
-      maskRanges: readonly MaskedRange[];
-      wantRetain: boolean; projection: ReturnType<typeof parseProjection> | undefined;
-    },
-  ): ReviewField {
-    const warnings: string[] = [];
-    if (input.truncated) {
-      warnings.push("output exceeded max_output_bytes: evidence covers the retained prefix only");
-    }
-    if (input.evidenceReason === "native_json_document") {
-      warnings.push("native JSON document: evidence points at the whole output, not a field span");
-    }
-    if (input.evidenceReason === "unsupported_format") {
-      warnings.push("argument format is not contract-checked: no field evidence was produced");
-    }
-    if (input.compactApplied) {
-      warnings.push("compact format changed the result shape: field pointers no longer resolve, so evidence was not produced");
-    }
-    /**
-     * 투영이 행의 순서나 자리를 바꾸면 원래 포인터가结果的 행을 가리키지 않는다.
-     * 근거를 지어내지 않고 '알 수 없음'으로 남긴다.
-     */
-    const reorderRequested =
-      input.projection?.ok === true &&
-      (input.projection.options.where !== undefined ||
-       input.projection.options.sort_by !== undefined ||
-       (input.projection.options.limit ?? 0) > 0 ||
-       input.projection.options.array !== undefined);
-    if (reorderRequested) {
-      warnings.push("projection reordered or filtered rows: field evidence was dropped rather than guessed");
-    }
-    if (Object.keys(input.rawEvidence).length === 0) {
-      warnings.push("this parser produces no field evidence yet; only the whole-output evidence is available");
-    }
-
-    const review = buildReview(
-      {
-        cmd:                input.cmd,
-        parserId:           input.native ? "native_json" : this.registry.hasParser(input.cmd) ? input.cmd : "none",
-        native:             input.native,
-        truncated:          input.truncated,
-        silentEmpty:        input.silentEmpty,
-        parsedMissing:      input.parsed == null,
-        representationLossless: input.representation,
-        masked:             input.maskRanges.length > 0,
-        canonicalStdout:    input.canonicalStdout,
-        canonicalStderr:    input.canonicalStderr,
-        schemaVersion:      PACKAGE_VERSION,
-        warnings,
-      },
-      input.resultId,
-    );
-
-    if (!input.wantRetain) {
-      /**
-       * result_id 는 review 에 실렸으므로 사용자가 이 id 로 explain_result 를 부를 수 있다.
-       * '처음부터 보관하지 않았다'는 사실을 남겨야 조회 시 그 사실로 거절한다.
-       * 남기지 않으면 모르는 id 와 구분되지 않아 '어디에 갔나' 알 수 없다.
-       */
-      this.results.markNotRetained(input.resultId);
-      return review;
-    }
-
-    const evidence = this.buildEvidence(input);
-    const stored: StoredResult = {
-      resultId:  input.resultId,
-      createdAt: Date.now(),
-      /**
-       * 정규 원문은 마스킹 후 기준이다. 응답에서 원문이 빠졌어도(적응형 포맷) 보관본은 실출력을 담는다 —
-       * 근거 구간이 가리키는 대상이 사라지지 않게 하는 것이 목적이다.
-       */
-      stdout:    input.canonicalStdout,
-      stderr:    input.canonicalStderr,
-      parsed:    input.final,
-      evidence,
-      review,
-      /**
-       * **근거도 바이트에 넣는다.**
-       *
-       * 근거 맵은 값 자체를 함께 담는다(근거가 그 값을 증명해야 하므로).
-       * 그래서 본문만큼이나, 대개는 더 크게 든다. 예전에는 본문과 원문만 세어
-       * 실제 보관 크기의 2.58배를 과소 보고했다(실측) — 문서에 적힌 한도(결과당 2MiB)가
-       * 실제로는 그 2.58배까지 들어가는 상태로 집행되고 있었다.
-       */
-      bytes:     storedBytesOf(input, evidence, this.results.perResultLimit),
-      cmd:       input.cmd,
-      args:      input.args,
-      cwd:       input.cwd,
-      fingerprint: buildFingerprint({
-        cmd:    input.cmd,
-        args:   input.args,
-        cwd:    input.cwd,
-        policy: this.config.guard,
-        review,
-        context: input.context,
-        env:    process.env,
-      }),
-    };
-    const put = this.results.put(stored);
-    if (!put.retained) {
-      return { ...review, retained: false, warnings: [...review.warnings, put.reason ?? "result was not retained"] };
-    }
-    return { ...review, retained: true };
-  }
-
-  /**
-   * 파서가 준 문자열 위치를 마스킹된 정규 원문의 바이트 구간으로 바꾸고, 그 구간이 정말 그 값을
-   * 담는지 확인한다. 확인되지 않으면 근거가 아니라 "근거 없음"으로 남긴다.
-   */
-  private buildEvidence(
-    input: {
-      rawEvidence: RawEvidence; unmaskedStdout: string; canonicalStdout: string;
-      maskRanges: readonly MaskedRange[];
-      final: unknown; projection: ReturnType<typeof parseProjection> | undefined;
-    },
-  ): Record<string, FieldEvidence[]> {
-    const reorders =
-      input.projection?.ok === true &&
-      (input.projection.options.where !== undefined ||
-       input.projection.options.sort_by !== undefined ||
-       (input.projection.options.limit ?? 0) > 0 ||
-       input.projection.options.array !== undefined);
-    if (reorders || Object.keys(input.rawEvidence).length === 0) return {};
-
-    const unmaskedIndex = buildLineIndex(input.unmaskedStdout);
-    const canonical    = input.canonicalStdout;
-    const spans        = evidenceToByteSpans(
-      input.rawEvidence, unmaskedIndex, canonical, input.maskRanges,
-    );
-    const out: Record<string, FieldEvidence[]> = {};
-
-    for (const [pointer, list] of Object.entries(spans)) {
-      const value = resolvePointer(input.final, pointer);
-      if (value === undefined) continue;
-      const check = verifySpans(canonical, list, value);
-      const transform = list.find(s => s.transform)?.transform;
-      if (check.ok) {
-        out[pointer] = [{
-          value:        value,
-          source_kind:  transform === undefined ? "verbatim" : "derived",
-          source_spans: list,
-          ...(transform && { transform }),
-          masked:       input.maskRanges.length > 0,
-        }];
-      } else {
-        out[pointer] = [{
-          value, source_kind: "none", source_spans: [], masked: false, reason: check.reason,
-        }];
-      }
-    }
-    return out;
   }
 
   /**
