@@ -293,7 +293,7 @@ describe("exportJsonSchema()", () => {
 });
 
 describe("createRegistry()", () => {
-  it("50개 내장 파서가 등록된 레지스트리를 반환한다", () => {
+  it("51개 내장 파서가 등록된 레지스트리를 반환한다", () => {
     const registry = createRegistry();
     const commands = [
       "ls", "find", "stat", "du", "df", "tree",
@@ -301,7 +301,7 @@ describe("createRegistry()", () => {
       "ping", "curl", "netstat", "lsof", "ss", "dig", "ip",
       "grep", "wc", "head", "tail", "cat",
       "env", "pwd", "which",
-      "free", "uname", "id", "systemctl", "journalctl", "vmstat", "lsmod", "lsusb", "lsblk", "swapon", "lscpu",
+      "free", "uname", "id", "systemctl", "journalctl", "vmstat", "lsmod", "lsusb", "lsblk", "swapon", "lscpu", "ipcs",
       "dir", "tasklist", "ipconfig", "systeminfo",
       "kubectl", "docker", "gh", "helm", "terraform",
       "apt", "brew",
@@ -309,8 +309,8 @@ describe("createRegistry()", () => {
       "git",
     ];
 
-    expect(commands).toHaveLength(50);
-    expect(registry.parsers.size).toBe(50);
+    expect(commands).toHaveLength(51);
+    expect(registry.parsers.size).toBe(51);
 
     for (const cmd of commands) {
       expect(registry.parsers.has(cmd), `${cmd} 파서가 등록되지 않았다`).toBe(true);
