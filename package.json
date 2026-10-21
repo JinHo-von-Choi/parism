@@ -1,6 +1,6 @@
 {
   "name": "@nerdvana/parism",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Structured shell output wrapper for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -19,8 +19,10 @@
     "build": "tsc",
     "dev": "node --watch --experimental-transform-types src/index.ts",
     "start": "node dist/index.js",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests experiments",
     "benchmark": "npx tsx benchmarks/index.ts",
@@ -37,12 +39,12 @@
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
-    "@vitest/coverage-v8": "^3.0.0",
+    "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^10.0.3",
     "gpt-tokenizer": "^3.4.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
-    "vitest": "^3.0.0"
+    "vitest": "^5.0.5"
   },
   "files": [
     "dist"

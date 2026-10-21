@@ -7,6 +7,76 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-22
+
+이번 릴리즈는 **코드가 아니라 파이프라인**을 고친다. 런타임 동작과 공개 API는 바뀌지 않는다.
+
+### Security — 의존성 취약점 2건 패치
+
+- **`proxy-addr` 2.0.7 → 2.0.8** (critical). IPv4-mapped IPv6 trust subnet을 통한 IP 스푸핑(GHSA-jqcg-44mw-7w3h). `express` 를 통해 `@modelcontextprotocol/sdk` 가 끌어온 전이 의존성이었다. **이 수치는 `package-lock.json` 에 고정돼 있었다** — 로컬 `node_modules` 가 낡은 것만 문제가 아니었다. `npm ci` 로도 그대로 재현됐다.
+- **`@modelcontextprotocol/sdk` 1.31.0 → 1.32.1** (high 2건 + moderate). 요청 크기 검증 중 메모리 고갈(GHSA-46jr-4wx8-v453), 다른 서비스용 토큰 수락(GHSA-rvq5-wwqv-78pq), 실험적 task의 세션 비연결(GHSA-22jm-h49p-29qw).
+- **개발 의존성의 critical RCE도 함께 해소** — `vitest` 3 → 5, `@vitest/coverage-v8` 3 → 5. `tinypool` 의 worker options 프로토타입 오염 Gadget(GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr). 메이저 업그레이드였으나 1,745건 시험이 전부 통과했다. `npm audit` 결과 **0 vulnerabilities**.
+- **CI에 의존성 보안 게이트 신설** (`ci.yml` 의 `audit` 잡). 프로덕션 트리는 high 이상이면 차단, 개발 트리는 critical 만 차단. 게이트가 없으면 "기억해서 고치는" 방식은 반드시 새어난다 — critical 취약점이 3개월간 lock 파일에 고정된 채 방치된 것이 그 증거였다.
+- **Dependabot 설정 신설** (`.github/dependabot.yml`). 게이트는 위반을 막을 뿐 고치는 일을 하지 않는다. 런타임 의존성은 메이저 없이 묶고, 개발 의존성 메이저는 분리해 눈에 띄게 한다.
+- **CodeQL 정적 분석 신설** (`.github/workflows/codeql.yml`). `npm audit` 는 **알려진** 취약점만 본다. parism 은 에이전트가 만든 명령을 실행하고 파서를 동적으로 적재하므로 실행 시점 위험이 크다.
+
+### Fixed — stale `dist` 가 유발한 테스트 오판
+
+- **`dist/` 가 3개월간 낡은 상태였다.** `dist/version.js` 의 `PACKAGE_VERSION` 는 `1.1.0` 이었고 `src/version.ts` 는 `2.1.0` 이었다. `dist/` 는 `.gitignore` 대상이라 git 이 추적해 주지 않는다.
+- **증상** — `npm test` 가 3건을 실패시켰다. `version-sync` 시험이 `PACKAGE_VERSION = "2.1.0"` 을 찾지 못하고, `inspect` 시험이 `too many arguments for 'inspect'` 로 죽었다 — `dist` 의 `inspect` 가 단일 인자(`<command>`) 구버전이라 가변 인자(`<command...>`) 계약과 어긋났기 때문이다.
+- **원인은 소스 결함이 아니었다.** `npm run build` 후 3건 모두 해소됐다. CI 는 항상 빌드 후 테스트하므로 Green 이었지만, **로컬 개발자와 에이전트는 stale `dist` 로 잘못된 실패를 진단하게 된다.**
+- **재발 방지** — `pretest` / `pretest:coverage` 훅으로 테스트 전에 빌드가 자동으로 돈다. `tsconfig` 에 `incremental: true` 를 켜서 훅 비용을 낮췄다(**cold 9.4초 → warm 1.9초**).
+- **배포 게이트 신설** — `publish.yml` 이 배포 직전에 **태그 · `package.json` · `dist/version.js` 의 세 버전**이 같은지 확인한다. 셋 중 하나만 올리면 조용히 어긋나고, 특히 셋째가 어긋나면 배포본이 옛말을 한다.
+
+### Added — `parism eval` 의 시나리오 주입
+
+- **`runEvalSuite` 가 시나리오와 설정을 받는다.** `runEvalSuite({ names?, scenarios?, configPath? })`. **`node_modules` 와 `dist` 는 이제 같아야 한다** — hook 이 보장한다.
+- **왜 필요한가** — 기대값이 어긋난 경로가 시나리오에 없다면 그 경로는 검증되지 않는다. 내장 시나리오는 모두 기대와 일치하므로, 불일치가 뱉는 메시지("관측할 수 없었다", "기대와 다르다")는 아무도 지나가지 않았다. 사용자 정의 시나리오로 그 경로를 집어 확인할 수 있다.
+- **판정 로직이 시험되지 않고 있었다** — `src/cli/eval.ts` 의 파일 전체 커버리지가 17.78%, **함수 커버리지가 0%** 였다. 세 판단(execution·parse·task)을 나누는 코드가 **한 번도 실행되지 않았다.** 판정 로직이 조용히 사라져도 아무도 몰랐다.
+- **새 시험 파일** (`tests/cli/eval-runtime.test.ts`) — 내장 시나리오는 **불변식만** 본다(관측값의 종류, 막히면 null 인 관계, 집계의 합). "이 호스트에서 이 값이 나온다" 는 주장은 하지 않는다 — 주장이 틀리면 그건 시험이 아니라 다른 호스트의 거짓말이 된다. 정확한 값은 **사용자 정의 시나리오**로 본다. 설정을 직접 주면 허용 명령·허용 경로를 정하므로 호스트와 무관하게 결과가 정해진다.
+- **커버리지** — `src/cli/eval.ts` 17.78% → **89.52%**(함수 100%), `src/cli` 디렉터리 70.44% → **93.75%**(함수 100%).
+
+### Changed — `src/facade/engine.ts` 모듈 분리
+
+- **`src/facade/engine.ts` 가 1,274줄에서 740줄로 줄었다.** 한 파일에 타입 정의·순수 계산·상태 있는 클래스가 뒤섞여 있어서, 어느 하나를 고치려면 1,274줄을 전부 읽어야 했다.
+- **새 모듈 3개** — `src/facade/envelope.ts`(봉투를 만드는 순수 함수와 공개 타입, 193줄), `src/facade/review.ts`(재검토·근거 조립, 251줄), `src/facade/run-budget.ts`(토큰 예산 적용, 245줄).
+- **방향은 한쪽으로만.** 이 세 모듈은 `ParismEngine` 을 모른다. 엔진이 이들을 부른다.
+- **공개 API는 그대로다.** `ExecOptions`·`RunOptions`·`RunPagedOptions`·`ExplainResult`·`FetchResult` 의 **실체**는 옮겼지만 **import 경로**는 바꾸지 않았다 — `@nerdvana/parism/engine` 에서 꺼내던 이름이 그대로여야 한다. `dist/facade/engine.d.ts` 의 export 목록이 릴리즈 전과 **동일함**을 확인했다.
+- **커버리지는 줄지 않았다** — 분리 전후 `src/facade` 집계가 84.58 / 74.18 / 90.76 / 85.98 로 **완전히 동일**하다. 동작을 바꾸지 않고 자리를 옮긴 것이다.
+
+### Documentation — 결정 기록(ADR) 정식화
+
+- **ADR 4편 신설 + 인덱스** (`docs/adr/`). 결정이 SPECIFICATION 산재해 있으면 맥락을 잃는다. 각 ADR 은 **기각된 대안**을 함께 둔다 — 대안 없이 결정만 남은 문서는 나중에 같은 논리를 다시 처음부터 하게 만든다.
+- **가드의 4겹 방어선과 "막힌 것 ≠ 실패" 계약** — 4층(화이트리스트·인젝션 패턴·인자 제한·명령 정책), 그리고 `guard_error` 가 만들어진 이유.
+- **의미 diff의 identity 규칙과 "거짓 삭제 0"** — 도메인별 identity 규칙, kubernetes uid 부재, ps PID 재사용, 그리고 왜 "못 찾았다고 새로 생긴 것이 아니다" 를 규칙으로 삼는지.
+- **토큰 예산의 최종 상한 검증** — 재는 대상이 최종 payload 인 이유, 한 번만 줄이는 이유, 못 맞추면 거짓으로 참이라 하지 않는 이유.
+- **Phase 2 — 에이전트 생성 파서의 샌드박스 보안 설계** — `TODOS.md` 의 선결 조건. **`node:vm` 을 기각했다.** Node.js 공식 문서가 보안 메커니즘이 아니라고 명시하고 `constructor` 체인 탈출이 알려져 있다. 진짜 경계는 **`child_process.fork` + Node.js 권한 모델(`--permission`)** 이며, 파일 쓰기·네트워크·자식 프로세스·환경 변수·네이티브 애드온은 기본 차단이다. 격리를 끄는 설정은 없다 — 격리가 없으면 거절한다.
+- **`TODOS.md` 갱신** — 샌드박스 ADR 을 완료로 표시하고 "Phase 2: 구현 착수" 항목을 새로 열었다.
+
+### Changed — 도구 체인
+
+- `vitest` 3 → 5, `@vitest/coverage-v8` 3 → 5 (tinypool critical RCE 해소). **1,745건 시험 전부 통과**, 실행 시간 14.5초 → 14.0초.
+- `eslint` 10.0.3 → 10.13.0, `typescript-eslint` 8.56.1 → 8.72.0, `@types/node` 22.19.13 → 22.20.5.
+
+### Verified
+
+- `npm run build` — 오류 0
+- `npx tsc --noEmit` — 오류 0
+- `npm run lint` — 오류 0, 경고 0
+- `npm test` — 74 파일 / **1,762건 통과** (9 skip), 0 실패
+- `npm run test:coverage` — statements 92.09% · branches 85.53% · functions 96.28% · lines 94.52% (임계치 80% 통과)
+- `npm audit` — **0 vulnerabilities** (프로덕션·개발 전체)
+- `npm ls --depth=0` — invalid 없음
+
+### Breaking notes
+
+없다. 공개 API·런타임 동작·CLI 계약이 바뀌지 않는다. `runEvalSuite` 의 시그니처가 바뀌었으나 이 모듈은 패키지 `exports` 맵 밖에 있어 외부에서 직접 import 할 수 없고, 내부 호출부는 한 곳(`src/cli.ts`)뿐이며 갱신했다.
+
+### Known limitations
+
+- `vitest` 5 의 v8 커버리지 수집은 vitest 3 보다 **엄격**하다. 같은 코드의 커버리지 수치가 낮게 나오는데 추이된 코드가 아니라 계측 범위다. `src/fixtures/run.ts`(35%)와 `src/facade/engine.ts`(79%)가 다음 커버리지 대상이다.
+- `typescript` 7.0.2, `zod` 4.6.7, `commander` 15.0.0 의 메이저 업그레이드는 **이번 릴리즈에 넣지 않았다.** `zod` 4 는 `zod-to-json-schema` 3 과 호환되지 않고, 각각 별도 마이그레이션이 필요하다.
+
 ## [2.1.0] - 2026-10-05
 
 ### Added — M1 근거 조회

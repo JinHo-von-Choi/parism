@@ -53,6 +53,36 @@ jobs:
       - name: Lint
         run: npm run lint
 
+  # 의존성 보안 게이트.
+  #
+  # proxy-addr critical(IP 스푸핑)이 lock 파일에 고정한 채 3개월간 방치된 전례가 있다.
+  # "한 사람이 주기적으로 기억해서 고치는" 방식은 게이트가 없으면 반드시 새어난다.
+  #
+  # 기준을 둘로 나눴다:
+  #   - 프로덕션 트리: high 이상이면 차단. 배포되는 산출물에 들어가는 트리다.
+  #   - 개발 트리: critical 만 차단. moderate/high 는 빌드 파이프라인의 도구 체인에
+  #     영향을 주지만 배포 산출물에는 들어가지 않으므로, Dependabot PR로 처리한다.
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit development dependencies
+        run: npm audit --audit-level=critical
+
   platform:
     runs-on: ${{ matrix.os }}
 

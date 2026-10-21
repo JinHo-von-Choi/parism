@@ -1,0 +1,72 @@
+version: 2
+
+# Dependabot 설정.
+#
+# `ci.yml` 의 audit 게이트가 "알려주면 고치는" 유일한 수단이었다. 게이트는 위반을
+# 막을 뿐 고치는 일을 하지 않는다. 이 설정이 그 고치는 일을 맡는다.
+#
+# 그룹핑 규칙:
+#   - 런타임 의존성: 메이저 없이 한 번에 올린다. 패키지는 하나라도 얽혀 있으면
+#     단독 메이저 업그레이드는 되돌리기 어렵다.
+#   - 개발 의존성: 메이저를 분리해 메이저 마이그레이션 PR 을 눈에 띄게 둔다.
+#   - GitHub Actions: 런타임 영향이 없으므로 항상 함께 올린다.
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+    groups:
+      # 런타임 의존성 — 메이저 없이는 함께 올린다.
+      prod-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns:
+          - "@modelcontextprotocol/sdk"
+          - "commander"
+          - "zod"
+          - "zod-to-json-schema"
+      # 개발 의존성 메이저 — 마이그레이션 PR 을 분리해 올린다.
+      dev-major:
+        applies-to: version-updates
+        update-types: ["major"]
+        patterns:
+          - "typescript"
+          - "vitest"
+          - "@vitest/coverage-v8"
+          - "eslint"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+      dev-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@modelcontextprotocol/sdk"
+          - "commander"
+          - "zod"
+          - "zod-to-json-schema"
+          - "typescript"
+          - "vitest"
+          - "@vitest/coverage-v8"
+          - "eslint"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+    groups:
+      actions:
+        patterns: ["*"]
