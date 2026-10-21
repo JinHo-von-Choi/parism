@@ -73,3 +73,53 @@ jobs:
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
+
+      # 레지스트리 전파 대기 — 워크플로우가 성공해도 곧바로 설치되지는 않는다.
+      #
+      # npm publish 는 **접수만 하고 돌아온다.** npm 자신의 출력이 그 신호를 말한다:
+      #   "Your package is being processed and may take a few minutes to become available."
+      # 실측에서 공개 레지스트리를 읽는 경로가 성공한 publish 를 **10~25분** 뒤에 Visible 한
+      # 사례가 있다. 즉 **초록 워크플로우가 곧바로 설치 가능을 뜻하지 않는다.**
+      #
+      # 전파는 **두 단계**다 — 메타데이터가 먼저 도착하고 tarball 블롭이 나중에 따라온다.
+      # 실제로 2.1.1 은 메타데이터(dist-tags.latest=2.1.1)가 보이지만 tarball 이 404 라
+      # `npm install @nerdvana/parism@2.1.1` 이 실패하는 중간 상태를 거쳤다.
+      # **메타데이터만 확인하면 그 중간 상태를 통과시켜 버린다.** 그래서 블롭까지 본다.
+      #
+      # 이 단계는 그 지연을 **기다린 뒤 확인**하는 것이다.
+      #  - `--prefer-online` — 로컬에 캐시된 "not found" 가 이미 도착한 버전을 가리지 못하게 한다.
+      #  - 버전(불변)·dist-tag(latest)·tarball(blob) 셋을 모두 확인한다.
+      #  - 실패해도 **다시 배포하지 않는다.** 같은 이름·버전은 다시 쓸 수 없다.
+      #    publish 는 이미 성공했다. 재게시는 문제가 아니라 또 다른 문제다.
+      - name: Wait for registry propagation
+        run: |
+          set -uo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="@nerdvana/parism"
+          INTERVAL=15
+          ATTEMPTS=120   # 120 x 15s = 30분
+
+          for attempt in $(seq 1 "$ATTEMPTS"); do
+            SEEN="$(npm view --prefer-online "$PKG@$VERSION" version 2>/dev/null || true)"
+            TAG="$(npm view --prefer-online "$PKG" dist-tags.latest 2>/dev/null || true)"
+            TARBALL="$(npm view --prefer-online "$PKG@$VERSION" dist.tarball 2>/dev/null || true)"
+
+            BLOB_OK="no"
+            if [ -n "$TARBALL" ]; then
+              CODE="$(curl -s -o /dev/null -w '%{http_code}' "$TARBALL" || true)"
+              [ "$CODE" = "200" ] && BLOB_OK="yes"
+            fi
+
+            if [ "$SEEN" = "$VERSION" ] && [ "$TAG" = "$VERSION" ] && [ "$BLOB_OK" = "yes" ]; then
+              echo "$PKG@$VERSION 가 레지스트리에 준비되었다 (attempt $attempt/$ATTEMPTS, latest=$TAG)"
+              exit 0
+            fi
+
+            if [ "$attempt" = "$ATTEMPTS" ]; then
+              echo "::error::$PKG@$VERSION 이 ${ATTEMPTS}x${INTERVAL}s 안에 준비되지 않았다 (version='$SEEN' latest='$TAG' blob=$BLOB_OK). publish 는 이미 성공했다 — 재게시하지 말고 npm 레지스트리 전파 지연으로 처리하라."
+              exit 1
+            fi
+
+            echo "waiting… attempt $attempt/$ATTEMPTS (version='$SEEN' latest='$TAG' blob=$BLOB_OK)"
+            sleep "$INTERVAL"
+          done
