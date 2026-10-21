@@ -17,6 +17,7 @@ import { lsusbPack } from "./system/lsusb.js";
 import { lsblkPack } from "./system/lsblk.js";
 import { swaponPack } from "./system/swapon.js";
 import { lscpuPack } from "./system/lscpu.js";
+import { ipcsPack } from "./system/ipcs.js";
 import { ipPack } from "./network/ip.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
@@ -67,6 +68,7 @@ export function createRegistry(): ParserRegistry {
   registry.registerPack(lsblkPack);
   registry.registerPack(swaponPack);
   registry.registerPack(lscpuPack);
+  registry.registerPack(ipcsPack);
   register("free",       parseFree);
   register("uname",      parseUname);
   register("id",         parseId);
