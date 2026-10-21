@@ -14,6 +14,7 @@ import { parseNpm, parseCargo } from "./packages/index.js";
 import { vmstatPack } from "./system/vmstat.js";
 import { lsmodPack } from "./system/lsmod.js";
 import { lsusbPack } from "./system/lsusb.js";
+import { lspciPack } from "./system/lspci.js";
 import { lsblkPack } from "./system/lsblk.js";
 import { swaponPack } from "./system/swapon.js";
 import { lscpuPack } from "./system/lscpu.js";
@@ -65,6 +66,7 @@ export function createRegistry(): ParserRegistry {
   registry.registerPack(vmstatPack);
   registry.registerPack(lsmodPack);
   registry.registerPack(lsusbPack);
+  registry.registerPack(lspciPack);
   registry.registerPack(lsblkPack);
   registry.registerPack(swaponPack);
   registry.registerPack(lscpuPack);
