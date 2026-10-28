@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { FailureInfo, ResponseEnvelope } from "../../src/types/envelope.js";
 
 /** 다음 execute 호출이 돌려줄 실행 결과 */
@@ -96,6 +99,21 @@ describe("실행 실패와 파싱 오류가 겹친 결과", () => {
  * 스폰 실패가 ENOENT 일 때만 설치 정보를 붙인다. EACCES(권한 없음)는 설치로 해결되지 않는다.
  */
 describe("명령이 이 호스트에 없을 때", () => {
+  /**
+   * 설치 여부는 실제 PATH 를 조회해서 정한다. 러너에 helm·kubectl 이 설치돼 있으면
+   * "없음" 이 재현되지 않으므로, PATH 를 패키지 관리자(apt)만 있는 빈 디렉터리로 바꾼다.
+   */
+  let sandbox = "";
+  beforeAll(() => {
+    sandbox = mkdtempSync(path.join(tmpdir(), "parism-path-"));
+    writeFileSync(path.join(sandbox, "apt"), "#!/bin/sh\n", { mode: 0o755 });
+    vi.stubEnv("PATH", sandbox);
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    rmSync(sandbox, { recursive: true, force: true });
+  });
+
   const enoent = (cmd: string): FailureInfo => ({
     kind: "exec", reason: "spawn_failed", message: `spawn ${cmd} ENOENT`, errorCode: "ENOENT",
   });

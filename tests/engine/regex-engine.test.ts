@@ -211,7 +211,7 @@ describe("바이트 동일성 — 실제 명령 출력", () => {
 });
 
 describe("폴백 기록", () => {
-  it("치환 문자열에 $ 가 있으면 TypeScript 로 되돌아간다", async () => {
+  nativeOnly("치환 문자열에 $ 가 있으면 TypeScript 로 되돌아간다", async () => {
     const fallbacks: { pattern: string; reason: string }[] = [];
     const result = await replaceAllText("a+", "aaa", "[$&]", "g", true, {
       onFallback: info => fallbacks.push(info),
@@ -220,7 +220,7 @@ describe("폴백 기록", () => {
     expect(fallbacks[0]!.reason).toContain("$");
   });
 
-  it("빈 매칭 순서를 재현할 수 없으면 TypeScript 로 되돌아간다", async () => {
+  nativeOnly("빈 매칭 순서를 재현할 수 없으면 TypeScript 로 되돌아간다", async () => {
     const fallbacks: { pattern: string; reason: string }[] = [];
     /** 패턴이 빈 매칭을 하고 텍스트에 BMP 밖 문자가 있다. */
     const result = await replaceAllText("x*", "a\u{1f389}b", "[R]", "g", true, {
@@ -356,7 +356,7 @@ describe("치환 경로의 실패", () => {
     }
   });
 
-  it("바이너리가 있으면 '없음' 이라고 하지 않는다", async () => {
+  nativeOnly("바이너리가 있으면 '없음' 이라고 하지 않는다", async () => {
     /**
      * 이전에는 `$` 나 빈 매칭 순서 때문에 되돌아간 뒤에도
      * "바이너리가 없습니다" 라는 **거짓 이유**가 추가로 기록되었다.
@@ -370,7 +370,7 @@ describe("치환 경로의 실패", () => {
     expect(fallbacks[0]!.reason).not.toContain("not available");
   });
 
-  it("Rust 가 거절한 패턴은 그 사유를 그대로 알린다", async () => {
+  nativeOnly("Rust 가 거절한 패턴은 그 사유를 그대로 알린다", async () => {
     const fallbacks: { pattern: string; reason: string }[] = [];
     const result = await replaceAllText("(a)\\1", "aa", "[R]", "g", true, {
       onFallback: info => fallbacks.push(info),
