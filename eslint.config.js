@@ -17,7 +17,7 @@ export default tseslint.config(
   },
   {
     /**
-     * 실험 스크립트(`experiments/`)는 Node 를 직접 쓴다.
+     * 실험 스크립트(`experiments/`)와 시험용 가짜 엔진(`tests/`)은 Node 를 직접 쓴다.
      *
      * **여기를 검사한다는 것이 요점이다.** TypeScript 파일은 타입이 문법까지 잡아 주므로
      * `npm run lint` 에 포함되어 있지 않아도 그랬다. `.mjs` 는 순수 JavaScript 라
@@ -27,7 +27,7 @@ export default tseslint.config(
      * `globals` 패키지를 새 의존성으로 넣지 않고, 실제로 쓰이는 전역만 좁혀 선언한다.
      * 여기 없는 이름은 계속 `no-undef` 로 걸린다 — 선언을 넓히면 검사가 느슨해진다.
      */
-    files: ["experiments/**/*.mjs"],
+    files: ["experiments/**/*.mjs", "tests/**/*.mjs"],
     languageOptions: {
       globals: {
         console:        "readonly",

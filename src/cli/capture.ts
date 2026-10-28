@@ -71,8 +71,8 @@ export async function captureCommand(
     exitCode = execErr.code ?? 1;
   }
 
-  const cleanOut   = sanitizeText(stdout);
-  const cleanErr   = sanitizeText(stderr);
+  const cleanOut   = await sanitizeText(stdout);
+  const cleanErr   = await sanitizeText(stderr);
   const cleanArgs  = sanitizeArgs(args);
   const redactions = [...cleanOut.redactions, ...cleanErr.redactions, ...cleanArgs.redactions];
 

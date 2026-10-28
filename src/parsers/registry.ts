@@ -1,5 +1,4 @@
 import { z }                  from "zod";
-import { zodToJsonSchema }      from "zod-to-json-schema";
 import { tryParseNativeJson }   from "./json-passthrough.js";
 import { countDataLines, isSilentEmpty, type ContractFacts } from "./invariants.js";
 import type { RawEvidence } from "../engine/evidence.js";
@@ -501,5 +500,6 @@ export class ParserRegistry {
  * 외부 문서화 및 툴링 용도.
  */
 export function exportJsonSchema(pack: ParserPack): object {
-  return zodToJsonSchema(pack.schema, pack.name) as object;
+  /** JSON Schema 로 옮길 수 없는 타입(transform 등)은 제약 없는 스키마로 둔다. 변환이 실패해 내보내기가 멈추지 않게 한다. */
+  return { ...z.toJSONSchema(pack.schema, { unrepresentable: "any" }), title: pack.name };
 }

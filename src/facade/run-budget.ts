@@ -29,6 +29,7 @@ import { hashContent }                                         from "../engine/e
 import { ENVELOPE_SCHEMA_VERSION }                             from "../engine/review.js";
 import type { MaskedRange }                                    from "../engine/mask-map.js";
 import { budgetReportPlaceholder, type RunOptions }            from "./envelope.js";
+import { DEFAULT_RESULT_STORE_LIMITS }                         from "../engine/result-store.js";
 
 /** 예산으로 잘라 낸 결과를 이어 읽기할 때 보관하는 원본 행. */
 export type PageStore = Map<string, { rows: unknown[]; binding: CursorBinding }>;
@@ -112,6 +113,12 @@ export function applyRunBudget(
   if (outcome.continuation && ctx.resultId) {
     const found = findRowArray(parsed);
     if (found) {
+      /** 결과 보관함과 같은 개수 한도를 둔다. 넘으면 가장 오래된 페이지부터 버린다. */
+      while (deps.pages.size >= DEFAULT_RESULT_STORE_LIMITS.maxEntries) {
+        const oldest = deps.pages.keys().next().value;
+        if (oldest === undefined) break;
+        deps.pages.delete(oldest);
+      }
       deps.pages.set(ctx.resultId, {
         rows:    found.rows,
         binding: {

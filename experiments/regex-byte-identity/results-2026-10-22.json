@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-10-22T02:00:03.636Z",
+  "elapsed_ms": 1973,
+  "corpus": {
+    "packFixtures": 27,
+    "manifestFixtures": 4,
+    "derived": 31
+  },
+  "comparisons": 2886,
+  "bytes": 1649726,
+  "mismatches": 0,
+  "rust_engaged": 2375,
+  "redactions": 465,
+  "native_available": true,
+  "fallbacks": [
+    {
+      "pattern": "\\b(--?(?:token|password|passwd|secret|api[-_]?key|auth)(?:=|\\s+))(\\S+)",
+      "reason": "the i flag uses ECMA-262 Canonicalize, which differs from Rust's Unicode case folding (U+017F and U+212A are the first divergences)"
+    },
+    {
+      "pattern": ".*",
+      "reason": "the native engine cannot reproduce JavaScript's empty-match order for this text"
+    },
+    {
+      "pattern": "(a)\\1",
+      "reason": "regex parse error:\n    (a)\\1\n       ^^\nerror: backreferences are not supported"
+    },
+    {
+      "pattern": "(?=a)",
+      "reason": "regex parse error:\n    (?=a)\n    ^^^\nerror: look-around, including look-ahead and look-behind, is not supported"
+    },
+    {
+      "pattern": "(?<=a)",
+      "reason": "regex parse error:\n    (?<=a)\n    ^^^^\nerror: look-around, including look-ahead and look-behind, is not supported"
+    }
+  ],
+  "mismatch_details": []
+}

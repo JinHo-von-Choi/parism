@@ -1,0 +1,15 @@
+[package]
+name = "parism-sandbox-guest"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+description = "외부 파서 샌드박스의 시험용 게스트. 경계를 시험하기 위한 동작을 담는다."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# WIT 바인딩 생성. `generate!` 매크로가 여기서 쓴다.
+wit-bindgen = "0.63"
+serde_json = "1"

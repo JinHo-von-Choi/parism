@@ -1,5 +1,7 @@
 import { McpServer }    from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z }            from "zod";
+import { realpathSync } from "node:fs";
+import path            from "node:path";
 import type { PrismConfig }    from "./config/loader.js";
 import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
@@ -8,6 +10,31 @@ import { PACKAGE_VERSION }     from "./version.js";
 import { PROJECTION_SHAPE, BUDGET_SHAPE } from "./engine/projection.js";
 
 export { PACKAGE_VERSION };
+
+/**
+ * 심볼릭 링크를 따라 실제 경로를 확정한다. 실패하면 절대 경로로 떨어진다.
+ */
+function resolveRealPath(target: string): string {
+  try {
+    return realpathSync(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * 결과 텍스트 맨 앞에 실제 작업 디렉터리를 밝히는 배너.
+ *
+ * 왜: 에이전트는 "어느 디렉터리에서 실행됐는지" 를 결과에서 바로 알 수 없다.
+ * 결과 JSON 안에도 cwd 가 있지만, 실패 응답을 먼저 읽고 멈추는 경우가 많다.
+ * 첫 줄 한 줄로 그 사실을 앞에 둔다.
+ *
+ * 배너 뒤에는 빈 줄 하나를 둔다. 그래야 배너와 JSON 의 경계가 눈에 보인다.
+ * 배너는 `[cwd] ` 로 시작하는 한 줄이며, JSON 파싱 전에 이 줄과 빈 줄을 빼야 한다.
+ */
+function withCwdBanner(cwd: string, payload: unknown): string {
+  return `[cwd] ${resolveRealPath(cwd)}\n\n${JSON.stringify(payload, null, 2)}`;
+}
 
 const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
 
@@ -37,10 +64,13 @@ Usage:
 5. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
 6. stdout.parsed has structured data; stdout.raw is fallback.
 7. failure.reason = 'unsupported_format' means the parser does not handle those args. When failure.hint = { args, reason } is present, rerun the same command with hint.args to get the same information parsed.
+8. run and run_paged results start with a '[cwd] <absolute path>' line, then a blank line, then the JSON. Strip those two lines before JSON.parse. The cwd is where the command actually ran.
+9. When a command is not installed, failure.reason = 'spawn_failed' and failure.availability says so: status is 'missing' or 'not_executable', install.command is the exact install command to run, and alternatives lists other commands that do the same job. Follow install.command or an alternative instead of retrying the same command.
+10. describe without cmd returns command_availability: the install status of every allowed command. Check it before running something that may not be installed.
 
 Notes:
 - When config.telemetry.enabled is true, responses include a telemetry field with per-stage timing (guard_ms, exec_ms, parse_ms, redact_ms, total_ms, raw_bytes).
-- When config.guard.secrets.output_redaction_enabled is true, stdout.raw and stderr.raw are masked with [REDACTED]; stdout.parsed is untouched.
+- When config.guard.secrets.output_redaction_enabled is true, stdout.raw, stderr.raw and failure.message are masked with [REDACTED]; stdout.parsed is untouched.
 - When config.parsers.strict_schemas is true, parser output is validated against the Zod schema — failure.reason = 'schema_violation' on mismatch.`;
 
 /**
@@ -133,7 +163,7 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
     async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget }) => {
       const result = await engine.run(cmd, { args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, ...(budget && { budget }) });
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result) }],
       };
     },
   );
@@ -213,7 +243,7 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
     },
     async ({ cmd, args, cwd, page, page_size, includeDiff }) => {
       const result = await engine.runPaged(cmd, { args, cwd, page, page_size, includeDiff });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result) }] };
     },
   );
 

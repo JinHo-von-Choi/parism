@@ -16,11 +16,13 @@ import type { OutputFormat }                                                    
 import type { FailureInfo, ParseErrorField, ResponseEnvelope }                      from "../types/envelope.js";
 import { execute, truncateUtf8Lines }                                               from "../engine/executor.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
+import { buildAvailabilityFailure, probeAll }                                   from "../engine/availability.js";
 import { buildExecArgs, resolvePolicies }                                           from "../engine/policy.js";
 import { PageCache }                                                                from "../engine/page-cache.js";
 import { paginateLines }                                                            from "../engine/paginator.js";
 import { Semaphore }                                                                from "../engine/semaphore.js";
 import { redact, validatePatterns }                                                 from "../engine/redactor.js";
+import type { RegexFallback }                                                        from "../engine/regex-engine.js";
 import { toCompact }                                                                from "../parsers/compact.js";
 import { loadExternalParsers, externalParserOptions }                               from "../cli/auto-loader.js";
 import { parismHome }                                                               from "../cli/paths.js";
@@ -102,6 +104,33 @@ export class ParismEngine {
   }
 
   /**
+   * 실행 실패가 "이 호스트에 명령이 없다" 일 때 설치 정보를 덧붙인다.
+   *
+   * ENOENT 만 대상으로 한다.
+   * - EACCES(실행 권한 없음)는 설치로 해결되지 않는다.
+   * - spawn_failed 가 아닌 reason 은 스폰 실패가 아니다.
+   *
+   * 기존 `failure.kind` 와 `failure.reason` 은 그대로 둔다(CON-001, CON-002).
+   * 새 정보는 `failure.availability` 라는 **추가 필드**로만 들어간다.
+   */
+  private attachAvailability(envelope: ResponseEnvelope, cmd: string, args: readonly string[], cwd: string): ResponseEnvelope {
+    if (envelope.failure?.reason !== "spawn_failed") return envelope;
+    if (envelope.failure.errorCode !== "ENOENT") return envelope;
+    /** 대체 명령도 원래 명령과 같은 가드를 통과해야 안내한다. 실행하면 거절될 명령을 제안하지 않는다. */
+    const permits = (altCmd: string, altArgs: readonly string[]): boolean => {
+      try {
+        checkGuard(altCmd, [...altArgs], cwd, this.config);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const availability = buildAvailabilityFailure(cmd, args, permits);
+    if (!availability) return envelope;
+    return { ...envelope, failure: { ...envelope.failure, availability } };
+  }
+
+  /**
    * Guard 검사 → 실행 → JSON 파싱 파이프라인.
    * buildRunResult의 비즈니스 로직을 그대로 이전한다.
    */
@@ -161,7 +190,7 @@ export class ParismEngine {
       this.config.guard.max_output_bytes,
       includeDiff,
     ));
-    const envelope = { ...executed, args };
+    const envelope = this.attachAvailability({ ...executed, args }, cmd, args, cwd);
     timer?.markEnd("exec");
     timer?.setRawBytes(Buffer.byteLength(envelope.stdout.raw, "utf8"));
 
@@ -262,7 +291,8 @@ export class ParismEngine {
     const execStdoutRaw = envelope.stdout.raw;
     const execStderrRaw = envelope.stderr.raw;
 
-    const stdout       = dropRaw && final !== null
+    const rawOmitted   = dropRaw && final !== null;
+    const stdout       = rawOmitted
       ? { raw: "", parsed: final, ...extra }
       : { ...envelope.stdout, parsed: final, ...extra };
 
@@ -298,21 +328,43 @@ export class ParismEngine {
      */
     const unmaskedStdout = execStdoutRaw;
     let   maskRanges: readonly MaskedRange[] = [];
+    /**
+     * 정규식 엔진이 TypeScript 로 되돌아간 사실. 결과에 남긴다 —
+     * 조용히 바뀌면 "무엇이 왜 바뀌었는지" 를 나중에 알 수 없다.
+     */
+    const regexFallbacks: RegexFallback[] = [];
+    const noteFallback = (info: RegexFallback) => { regexFallbacks.push(info); };
     const maskingOn = this.config.guard.secrets?.output_redaction_enabled === true;
     let   canonicalStdout = execStdoutRaw;
     let   canonicalStderr = execStderrRaw;
     if (maskingOn) {
       const patterns  = validatePatterns(resolveRedactPatterns(this.config));
-      const masked    = maskWithRanges(unmaskedStdout, patterns);
-      const maskedErr = maskWithRanges(execStderrRaw, patterns);
+      const masked    = await maskWithRanges(unmaskedStdout, patterns, { onFallback: noteFallback });
+      const maskedErr = await maskWithRanges(execStderrRaw, patterns, { onFallback: noteFallback });
       maskRanges      = masked.ranges;
       canonicalStdout = masked.text;
       canonicalStderr = maskedErr.text;
+      /**
+       * 형식 때문에 응답에서 뺀 원문은 마스킹한 값으로 다시 채우지 않는다.
+       * 실패 메시지에는 비정상 종료 시 stderr 와 인자가 그대로 들어 있으므로 함께 마스킹한다.
+       */
+      const failure = enriched.failure && {
+        ...enriched.failure,
+        message: await redact(enriched.failure.message, patterns, { onFallback: noteFallback }),
+      };
       enriched = {
         ...enriched,
-        stdout:  { ...enriched.stdout, raw: masked.text },
+        stdout:  rawOmitted ? enriched.stdout : { ...enriched.stdout, raw: masked.text },
         stderr:  { ...enriched.stderr, raw: maskedErr.text },
+        ...(failure && { failure }),
       };
+    }
+    /**
+     * 정규식 엔진이 TypeScript 로 되돌아간 사실을 결과에 남긴다.
+     * 실패가 아니라 **메타데이터**다 — `failure` 가 아니라 결과에 붙는다.
+     */
+    if (regexFallbacks.length > 0) {
+      enriched = { ...enriched, regex_engine: { used: "typescript", fallbacks: regexFallbacks } };
     }
     timer?.markEnd("redact");
 
@@ -351,7 +403,11 @@ export class ParismEngine {
       const outcome = applyRunBudget(enriched, opts.budget, {
         cmd, args, cwd, maskRanges,
         parsed, projection, native,
-        resultId: wantReview ? enriched.review?.result_id : undefined,
+        /**
+         * 기본 계약에는 review 식별자가 없다. 그래도 이어 읽기 cursor 를 내면
+         * fetch_result 가 찾을 수 있는 식별자로 페이지를 보관해야 한다.
+         */
+        resultId: (wantReview ? enriched.review?.result_id : undefined) ?? mintResultId(),
       }, { registry: this.registry, pages: this.pages });
       /**
        * 예산으로 줄인 결과를 그대로 응답에 실어야 한다.
@@ -551,6 +607,13 @@ export class ParismEngine {
       return this.stats && !("failure" in result) ? { ...result, stats: this.stats.forCommand(cmd) } : result;
     }
     const guard = this.config.guard;
+    /**
+     * 허용 명령 전체의 설치 상태를 한 번에 조회한다.
+     * 명령 하나씩 물어보면 PATH 를 여러 번 훑는다. 한 번에 훑고 60초 캐시를 쓴다.
+     */
+    const commandAvailability = Object.fromEntries(
+      [...probeAll(guard.allowed_commands)].map(([cmd, result]) => [cmd, result.status]),
+    );
     return {
       version:            PACKAGE_VERSION,
       allowed_commands:   [...guard.allowed_commands],
@@ -573,6 +636,7 @@ export class ParismEngine {
         ),
       },
       telemetry_enabled: this.config.telemetry?.enabled === true,
+      command_availability: commandAvailability,
       ...(this.stats && { stats: this.stats.snapshot() }),
     };
   }
@@ -654,7 +718,7 @@ export class ParismEngine {
         0,
         includeDiff,
       ));
-      envelope  = { ...executed, args };
+      envelope  = this.attachAvailability({ ...executed, args }, cmd, args, cwd);
       if (envelope.ok) this.pageCache.set(cacheKey, { envelope, createdAt: Date.now() });
       /** run_paged는 파싱하지 않으므로 실행 실패만 센다. */
       if (envelope.failure) this.stats?.record(cmd, "exec", envelope.failure.reason);
@@ -677,10 +741,19 @@ export class ParismEngine {
 
     if (this.config.guard.secrets?.output_redaction_enabled === true) {
       const patterns = validatePatterns(resolveRedactPatterns(this.config));
+      /** 정규식 엔진이 TypeScript 로 되돌아간 사실. 결과에 남긴다. */
+      const regexFallbacks: RegexFallback[] = [];
+      const noteFallback = (info: RegexFallback) => { regexFallbacks.push(info); };
+      const failure = enriched.failure && {
+        ...enriched.failure,
+        message: await redact(enriched.failure.message, patterns, { onFallback: noteFallback }),
+      };
       enriched = {
         ...enriched,
-        stdout:  { ...enriched.stdout, raw: redact(enriched.stdout.raw, patterns) },
-        stderr:  { ...enriched.stderr, raw: redact(enriched.stderr.raw, patterns) },
+        stdout:  { ...enriched.stdout, raw: await redact(enriched.stdout.raw, patterns, { onFallback: noteFallback }) },
+        stderr:  { ...enriched.stderr, raw: await redact(enriched.stderr.raw, patterns, { onFallback: noteFallback }) },
+        ...(failure && { failure }),
+        ...(regexFallbacks.length > 0 && { regex_engine: { used: "typescript", fallbacks: regexFallbacks } }),
       };
     }
 
@@ -728,6 +801,11 @@ export interface DescribeResult {
     policies:                Record<string, { subcommands?: string[]; flags: string[]; positionals: string }>;
   };
   telemetry_enabled:  boolean;
+  /**
+   * 허용 명령별 설치 상태. 키는 allowed_commands 와 같다.
+   * "installed" 는 이 호스트에서 실행할 수 있다는 뜻이고, "missing" 은 PATH 에 없다는 뜻이다.
+   */
+  command_availability?: Record<string, "installed" | "missing" | "not_executable">;
   /** 텔레메트리를 켰을 때만 있는 명령별 결과 횟수. 프로세스 안에만 있고 재시작하면 비워진다. */
   stats?:             Record<string, CommandOutcomeCounts>;
 }

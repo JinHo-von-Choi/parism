@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join }                     from "node:path";
 import type { ParserRegistry }      from "../parsers/registry.js";
-import type { PrismParsersConfig }  from "../config/loader.js";
+import type { PrismParsersConfig, ExternalCapabilityConfig } from "../config/loader.js";
 import { EXTERNAL_PARSER_DEFAULTS } from "../config/loader.js";
 import { loadIsolatedPack }         from "../parsers/external/host.js";
 import { loadParserPack }           from "./loader.js";
@@ -17,6 +17,8 @@ export interface ExternalParserOptions {
   isolation?:     "worker" | "none";
   timeLimitMs?:   number;
   memoryLimitMb?: number;
+  /** 샌드박스에 열어 줄 capability. 비우면 **전부 거부한다**. */
+  capabilities?:  ExternalCapabilityConfig;
 }
 
 /** 설정의 parsers 값을 로더 옵션으로 옮긴다. */
@@ -25,6 +27,7 @@ export function externalParserOptions(parsers: PrismParsersConfig | undefined): 
     ...(parsers?.external_isolation       !== undefined && { isolation:     parsers.external_isolation }),
     ...(parsers?.external_time_limit_ms   !== undefined && { timeLimitMs:   parsers.external_time_limit_ms }),
     ...(parsers?.external_memory_limit_mb !== undefined && { memoryLimitMb: parsers.external_memory_limit_mb }),
+    ...(parsers?.external_capabilities    !== undefined && { capabilities:  parsers.external_capabilities }),
   };
 }
 
@@ -54,6 +57,16 @@ export async function loadExternalParsers(
     memoryLimitMb: options.memoryLimitMb ?? EXTERNAL_PARSER_DEFAULTS.external_memory_limit_mb,
   };
 
+  /**
+   * 샌드박스에 열어 줄 capability.
+   *
+   * **비어 있으면 전부 거부한다**(fail-closed). 기본값이 빈 객체이므로
+   * 아무도 명시하지 않은 호스트에서는 파일도 환경 변수도 없다.
+   */
+  const capabilities = options.capabilities ?? EXTERNAL_PARSER_DEFAULTS.external_capabilities;
+  /** 게스트가 볼 수 있는 시크릿은 **이름뿐**이다. 값은 샌드박스 밖에 있다. */
+  const secrets = Object.keys(process.env).filter(name => /TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(name));
+
   let loaded = 0;
   for (const [name, entry] of Object.entries(entries)) {
     if (!isValidPackName(name)) {
@@ -61,7 +74,9 @@ export async function loadExternalParsers(
       continue;
     }
     try {
-      if (isolation === "worker") registry.registerIsolated(loadIsolatedPack(entry.path, limits));
+      if (isolation === "worker") {
+        registry.registerIsolated(loadIsolatedPack(entry.path, limits, capabilities, secrets));
+      }
       else                        registry.registerPack(await loadParserPack(entry.path));
       loaded++;
     } catch (err) {

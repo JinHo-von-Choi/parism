@@ -258,6 +258,40 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 출력 자체가 JSON인 명령(`kubectl get pods -o json`, `docker inspect`)은 파서 없이 바로 `parsed`에 들어갑니다.
 
+### 명령이 이 호스트에 없을 때
+
+허용 목록에 있는 명령이라도 이 호스트에 설치돼 있지 않을 수 있습니다. 그때 parism 은 실패를 그대로 두지 않고 **다음 행동**까지 알려 줍니다.
+
+```json
+{
+  "ok": false,
+  "failure": {
+    "kind": "exec",
+    "reason": "spawn_failed",
+    "message": "spawn helm ENOENT",
+    "errorCode": "ENOENT",
+    "availability": {
+      "status": "missing",
+      "install": { "command": "brew install helm", "package": "helm", "manager": "brew" },
+      "alternatives": [
+        { "cmd": "kubectl", "args": ["get", "all"], "reason": "helm 차트가 없으면 kubectl 로 클러스터 리소스를 직접 본다" }
+      ]
+    }
+  }
+}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `availability.status` | `missing`(PATH 에 없음) 또는 `not_executable`(있지만 실행 권한 없음) |
+| `availability.install` | 이 호스트에서 **실제로 쓸 수 있는** 패키지 관리자의 설치 명령 |
+| `availability.alternatives` | 같은 일을 하는 다른 명령. 현재 가드 allowlist 안에 있는 것만 |
+| `failure.errorCode` | 스폰 실패의 errno 코드 |
+
+`not_executable` 는 설치로 해결되지 않으므로 `install` 가 없습니다. 설치 지시는 **정적 표**에서만 나오므로, 표에 없는 명령은 `status` 만 알려 줍니다.
+
+실행 전에 무엇을 쓸 수 있는지 보려면 `describe()` 를 부르세요. `command_availability` 에 허용 명령 전체의 설치 상태가 들어 있습니다.
+
 ---
 
 ## 가드
@@ -516,6 +550,46 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 | `PARISM_ADAPTIVE_FORMAT_COMPACT` | `parsers.adaptive_format_threshold.compact` | 정수 |
 | `PARISM_ADAPTIVE_FORMAT_JSON_NO_RAW` | `parsers.adaptive_format_threshold.json_no_raw` | 정수 |
 | `PARISM_TELEMETRY_ENABLED` | `telemetry.enabled` | `true` 또는 `1` |
+| `PARISM_REGEX_ENGINE` | 정규식 엔진 선택 | `auto`(기본) · `rust` · `typescript` |
+| `PARISM_REGEX_BIN` | 네이티브 엔진 바이너리 경로 | 절대 경로 |
+| `PARISM_REGEX_TIMEOUT_MS` | 네이티브 엔진 요청 제한 시간 | 정수(기본 10000) |
+| `PARISM_REQUIRE_NATIVE` | Rust 엔진이 없으면 바이트 동일성 게이트를 실패로 | `1` |
+
+---
+
+## 정규식 엔진
+
+parism 은 **사용자가 준 정규식**을 그대로 실행한다. 그 패턴이 비밀 가림 여부를 결정한다.
+그래서 패턴 하나가 서버를 멈추게 해서는 안 된다.
+
+| 엔진 | 언제 | 특징 |
+|------|------|------|
+| **Rust** (`regex` 크레이트) | 엔진 바이너리를 찾았을 때 기본 | 역추적 불가능 — 어떤 패턴이든 **선형 시간** |
+| **TypeScript** (V8) | 바이너리가 없거나, Rust 가 같은 결과를 못 낼 때 | 빠르지만 역추적 엔진 |
+
+npm 배포본에는 Rust 엔진 바이너리가 들어 있지 않아 TypeScript 엔진으로 동작합니다. 출력은 같습니다.
+Rust 엔진을 쓰려면 직접 빌드하고 `PARISM_REGEX_BIN` 으로 경로를 지정합니다.
+
+```bash
+cargo build --release --manifest-path crates/parism-regex/Cargo.toml
+export PARISM_REGEX_BIN="$PWD/crates/parism-regex/target/release/parism-regex"
+```
+
+`i`·`m`·`u`·`y` 플래그, 역참조, lookaround 는 Rust 로 옮기지 않고 **TypeScript 로 되돌려보냅니다.**
+되돌아간 사실은 결과의 `regex_engine.fallbacks` 에 사유와 함께 남습니다 — 조용히 바뀌지 않습니다.
+
+```json
+{ "regex_engine": { "used": "typescript", "fallbacks": [
+  { "pattern": "secret", "reason": "the i flag uses ECMA-262 Canonicalize, which differs from Rust's Unicode case folding (U+017F and U+212A are the first divergences)" }
+] } }
+```
+
+**출력은 한 바이트도 바뀌지 않습니다.** Rust 엔진을 켜고 끄고 같은 fixture 를 돌려
+바이트 단위로 비교합니다 — 2,886건 비교, 불일치 0건(실측).
+게이트는 "비교할 것이 없는 통과" 를 막습니다 — Rust 가 실제로 돌지 않았거나
+아무것도 가려지지 않았다면 **검증 실패** 로 봅니다.
+
+설계 근거: [`docs/adr/2026-10-22-native-regex-engine.md`](docs/adr/2026-10-22-native-regex-engine.md)
 
 ---
 
@@ -539,10 +613,10 @@ console.log(result.stdout.parsed);
 
 ## 커스텀 파서
 
-기본 파서가 없는 명령에 파서를 직접 붙일 수 있습니다. Parism은 ESM 전용이고 스키마는 zod 3을 씁니다.
+기본 파서가 없는 명령에 파서를 직접 붙일 수 있습니다. Parism은 ESM 전용이고 스키마는 zod 4를 씁니다.
 
 ```bash
-npm install @nerdvana/parism zod@^3
+npm install @nerdvana/parism zod@^4
 # package.json 에 "type": "module" 필요
 ```
 
@@ -647,6 +721,53 @@ parism eval --verbose          # 모든 항목 출력
 - 메인 스레드에서 실행하려면 전역 설정에 `"parsers": { "external_isolation": "none" }`을 둡니다.
 
 워커 격리는 장애 격리이지 보안 샌드박스가 아닙니다. 워커는 서버와 같은 파일, 네트워크, 환경 변수 권한을 가집니다. 신뢰할 수 없는 팩을 써야 하면 Parism 전체를 컨테이너나 VM 안에서 실행하십시오.
+
+#### Wasmtime capability 샌드박스
+
+팩 디렉터리에 `parser.wasm`(Wasmtime 컴포넌트)과 `contract.json`이 있으면 **샌드박스 경로**로 돕니다.
+워커 경로와 성격이 다릅니다.
+
+| | 워커 격리 | 샌드박스 |
+|---|----------|--------|
+| 성격 | 장애 격리 | **보안 경계** |
+| 파일 접근 | 워커의 권한 그대로 | **열어 준 경로만** |
+| 네트워크 | 워커의 권한 그대로 | **없음** |
+| 환경 변수 | 워커의 권한 그대로 | **열어 준 것만** |
+| 메모리 | V8 old generation 만 | 게스트 **선형 메모리** 전체 (기본 10MiB) |
+| 시간 | 워커 임계값 | **Wasmtime epoch 타임아웃** (기본 60초) + 연료 상한 |
+
+게스트는 파일·네트워크·환경 변수를 **직접 요구할 수 없습니다.** 호스트가 열어 준 것만 요구할 수 있고,
+호스트는 `parsers.external_capabilities` 로 정합니다. **기본값은 비어 있습니다** — 아무것도 열지 않습니다(fail-closed).
+
+```json
+{ "parsers": { "external_capabilities": {
+  "fs_read": [["/etc", "/etc"]],
+  "env": [["LANG", "ko_KR"]]
+} } }
+```
+
+신뢰하지 않는 프로젝트 설정은 이 값을 **좁힐 수만 있습니다.** 넓히려 한 항목은 경고 후 버립니다.
+
+게스트는 시크릿의 **존재 여부만** 받습니다(`secret-exists`). **값은 주지 않습니다.**
+
+> **이것은 OS 샌드박스가 아닙니다. 경계가 아닙니다.**
+> 커널 격리가 아니고 parism과 같은 사용자 권한으로 돕니다.
+> **메모리 안전 언어의 한계(로직 취약점)도 그대로 남습니다** — 게스트 안의 버그를 샌드박스가 막지 못합니다.
+
+설계 근거: [`docs/adr/2026-10-22-agent-parser-sandbox.md`](docs/adr/2026-10-22-agent-parser-sandbox.md)
+
+#### 샌드박스 바이너리
+
+샌드박스는 Rust 크레이트라 **별도 프로세스**로 돕니다. 바이너리는 다음 순서로 찾습니다.
+
+1. `PARISM_SANDBOX_BIN` 으로 명시한 경로 (없으면 undefined — 조용히 다른 곳을 찾지 않습니다)
+2. `@nerdvana/parism-sandbox-<platform>-<arch>` npm 패키지 (아직 배포하지 않습니다)
+3. 저장소에서 직접 빌드한 `crates/parism-sandbox/target/release/parism-sandbox`
+
+```bash
+cargo build --release --manifest-path crates/parism-sandbox/Cargo.toml
+node scripts/build-sandbox-guest.mjs   # 시험용 게스트 컴포넌트
+```
 
 ### CLI 명령
 

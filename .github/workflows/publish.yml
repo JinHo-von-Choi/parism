@@ -25,6 +25,23 @@ jobs:
       - run: npm run build
       - run: npm test
 
+      # Rust 엔진을 **실제로 켠 상태**로 바이트 동일성을 확인한다.
+      # 엔진이 없으면 비교할 것이 없어서 통과한다 — 배포를 막아야 하는 게 그 경우다.
+      - name: Install Rust toolchain
+        if: matrix.node-version == 22
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build native regex engine
+        if: matrix.node-version == 22
+        run: cargo build --release --manifest-path crates/parism-regex/Cargo.toml
+
+      - name: Byte identity gate (Rust engine required)
+        if: matrix.node-version == 22
+        env:
+          PARISM_REGEX_BIN: ${{ github.workspace }}/crates/parism-regex/target/release/parism-regex
+          PARISM_REQUIRE_NATIVE: "1"
+        run: npx vitest run tests/engine/regex-byte-identity.test.ts
+
   publish:
     needs: test
     runs-on: ubuntu-latest

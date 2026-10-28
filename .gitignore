@@ -7,6 +7,10 @@ dist/
 # npm pack 산출물
 *.tgz
 
+# 네이티브 정규식 엔진 플랫폼 패키지의 빌드 산출물.
+# `package.json` 만 커밋하고 바이너리는 CI 가 만들어 게시한다.
+packages/parism-regex-*/bin/
+
 # Environment variables
 .env
 .env.local
@@ -43,6 +47,17 @@ Requirements.md
 
 # Coverage reports
 coverage/
+
+# Vitest 캐시
+.vitest/
+
+# Rust 빌드 산출물
+crates/*/target
+crates/*/target.*
+
+# 샌드박스 게스트 컴포넌트 — 빌드 산출물이다.
+# 스크립트가 만든다: node scripts/build-sandbox-guest.mjs
+crates/parism-sandbox/tests/fixtures/*.component.wasm
 
 # Legacy drafts (session-local notes)
 TODOS.md

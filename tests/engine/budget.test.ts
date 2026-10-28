@@ -325,6 +325,26 @@ describe("엔진 예산 경로", () => {
     expect(res.stdout.raw).toBe("");
   });
 
+  it("기본 계약에서 낸 cursor 도 fetch_result 로 이어 읽을 수 있다", async () => {
+    const big = mkdtempSync(path.join(tmpdir(), "parism-budget-page-"));
+    try {
+      for (let i = 0; i < 200; i++) writeFileSync(path.join(big, `file_${String(i).padStart(3, "0")}.txt`), "x\n");
+      const config = structuredClone(DEFAULT_CONFIG);
+      config.guard.allowed_paths = [big];
+      const engine = new ParismEngine(config, createRegistry());
+      const res = await engine.run("ls", {
+        args: ["-l"], cwd: big, format: "json-no-raw",
+        budget: { max_tokens: 2000, tokenizer: "parism/approx", overflow: "page" },
+      });
+      const continuation = (res as unknown as { continuation?: { result_id: string; cursor: string } }).continuation;
+      expect(continuation, "행이 예산을 넘는데 cursor 가 없다").toBeDefined();
+      const page = engine.fetchResult(continuation!.result_id, continuation!.cursor);
+      expect(page.ok, JSON.stringify(page)).toBe(true);
+    } finally {
+      rmSync(big, { recursive: true, force: true });
+    }
+  });
+
   it("예산을 주면 예산 보고와 누락 내역이 실린다", async () => {
     const engine = engineWith(500, dir);
     const res = await engine.run("echo", { args: ["hi"], cwd: dir, budget: { max_tokens: 3000 } });

@@ -830,6 +830,48 @@ describe("외부 파서 격리 설정", () => {
     }
   });
 
+  it("샌드박스 capability 기본값은 비어 있다 — fail-closed", async () => {
+    const cfg = await loadConfigMultiLayer({ globalPath: "/nonexistent", projectPath: "/nonexistent" });
+    expect(cfg.parsers?.external_capabilities).toEqual({});
+  });
+
+  it("전역 설정은 샌드박스 capability 를 열 수 있다", async () => {
+    const globalPath = tmpConfig({ parsers: { external_capabilities: {
+      fs_read: [["/etc", "/etc"]],
+      env: [["LANG", "ko_KR"]],
+    } } });
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath: "/nonexistent" });
+    expect(cfg.parsers?.external_capabilities?.fs_read).toEqual([["/etc", "/etc"]]);
+    expect(cfg.parsers?.external_capabilities?.env).toEqual([["LANG", "ko_KR"]]);
+  });
+
+  it("신뢰하지 않는 프로젝트 설정은 capability 를 넓힐 수 없다", async () => {
+    const globalPath = tmpConfig({ parsers: { external_capabilities: {
+      fs_read: [["/etc", "/etc"]],
+      env: [["LANG", "ko_KR"]],
+    } } });
+    const projectPath = tmpConfig({ parsers: { external_capabilities: {
+      fs_read: [["/etc", "/etc"], ["/root", "/root"]],
+      env: [["LANG", "ko_KR"], ["AWS_SECRET_ACCESS_KEY", "leak"]],
+    } } });
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath });
+    /** 열린 것은 기준 설정에 있는 것만 남는다. */
+    expect(cfg.parsers?.external_capabilities?.fs_read).toEqual([["/etc", "/etc"]]);
+    expect(cfg.parsers?.external_capabilities?.env).toEqual([["LANG", "ko_KR"]]);
+    expect(spy.mock.calls.map(c => String(c[0])).some(w => w.includes("widen sandbox capabilities"))).toBe(true);
+  });
+
+  it("기준 설정에 없는 capability 를 프로젝트가 요구하면 경고 후 버린다", async () => {
+    const globalPath = tmpConfig({ parsers: { external_capabilities: {} } });
+    const projectPath = tmpConfig({ parsers: { external_capabilities: {
+      fs_read: [["/etc", "/etc"]],
+    } } });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath });
+    expect(cfg.parsers?.external_capabilities?.fs_read).toEqual([]);
+  });
+
   it("신뢰하지 않는 프로젝트 설정은 격리를 끄거나 상한을 올리지 못한다", async () => {
     const projectPath = tmpConfig({ parsers: { external_isolation: "none", external_time_limit_ms: 60000, external_memory_limit_mb: 4096 } });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);

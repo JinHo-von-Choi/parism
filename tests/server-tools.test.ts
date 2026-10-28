@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { realpathSync }                          from "node:fs";
 import { Client }                                    from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport }                         from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer }                              from "../src/server.js";
@@ -32,6 +33,16 @@ async function call(name: string, args: Record<string, unknown>): Promise<{ isEr
   return { isError: result.isError === true, text: result.content[0]!.text };
 }
 
+/**
+ * run / run_paged 결과는 첫 줄에 cwd 배너가 붙는다. JSON 파싱 전에 그 두 줄을 뺀다.
+ */
+function stripBanner(text: string): string {
+  if (!text.startsWith("[cwd] ")) return text;
+  const afterFirstLine = text.indexOf("\n");
+  if (afterFirstLine === -1) return text;
+  return text.slice(afterFirstLine + 1).replace(/^\n/, "");
+}
+
 describe("run 도구 투영 인자", () => {
   it("select, where, sort_by, limit을 받는다", async () => {
     const result = await call("run", {
@@ -42,7 +53,7 @@ describe("run 도구 투영 인자", () => {
       limit:   2,
     });
     expect(result.isError).toBe(false);
-    const body = JSON.parse(result.text);
+    const body = JSON.parse(stripBanner(result.text));
     expect(body.stdout.parsed.entries).toHaveLength(2);
     expect(Object.keys(body.stdout.parsed.entries[0])).toEqual(["name"]);
     expect(body.stdout.parsed._summary.shown).toBe(2);
@@ -51,6 +62,29 @@ describe("run 도구 투영 인자", () => {
   it("문법에 맞지 않는 조건은 도구 입력 검사에서 거부한다", async () => {
     const result = await call("run", { cmd: "ls", args: ["-l"], where: [{ field: "name", op: "regex", value: "x" }] });
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("cwd 배너", () => {
+  it("run 결과 첫 줄에 실제 작업 디렉터리를 밝힌다", async () => {
+    const result = await call("run", { cmd: "pwd", cwd: process.cwd() });
+    expect(result.isError).toBe(false);
+    const lines = result.text.split("\n");
+    expect(lines[0]).toBe(`[cwd] ${realpathSync(process.cwd())}`);
+    /** 배너와 JSON 사이에 빈 줄 하나가 있어야 경계가 눈에 보인다. */
+    expect(lines[1]).toBe("");
+    expect(() => JSON.parse(stripBanner(result.text))).not.toThrow();
+  });
+
+  it("run_paged 도 같은 배너를 붙인다", async () => {
+    const result = await call("run_paged", { cmd: "ls", args: [], cwd: process.cwd(), page: 0, page_size: 5 });
+    expect(result.isError).toBe(false);
+    expect(result.text.startsWith(`[cwd] ${realpathSync(process.cwd())}\n\n`)).toBe(true);
+  });
+
+  it("describe 결과에는 배너를 붙이지 않는다", async () => {
+    const result = await call("describe", {});
+    expect(result.text.startsWith("{")).toBe(true);
   });
 });
 

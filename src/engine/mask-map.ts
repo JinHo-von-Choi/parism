@@ -11,6 +11,8 @@
  * 작성일: 2026-10-05
  */
 
+import { findAllRanges, type RegexEngineOptions } from "./regex-engine.js";
+
 export const REDACTED_TOKEN = "[REDACTED]";
 
 /** 마스킹으로 바뀐 구간 한 개. 마스킹 전 좌표계 기준이다. */
@@ -30,22 +32,21 @@ export interface MaskResult {
 }
 
 /** 원래 문자열에서 바뀐 구간을 찾아 치환 결과를 만든다. */
-function applyPattern(text: string, pattern: string, ranges: MaskedRange[]): string {
-  let re: RegExp;
-  try {
-    re = new RegExp(pattern, "g");
-  } catch {
-    /** 유효하지 않은 패턴은 건너뛴다. 기동 시 validatePatterns 가 미리 경고한다. */
-    return text;
-  }
+async function applyPattern(
+  text:    string,
+  pattern: string,
+  ranges:  MaskedRange[],
+  opts?:   RegexEngineOptions,
+): Promise<string> {
+  const found = await findAllRanges(pattern, text, "g", opts);
+  const matches = found.value;
+  if (matches.length === 0) return text;
   let out     = "";
   let last    = 0;
   let changed = false;
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-    const start = m.index;
-    const end   = start + m[0].length;
-    /** 빈 일치는 위치를 안 움직이므로 건너뛴다(무한 진행 방지) */
-    if (end === start) { re.lastIndex++; continue; }
+  for (const m of matches) {
+    const start = m.start;
+    const end   = m.end;
     out += text.slice(last, start) + REDACTED_TOKEN;
     ranges.push({ start, end, maskedLength: REDACTED_TOKEN.length });
     last    = end;
@@ -59,7 +60,11 @@ function applyPattern(text: string, pattern: string, ranges: MaskedRange[]): str
  * 문자열을 마스킹하고, 바뀐 구간을 **마스킹 전 좌표계**로 돌려준다.
  * 패턴을 순서대로 적용할 때 생기는 좌표 이동을 되돌려 놓는 것이 이 함수의 핵심이다.
  */
-export function maskWithRanges(text: string, patterns: string[]): MaskResult {
+export async function maskWithRanges(
+  text:     string,
+  patterns: string[],
+  opts?:    RegexEngineOptions,
+): Promise<MaskResult> {
   if (!text || patterns.length === 0) return { text, ranges: [], count: 0 };
 
   /** 각 단계의 구간을 그 단계 직전 좌표계로 저장한다 */
@@ -67,7 +72,7 @@ export function maskWithRanges(text: string, patterns: string[]): MaskResult {
   let current = text;
   for (const pattern of patterns) {
     const step: MaskedRange[] = [];
-    const next = applyPattern(current, pattern, step);
+    const next = await applyPattern(current, pattern, step, opts);
     if (next !== current) {
       stages.push(step);
       current = next;

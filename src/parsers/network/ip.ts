@@ -4,7 +4,8 @@ import { UnrecognizedOutputError, type ParserPack } from "../registry.js";
 const states = ["UNKNOWN", "NOTPRESENT", "DOWN", "LOWERLAYERDOWN", "TESTING", "DORMANT", "UP"] as const;
 const addressSchema = z.union([
   z.string().regex(/^(?:[\da-f]{2}:){5}[\da-f]{2}$|^(?:[\da-f]{2}:){7}[\da-f]{2}$|^(?:[\da-f]{2}:){19}[\da-f]{2}$/i),
-  z.string().ip(),
+  z.ipv4(),
+  z.ipv6(),
 ]);
 const ROW = /^(\S+)\s+(\S+)\s+(?:(\S+)\s+)?<([A-Z][A-Z0-9_-]*(?:,[A-Z][A-Z0-9_-]*)*|)>$/;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
