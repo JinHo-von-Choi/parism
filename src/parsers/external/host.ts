@@ -16,6 +16,8 @@ import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "
 import { UnrecognizedOutputError, type IsolatedParser, type IsolatedParseResult,
          type ParseContext, type ParserContract } from "../registry.js";
 import { collectFlagValues } from "../format.js";
+import { isSandboxPack, loadSandboxedPack } from "./sandboxed.js";
+import type { ExternalCapabilities } from "./sandbox.js";
 
 /** 격리 실행 상한 */
 export interface IsolationLimits {
@@ -350,9 +352,28 @@ class IsolatedPackHost implements IsolatedParser {
 }
 
 /**
- * packDir의 parser.js를 워커에서 읽어 격리 실행 파서를 만든다.
- * 메인 스레드는 팩 모듈을 실행하지 않는다. 로드 실패나 기동 상한 초과는 예외로 알린다.
+ * packDir의 외부 팩을 격리 실행 파서로 만든다.
+ *
+ * ## 두 경로가 있다
+ *
+ * | 팩 디렉터리 내용 | 경로 | 성격 |
+ * |------------------|------|------|
+ * | `parser.wasm` | **샌드박스** | **보안 경계** — capability 안에서만 돈다 |
+ * | `parser.js`   | 워커 격리 | 결함 격리 — **보안 경계가 아니다** |
+ *
+ * 워커는 같은 프로세스의 권한을 그대로 가진다. 그건 고장·무한루프를 막기 위한 것이지
+ * 신뢰 경계를 만들기 위한 것이 아니다.
+ *
+ * 샌드박스 경로의 capability 는 **비어 있으면 전부 거부한다**(fail-closed).
  */
-export function loadIsolatedPack(packDir: string, limits: IsolationLimits): IsolatedParser {
+export function loadIsolatedPack(
+  packDir:      string,
+  limits:       IsolationLimits,
+  capabilities: ExternalCapabilities = {},
+  secrets:      string[] = [],
+): IsolatedParser {
+  if (isSandboxPack(packDir)) {
+    return loadSandboxedPack(packDir, limits.timeLimitMs, capabilities, secrets);
+  }
   return new IsolatedPackHost(packDir, limits);
 }

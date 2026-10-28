@@ -1,0 +1,327 @@
+{
+  "model": "minimax/MiniMax-M3",
+  "trials": 18,
+  "commands": [
+    "tree",
+    "kubectl",
+    "helm",
+    "terraform",
+    "brew",
+    "pnpm"
+  ],
+  "summary": {
+    "before": {
+      "n": 18,
+      "A": 0,
+      "B": 0,
+      "C": 0,
+      "D": 18,
+      "invalid": 0,
+      "install_or_alternate_pct": 0,
+      "retry_pct": 0,
+      "stop_pct": 100
+    },
+    "after": {
+      "n": 18,
+      "A": 4,
+      "B": 5,
+      "C": 0,
+      "D": 9,
+      "invalid": 0,
+      "install_or_alternate_pct": 50,
+      "retry_pct": 0,
+      "stop_pct": 50
+    }
+  },
+  "delta_pp": 50,
+  "records": [
+    {
+      "id": "tree:Show the directory tree of this project",
+      "cmd": "tree",
+      "task": "Show the directory tree of this project",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "tree:Show the directory tree of this project",
+      "cmd": "tree",
+      "task": "Show the directory tree of this project",
+      "arm": "after",
+      "choice": "B",
+      "raw": "B"
+    },
+    {
+      "id": "tree:Display the folder structure of the repository",
+      "cmd": "tree",
+      "task": "Display the folder structure of the repository",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "tree:Display the folder structure of the repository",
+      "cmd": "tree",
+      "task": "Display the folder structure of the repository",
+      "arm": "after",
+      "choice": "B",
+      "raw": "B"
+    },
+    {
+      "id": "tree:List the project directories as a tree",
+      "cmd": "tree",
+      "task": "List the project directories as a tree",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "tree:List the project directories as a tree",
+      "cmd": "tree",
+      "task": "List the project directories as a tree",
+      "arm": "after",
+      "choice": "B",
+      "raw": "B"
+    },
+    {
+      "id": "kubectl:Show the pods running in the cluster",
+      "cmd": "kubectl",
+      "task": "Show the pods running in the cluster",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "kubectl:Show the pods running in the cluster",
+      "cmd": "kubectl",
+      "task": "Show the pods running in the cluster",
+      "arm": "after",
+      "choice": "A",
+      "raw": "A"
+    },
+    {
+      "id": "kubectl:List the containers and their status",
+      "cmd": "kubectl",
+      "task": "List the containers and their status",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "kubectl:List the containers and their status",
+      "cmd": "kubectl",
+      "task": "List the containers and their status",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "kubectl:Check which workloads are unhealthy",
+      "cmd": "kubectl",
+      "task": "Check which workloads are unhealthy",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "kubectl:Check which workloads are unhealthy",
+      "cmd": "kubectl",
+      "task": "Check which workloads are unhealthy",
+      "arm": "after",
+      "choice": "A",
+      "raw": "A"
+    },
+    {
+      "id": "helm:List the Helm releases deployed in the cluster",
+      "cmd": "helm",
+      "task": "List the Helm releases deployed in the cluster",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "helm:List the Helm releases deployed in the cluster",
+      "cmd": "helm",
+      "task": "List the Helm releases deployed in the cluster",
+      "arm": "after",
+      "choice": "B",
+      "raw": "B"
+    },
+    {
+      "id": "helm:Show which Helm releases are currently installed",
+      "cmd": "helm",
+      "task": "Show which Helm releases are currently installed",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "helm:Show which Helm releases are currently installed",
+      "cmd": "helm",
+      "task": "Show which Helm releases are currently installed",
+      "arm": "after",
+      "choice": "B",
+      "raw": "B"
+    },
+    {
+      "id": "helm:Check the Helm release revision history",
+      "cmd": "helm",
+      "task": "Check the Helm release revision history",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "helm:Check the Helm release revision history",
+      "cmd": "helm",
+      "task": "Check the Helm release revision history",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Show the Terraform version in use",
+      "cmd": "terraform",
+      "task": "Show the Terraform version in use",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Show the Terraform version in use",
+      "cmd": "terraform",
+      "task": "Show the Terraform version in use",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Report the Terraform version of this environment",
+      "cmd": "terraform",
+      "task": "Report the Terraform version of this environment",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Report the Terraform version of this environment",
+      "cmd": "terraform",
+      "task": "Report the Terraform version of this environment",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Check which Terraform version is installed here",
+      "cmd": "terraform",
+      "task": "Check which Terraform version is installed here",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "terraform:Check which Terraform version is installed here",
+      "cmd": "terraform",
+      "task": "Check which Terraform version is installed here",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:List the Homebrew packages installed on this machine",
+      "cmd": "brew",
+      "task": "List the Homebrew packages installed on this machine",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:List the Homebrew packages installed on this machine",
+      "cmd": "brew",
+      "task": "List the Homebrew packages installed on this machine",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:Show which Homebrew formulas are installed",
+      "cmd": "brew",
+      "task": "Show which Homebrew formulas are installed",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:Show which Homebrew formulas are installed",
+      "cmd": "brew",
+      "task": "Show which Homebrew formulas are installed",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:Report the installed Homebrew packages",
+      "cmd": "brew",
+      "task": "Report the installed Homebrew packages",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "brew:Report the installed Homebrew packages",
+      "cmd": "brew",
+      "task": "Report the installed Homebrew packages",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "pnpm:List the packages of the pnpm workspace",
+      "cmd": "pnpm",
+      "task": "List the packages of the pnpm workspace",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "pnpm:List the packages of the pnpm workspace",
+      "cmd": "pnpm",
+      "task": "List the packages of the pnpm workspace",
+      "arm": "after",
+      "choice": "A",
+      "raw": "A"
+    },
+    {
+      "id": "pnpm:Show what the pnpm workspace contains",
+      "cmd": "pnpm",
+      "task": "Show what the pnpm workspace contains",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "pnpm:Show what the pnpm workspace contains",
+      "cmd": "pnpm",
+      "task": "Show what the pnpm workspace contains",
+      "arm": "after",
+      "choice": "A",
+      "raw": "A"
+    },
+    {
+      "id": "pnpm:Report the pnpm workspace package list",
+      "cmd": "pnpm",
+      "task": "Report the pnpm workspace package list",
+      "arm": "before",
+      "choice": "D",
+      "raw": "D"
+    },
+    {
+      "id": "pnpm:Report the pnpm workspace package list",
+      "cmd": "pnpm",
+      "task": "Report the pnpm workspace package list",
+      "arm": "after",
+      "choice": "D",
+      "raw": "D"
+    }
+  ]
+}

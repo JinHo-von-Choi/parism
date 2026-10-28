@@ -23,18 +23,18 @@ const SUB_POSITIONAL = z.enum(["path", "any", "none"]);
 /** CommandPolicy 형식. 알 수 없는 키가 있으면 오타로 보고 항목 전체를 거부한다. */
 const COMMAND_POLICY_SCHEMA = z.object({
   subcommands:      STRING_LIST.optional(),
-  flags:            z.record(FLAG_KIND),
+  flags:            z.record(z.string(), FLAG_KIND),
   positionals:      z.enum(["path", "any", "none", "url"]),
   singleDashLong:   z.boolean().optional(),
-  subPositionals:   z.record(SUB_POSITIONAL).optional(),
+  subPositionals:   z.record(z.string(), SUB_POSITIONAL).optional(),
   leadingFlags:     STRING_LIST.optional(),
   numericFlag:      z.boolean().optional(),
-  subVerbs:         z.record(STRING_LIST).optional(),
+  subVerbs:         z.record(z.string(), STRING_LIST).optional(),
   fileRefFlags:     STRING_LIST.optional(),
-  deniedValues:     z.record(STRING_LIST).optional(),
+  deniedValues:     z.record(z.string(), STRING_LIST).optional(),
   stopAtPositional: z.boolean().optional(),
-  subFlags:         z.record(z.record(FLAG_KIND)).optional(),
-  allowedValues:    z.record(STRING_LIST).optional(),
+  subFlags:         z.record(z.string(), z.record(z.string(), FLAG_KIND)).optional(),
+  allowedValues:    z.record(z.string(), STRING_LIST).optional(),
   positionalChars:  z.string().min(1).optional(),
   positionalPrefix: z.string().min(1).optional(),
   maxPositionals:   LIMIT_SCHEMA.optional(),
@@ -86,6 +86,18 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
       external_isolation:        z.enum(["worker", "none"]),
       external_time_limit_ms:    POSITIVE_LIMIT_SCHEMA,
       external_memory_limit_mb:  POSITIVE_LIMIT_SCHEMA,
+      /**
+       * 외부 파서 샌드박스에 열어 줄 capability.
+       *
+       * 경로와 환경 변수는 **쌍**이다 — 경로면 (호스트 경로, 게스트 경로),
+       * 환경 변수면 (이름, 값). 한쪽만으로는 의미가 없다.
+       */
+      external_capabilities: {
+        fields: {
+          fs_read: z.array(z.tuple([z.string(), z.string()])).optional(),
+          env:     z.array(z.tuple([z.string(), z.string()])).optional(),
+        },
+      },
       adaptive_format_threshold: {
         fields: {
           json:        LIMIT_SCHEMA,

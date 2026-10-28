@@ -31,6 +31,31 @@ export interface PrismGuardConfig {
   profile?:                 "readonly" | "build";
 }
 
+/**
+ * 외부 ParserPack 샌드박스에 열어 주는 capability.
+ *
+ * ## 기본값은 비어 있다
+ *
+ * 비어 있다는 것은 **모든 접근을 거부한다**는 뜻이다(fail-closed).
+ * 파일도, 환경 변수도, 네트워크도 없다.
+ *
+ * ## 왜 fail-closed 인가
+ *
+ * 열어 주는 capability 는 **사용자가 정하는 것**이다. 아무도 정하지 않았는데
+ * 기본으로 열어 두면, 그 사실을 아무도 몰랐는데 샌드박스가 샌드박스가 아니게 된다.
+ *
+ * ## 좁히기만 된다
+ *
+ * 프로젝트 설정은 이 capability 를 **좁힐 수만 있다.** 넓히면 경고 후 버린다.
+ * 신뢰하지 않는 프로젝트가 권한을 넓힐 수는 없다.
+ */
+export interface ExternalCapabilityConfig {
+  /** 읽기만 허용할 파일 시스템 경로. [호스트 경로, 게스트가 보는 경로] */
+  fs_read?: Array<[string, string]>;
+  /** 노출할 환경 변수. [이름, 값] */
+  env?:     Array<[string, string]>;
+}
+
 export interface PrismParsersConfig {
   strict_schemas?: boolean;
   /** 외부 ParserPack 실행 방식. worker는 팩마다 워커 스레드에서, none은 서버 스레드에서 실행한다. */
@@ -39,6 +64,8 @@ export interface PrismParsersConfig {
   external_time_limit_ms?:   number;
   /** 외부 ParserPack 워커의 힙 상한(MB) */
   external_memory_limit_mb?: number;
+  /** 외부 ParserPack 샌드박스에 열어 줄 capability. **비우면 전부 거부한다.** */
+  external_capabilities?:    ExternalCapabilityConfig;
   adaptive_format_threshold?: {
     json?: number;
     compact?: number;
@@ -69,6 +96,8 @@ export const EXTERNAL_PARSER_DEFAULTS = {
   external_isolation:       "worker",
   external_time_limit_ms:   500,
   external_memory_limit_mb: 128,
+  /** fail-closed — 아무것도 열지 않는다. */
+  external_capabilities:    {} as ExternalCapabilityConfig,
 } as const satisfies PrismParsersConfig;
 
 export const DEFAULT_CONFIG: PrismConfig = {
@@ -285,7 +314,7 @@ function narrowGuard(base: PrismGuardConfig, project: PartialPrismGuardConfig): 
  */
 function narrowParsers(base: PrismParsersConfig | undefined, project: PrismParsersConfig | undefined): PrismParsersConfig | undefined {
   if (!project) return project;
-  const { external_isolation, external_time_limit_ms, external_memory_limit_mb, ...rest } = project;
+  const { external_isolation, external_time_limit_ms, external_memory_limit_mb, external_capabilities, ...rest } = project;
   const out: PrismParsersConfig = { ...rest };
   let   relaxed                 = false;
 
@@ -303,8 +332,33 @@ function narrowParsers(base: PrismParsersConfig | undefined, project: PrismParse
     else relaxed = true;
   }
 
+  /**
+   * capability 는 **좁히는 방향만** 받는다.
+   *
+   * 프로젝트가 열어 달라는 경로나 환경 변수는 기준 설정에 **있어야** 한다.
+   * 없는 것을 새로 열면 경고 후 버린다 — 신뢰하지 않는 프로젝트가 권한을 넓힐 수는 없다.
+   */
+  if (external_capabilities !== undefined) {
+    const baseFs = new Set((base?.external_capabilities?.fs_read ?? []).map(([host, guest]) => `${host}\u0000${guest}`));
+    const baseEnv = new Map((base?.external_capabilities?.env ?? []).map(([key, value]) => [key, value]));
+    const fsRead: Array<[string, string]> = [];
+    const env:     Array<[string, string]> = [];
+
+    for (const entry of external_capabilities.fs_read ?? []) {
+      if (!Array.isArray(entry) || entry.length !== 2) { relaxed = true; continue; }
+      if (!baseFs.has(`${entry[0]}\u0000${entry[1]}`)) { relaxed = true; continue; }
+      fsRead.push([entry[0], entry[1]]);
+    }
+    for (const entry of external_capabilities.env ?? []) {
+      if (!Array.isArray(entry) || entry.length !== 2) { relaxed = true; continue; }
+      if (baseEnv.get(entry[0]) !== entry[1]) { relaxed = true; continue; }
+      env.push([entry[0], entry[1]]);
+    }
+    out.external_capabilities = { fs_read: fsRead, env };
+  }
+
   if (relaxed) {
-    process.stderr.write("[parism] WARNING: project config cannot disable external parser isolation or raise its limits; ignored.\n");
+    process.stderr.write("[parism] WARNING: project config cannot disable external parser isolation, raise its limits, or widen sandbox capabilities; ignored.\n");
   }
   return out;
 }

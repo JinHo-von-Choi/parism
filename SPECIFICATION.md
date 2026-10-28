@@ -451,7 +451,7 @@ compact 는 **값을 보존하지 않는다면 압축하지 않는다.**
 
 복원은 `schema` 와 같은 순서로 행 값을 다시 짝지으면 되므로 `decode(encode(x)) = x` 가 성립한다.
 
-`schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (`zod-to-json-schema` 기반).
+`schema`는 `z.ZodTypeAny`다. v0.5까지 JSON Schema 객체를 직접 사용하던 방식에서 v0.6에서 Zod 단일 소스로 전환되었다. `exportJsonSchema(pack)` 헬퍼로 JSON Schema 객체를 파생할 수 있다 (zod 4 의 `z.toJSONSchema` 기반).
 
 `fixtures`의 각 항목은 `{ input: string; args: string[]; expected: unknown }` 쌍이다. `parism test` CLI 실행 시 및 내장 테스트의 fixture replay 시 항상 Zod 스키마 검증을 적용한다.
 

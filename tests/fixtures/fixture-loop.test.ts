@@ -23,19 +23,19 @@ describe("fixture 매니페스트", () => {
     versions: { parism: "2.0.2" },
   };
 
-  it("계획서 8장이 요구한 필드를 모두 받는다", () => {
+  it("계획서 8장이 요구한 필드를 모두 받는다", async () => {
     const check = validateManifest(base);
     expect(check.issues).toEqual([]);
     expect(check.ok).toBe(true);
   });
 
-  it("깨진 매니페스트를 조용히 버리지 않고 이유를 돌려준다", () => {
+  it("깨진 매니페스트를 조용히 버리지 않고 이유를 돌려준다", async () => {
     const check = validateManifest({ ...base, stdout: 42 });
     expect(check.ok).toBe(false);
     expect(check.issues.length).toBeGreaterThan(0);
   });
 
-  it("reviewed_by 가 없으면 계약이 아니라 제안이다", () => {
+  it("reviewed_by 가 없으면 계약이 아니라 제안이다", async () => {
     const without = validateManifest({ ...base, expected: { parsed: {} } });
     expect(without.ok).toBe(true);
     expect(without.manifest && isReviewed(without.manifest)).toBe(false);
@@ -46,82 +46,82 @@ describe("fixture 매니페스트", () => {
 });
 
 describe("fixture 정제", () => {
-  it("시크릿과 홈 경로를 가린다", () => {
+  it("시크릿과 홈 경로를 가린다", async () => {
     const text = `token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 home=${HOME}/src`;
-    const out  = sanitizeText(text, { home: HOME });
+    const out  = await sanitizeText(text, { home: HOME });
     expect(out.text).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
     expect(out.text).not.toContain(HOME);
     expect(out.text).toContain("token=");
     expect(out.text).toContain("~/src");
   });
 
-  it("무엇을 가렸는지 남긴다 — 흔적이 없으면 검증할 수 없다", () => {
-    const out = sanitizeText(`x=${HOME}`, { home: HOME });
+  it("무엇을 가렸는지 남긴다 — 흔적이 없으면 검증할 수 없다", async () => {
+    const out = await sanitizeText(`x=${HOME}`, { home: HOME });
     expect(out.redactions.length).toBe(1);
     expect(out.redactions[0]!.kind).toBe("home_path");
     expect(out.redactions[0]!.count).toBe(1);
   });
 
-  it("가린 뒤에도 문맥이 남아 눈으로 확인된다", () => {
-    const out = sanitizeText(`Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345`, { home: HOME });
+  it("가린 뒤에도 문맥이 남아 눈으로 확인된다", async () => {
+    const out = await sanitizeText(`Authorization: Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345`, { home: HOME });
     expect(out.text).toContain("Authorization: Bearer");
     expect(out.text).toContain("[REDACTED]");
   });
 
-  it("겹치는 구간에서는 앞선 규칙이 이긴다", () => {
+  it("겹치는 구간에서는 앞선 규칙이 이긴다", async () => {
     /**
      * `--token=<홈 경로>` 에서 홈 경로 규칙(2번)이 argv 시크릿 규칙(3번)보다 앞선다.
      * 뒤 규칙이 잘라내면 '무엇이 가려졌는지'가 규칙마다 달라져 재현이 어려워진다.
      * 우선순위가 있다는 사실 자체를 고정한다.
      */
-    const out = sanitizeText(`--token=${HOME}/secretpart`, { home: HOME });
+    const out = await sanitizeText(`--token=${HOME}/secretpart`, { home: HOME });
     expect(out.text).toBe("--token=~/secretpart");
     expect(out.redactions.map(r => r.kind)).toEqual(["home_path"]);
   });
 
-  it("토큰 규칙은 홈 경로 규칙보다 먼저 온다 — 진짜 토큰은 통째로 가려진다", () => {
-    const out = sanitizeText(`ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345`, { home: HOME });
+  it("토큰 규칙은 홈 경로 규칙보다 먼저 온다 — 진짜 토큰은 통째로 가려진다", async () => {
+    const out = await sanitizeText(`ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345`, { home: HOME });
     expect(out.text).toBe("[REDACTED]");
     expect(out.redactions[0]!.kind).toBe("secret");
   });
 
-  it("argv 는 옵션 이름과 길이를 남긴다 — 비교 키가 사라지면 안 된다", () => {
+  it("argv 는 옵션 이름과 길이를 남긴다 — 비교 키가 사라지면 안 된다", async () => {
     const out = sanitizeArgs(["get", "pods", "--token=abcdef123456"]);
     expect(out.redacted).toBe(true);
     expect(out.args[0]).toBe("get");
     expect(out.args[2]).toBe("--token=<redacted:12>");
   });
 
-  it("사용자 규칙이 기본 규칙 뒤에 적용된다", () => {
+  it("사용자 규칙이 기본 규칙 뒤에 적용된다", async () => {
     const rules = defaultRules(HOME);
-    const out   = sanitizeText("고유번호 12345", { home: HOME, extraRules: [{ kind: "secret", pattern: /고유번호 \d+/g }] });
+    const out   = await sanitizeText("고유번호 12345", { home: HOME, extraRules: [{ kind: "secret", pattern: /고유번호 \d+/g }] });
     expect(out.text).toBe("[REDACTED]");
     expect(rules.length).toBeGreaterThan(0);
   });
 });
 
 describe("계약 변화 탐지", () => {
-  it("키 순서만 바뀐 것은 변화가 아니다", () => {
+  it("키 순서만 바뀐 것은 변화가 아니다", async () => {
     expect(diffJson({ a: 1, b: 2 }, { b: 2, a: 1 })).toEqual([]);
   });
 
-  it("배열 순서만 바뀐 것은 변화다 (순서도 값이다)", () => {
+  it("배열 순서만 바뀐 것은 변화다 (순서도 값이다)", async () => {
     const changes = diffJson([1, 2], [2, 1]);
     expect(changes.length).toBeGreaterThan(0);
   });
 
-  it("누락과 추가를 구분해 알려준다", () => {
+  it("누락과 추가를 구분해 알려준다", async () => {
     const changes = diffJson({ a: 1, b: 2 }, { a: 1, c: 3 });
     expect(changes.some(c => c.kind === "missing" && c.path === "/b")).toBe(true);
     expect(changes.some(c => c.kind === "extra" && c.path === "/c")).toBe(true);
   });
 
-  it("타입이 다르면 값이 아니라 타입 변화로 보고한다", () => {
+  it("타입이 다르면 값이 아니라 타입 변화로 보고한다", async () => {
     const changes = diffJson({ entries: { a: 1 } }, { entries: [] });
     expect(changes[0]!.kind).toBe("type");
   });
 
-  it("포인터 경로에 슬래시와 물결표가 있어도 깨지지 않는다", () => {
+  it("포인터 경로에 슬래시와 물결표가 있어도 깨지지 않는다", async () => {
     const changes = diffJson({ "a/b": 1, "c~d": 2 }, { "a/b": 9, "c~d": 2 });
     expect(changes[0]!.path).toBe("/a~1b");
   });
@@ -141,14 +141,14 @@ describe("오프라인 replay", () => {
     ...(expected !== undefined && { expected }),
   });
 
-  it("사람이 검토한 기대값이 없으면 계약 위반으로 세지 않는다", () => {
+  it("사람이 검토한 기대값이 없으면 계약 위반으로 세지 않는다", async () => {
     const parsed = validateManifest(manifestOf({ parsed: { entries: [] } }));
     const result = replayManifest(parsed.manifest!, createRegistry());
     expect(result.reviewed).toBe(false);
     expect(result.status).toBe("unreviewed");
   });
 
-  it("기대값이 맞으면 변화 0", () => {
+  it("기대값이 맞으면 변화 0", async () => {
     const parsed = validateManifest(manifestOf({
       parsed: { entries: [
         { xy: " M", index: " ", worktree: "M", path: "src/a.ts" },
@@ -161,7 +161,7 @@ describe("오프라인 replay", () => {
     expect(result.changes).toBe(0);
   });
 
-  it("값이 어긋나면 어디가 어긋났는지 경로로 알려준다", () => {
+  it("값이 어긋나면 어디가 어긋났는지 경로로 알려준다", async () => {
     const parsed = validateManifest(manifestOf({
       parsed: { entries: [{ xy: " M", index: " ", worktree: "M", path: "src/다른.ts" }] },
       reviewed_by: "최진호",
@@ -174,7 +174,7 @@ describe("오프라인 replay", () => {
     expect(hit).toBe(true);
   });
 
-  it("기대 실패 계약이 맞는 실패는 통과로 본다", () => {
+  it("기대 실패 계약이 맞는 실패는 통과로 본다", async () => {
     /** `ls` 에 -l 이 없으면 파서가 그 형식을 지원하지 않는다(계약대로 실패한다). */
     const failing = {
       ...manifestOf({ failure: { reason: "unsupported_format" }, reviewed_by: "최진호" }),
@@ -186,13 +186,13 @@ describe("오프라인 replay", () => {
     expect(result.status).toBe("match");
   });
 
-  it("기대 실패 계약이 있는데 실제로 성공하면 변화로 본다", () => {
+  it("기대 실패 계약이 있는데 실제로 성공하면 변화로 본다", async () => {
     const parsed = validateManifest(manifestOf({ failure: { reason: "unsupported_format" }, reviewed_by: "최진호" }));
     const result = replayManifest(parsed.manifest!, createRegistry());
     expect(result.checks.find(c => c.name === "failure")!.status).toBe("changed");
   });
 
-  it("근거는 적은 포인터만 확인한다 — 전수 확인을 켜면 빠진 것도 센다", () => {
+  it("근거는 적은 포인터만 확인한다 — 전수 확인을 켜면 빠진 것도 센다", async () => {
     const m1 = manifestOf({ reviewed_by: "최진호", evidence: { pointers: { "/entries/0/path": [{ source: "stdout", line: 0, start: 3, end: 11 }] } } });
     const r1 = replayManifest(validateManifest(m1).manifest!, createRegistry());
     expect(r1.checks.find(c => c.name === "evidence")!.status).toBe("match");
@@ -206,7 +206,7 @@ describe("오프라인 replay", () => {
     expect(r2.checks.find(c => c.name === "evidence")!.changes.length).toBeGreaterThan(0);
   });
 
-  it("명령을 다시 실행하지 않는다 — 저장된 stdout 만 쓴다", () => {
+  it("명령을 다시 실행하지 않는다 — 저장된 stdout 만 쓴다", async () => {
     const parsed = validateManifest(manifestOf({ reviewed_by: "최진호" }));
     const before = process.hrtime.bigint();
     replayManifest(parsed.manifest!, createRegistry());
@@ -217,7 +217,7 @@ describe("오프라인 replay", () => {
 });
 
 describe("fixture 집합 되짚기", () => {
-  it("매니페스트가 아닌 파일을 조용히 건너뛰지 않는다", () => {
+  it("매니페스트가 아닌 파일을 조용히 건너뛰지 않는다", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parism-fixt-"));
     try {
       writeFileSync(join(dir, "a.json"), JSON.stringify({ command: "ls", stdout: "x" }));
@@ -231,7 +231,7 @@ describe("fixture 집합 되짚기", () => {
     }
   });
 
-  it("깨진 fixture 가 있으면 보고하고, 되짚기는 되돌아온다", () => {
+  it("깨진 fixture 가 있으면 보고하고, 되짚기는 되돌아온다", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parism-fixt2-"));
     try {
       writeFileSync(join(dir, "broken.json"), "{ nope");
@@ -243,7 +243,7 @@ describe("fixture 집합 되짚기", () => {
     }
   });
 
-  it("되짚기는 기대값을 쓰지 않는다", () => {
+  it("되짚기는 기대값을 쓰지 않는다", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parism-fixt3-"));
     try {
       const stdout = " M src/a.ts\n";

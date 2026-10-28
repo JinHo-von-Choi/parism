@@ -539,10 +539,10 @@ console.log(result.stdout.parsed);
 
 ## Custom parsers
 
-You can attach a parser to any command that lacks one. Parism is ESM-only and its schemas use zod 3.
+You can attach a parser to any command that lacks one. Parism is ESM-only and its schemas use zod 4.
 
 ```bash
-npm install @nerdvana/parism zod@^3
+npm install @nerdvana/parism zod@^4
 # package.json needs "type": "module"
 ```
 

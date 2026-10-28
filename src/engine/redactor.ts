@@ -2,7 +2,12 @@
  * 출력 리댁션 모듈.
  * raw stdout/stderr 문자열에서 민감 정보를 [REDACTED]로 치환한다.
  * 파싱 전 원본은 건드리지 않는다 — 리댁션은 파서 실행 후 서버 레이어에서만 호출된다.
+ *
+ * 정규식은 `regex-engine.ts` 를 거친다. Rust 엔진이 있으면 그것을 쓰고,
+ * Rust 로 재현할 수 없는 패턴은 TypeScript 로 되돌린다.
  */
+
+import { replaceAllText, type RegexEngineOptions } from "./regex-engine.js";
 
 export const DEFAULT_OUTPUT_REDACT_PATTERNS: string[] = [
   "sk-[A-Za-z0-9_-]{20,}",              // OpenAI/Anthropic API keys
@@ -17,14 +22,16 @@ export const DEFAULT_OUTPUT_REDACT_PATTERNS: string[] = [
 /**
  * 주어진 패턴들로 문자열 안의 민감정보를 [REDACTED]로 치환한다.
  * 패턴은 RegExp 리터럴 문자열로 받아 RegExp("pattern", "g")로 컴파일한다.
+ *
+ * @param opts 정규식 엔진이 TypeScript 로 되돌아간 사실을 받는다.
  */
-export function redact(text: string, patterns: string[]): string {
+export async function redact(text: string, patterns: string[], opts?: RegexEngineOptions): Promise<string> {
   if (!text || patterns.length === 0) return text;
   let result = text;
   for (const p of patterns) {
     try {
-      const re = new RegExp(p, "g");
-      result   = result.replace(re, "[REDACTED]");
+      const replaced = await replaceAllText(p, result, "[REDACTED]", "g", true, opts);
+      result = replaced.value;
     } catch {
       // Invalid regex — skip silently; the boot-time validator will warn
     }

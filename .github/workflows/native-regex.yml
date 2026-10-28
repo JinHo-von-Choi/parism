@@ -1,0 +1,237 @@
+name: Native regex engine
+
+# 네이티브 정규식 엔진의 빌드와 검증.
+#
+# ## 왜 이 워크플로우가 있는가
+#
+# 정규식 엔진 교체는 **출력이 한 바이트도 달라지지 않아야** 하는 변경이다(REQ-009, PAT-002).
+# 그 검증은 Rust 엔진이 **실제로 돌아가는 환경**에서만 의미가 있다.
+# 엔진이 없는 환경에서 돌면 "비교할 것이 없어서" 통과한다 — 조용한 통과가 제일 위험하다.
+#
+# 그래서 여기서 두 가지를 한다.
+#   1. Rust 엔진이 있는 상태로 **바이트 동일성 게이트**를 돌린다 (`PARISM_REQUIRE_NATIVE=1`).
+#   2. 8종 플랫폼 바이너리를 크로스 빌드해 npm 플랫폼 패키지로 게시한다.
+#
+# 1번은 PR 과 main 에서 도는 게이트다. 2번은 태그에서만 도는 배포 경로인데,
+# 플랫폼 패키지를 npm 에 게시하지 않으므로 지금은 태그 트리거를 두지 않는다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/parism-regex/**"
+      - "packages/parism-regex-*/**"
+      - "src/engine/regex-*.ts"
+      - "tests/engine/regex-*.test.ts"
+      - ".github/workflows/native-regex.yml"
+  workflow_dispatch:
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 게이트 — Rust 엔진을 실제로 돌려서 바이트 동일성을 확인한다.
+  # ──────────────────────────────────────────────────────────────────────────
+  verify:
+    name: 바이트 동일성 게이트 (Rust 엔진 활성)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Build native regex engine
+        run: cargo build --release --manifest-path crates/parism-regex/Cargo.toml
+
+      - name: Rust unit tests
+        run: cargo test --release --manifest-path crates/parism-regex/Cargo.toml
+
+      # 여기서 엔진 바이너리를 **명시적으로** 가리킨다.
+      # 못 찾으면 조용히 TypeScript 로 내려가서 통과한다 — 그게 함정이다.
+      - name: Byte identity gate (Rust engine required)
+        env:
+          PARISM_REGEX_BIN: ${{ github.workspace }}/crates/parism-regex/target/release/parism-regex
+          PARISM_REQUIRE_NATIVE: "1"
+        run: npx vitest run tests/engine/regex-byte-identity.test.ts tests/engine/regex-engine.test.ts tests/engine/regex-protocol.test.ts
+
+      - name: Byte identity record
+        env:
+          PARISM_REGEX_BIN: ${{ github.workspace }}/crates/parism-regex/target/release/parism-regex
+          PARISM_REQUIRE_NATIVE: "1"
+        run: node experiments/regex-byte-identity.mjs --out experiments/regex-byte-identity/results-${{ github.run_number }}.json
+
+      - name: Upload byte identity record
+        uses: actions/upload-artifact@v4
+        with:
+          name: byte-identity-${{ github.run_number }}
+          path: experiments/regex-byte-identity/results-*.json
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 배포 경로 — 8종 플랫폼 바이너리를 만든다.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: ${{ matrix.package }}
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 리눅스 — ubuntu 러너에서 네이티브 빌드.
+          - package: parism-regex-linux-x64-gnu
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: "false"
+          # 리눅스 크로스 — 컨테이너 안에서 빌드한다.
+          # 컨테이너는 `cross` 가 관리하므로 러너 안의 node 는 그대로 쓸 수 있다.
+          - package: parism-regex-linux-arm64-gnu
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: "true"
+          - package: parism-regex-linux-x64-musl
+            target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            cross: "true"
+          - package: parism-regex-linux-arm64-musl
+            target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            cross: "true"
+          # macOS — 크로스 빌드 도구가 필요해서 **네이티브 러너**에서 만든다.
+          - package: parism-regex-darwin-x64
+            target: x86_64-apple-darwin
+            runner: macos-13
+            cross: "false"
+          - package: parism-regex-darwin-arm64
+            target: aarch64-apple-darwin
+            runner: macos-14
+            cross: "false"
+          # Windows — MSVC 툴체인이 러너에 이미 있다.
+          - package: parism-regex-win32-x64-msvc
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            cross: "false"
+          - package: parism-regex-win32-ia32-msvc
+            target: i686-pc-windows-msvc
+            runner: windows-latest
+            cross: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (linux cross targets only)
+        if: matrix.cross == 'true'
+        uses: taiki-e/install-action@cross
+
+      - name: Build package
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            node scripts/build-native-package.mjs --target "${{ matrix.target }}" --cross
+          else
+            node scripts/build-native-package.mjs --target "${{ matrix.target }}"
+          fi
+
+      - name: Verify binary exists
+        shell: bash
+        run: |
+          BIN="packages/${{ matrix.package }}/bin/parism-regex"
+          if [ "${{ matrix.os }}" = "win32" ]; then BIN="$BIN.exe"; fi
+          ls -l "$BIN"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}
+          path: packages/${{ matrix.package }}
+          if-no-files-found: error
+
+  publish-platforms:
+    name: 플랫폼 패키지 게시
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: parism-regex-*
+          merge-multiple: true
+
+      # 플랫폼 패키지 8종이 **먼저** 레지스트리에 있어야 한다.
+      # 메인 패키지가 이들을 optionalDependencies 로 참조하니까 — 순서가 뒤집히면 설치가 빠진다.
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for dir in packages/parism-regex-*/; do
+            NAME="$(node -p "require('./${dir}package.json').name")"
+            echo "::group::publishing ${NAME}@${VERSION}"
+            npm publish "./${dir}" --access public --provenance
+            echo "::endgroup::"
+          done
+
+      - name: Wait for registry propagation
+        run: |
+          set -uo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 40); do
+            MISSING=""
+            for pkg in parism-regex-darwin-arm64 parism-regex-darwin-x64 \
+                       parism-regex-linux-x64-gnu parism-regex-linux-x64-musl \
+                       parism-regex-linux-arm64-gnu parism-regex-linux-arm64-musl \
+                       parism-regex-win32-x64-msvc parism-regex-win32-ia32-msvc; do
+              CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+                "https://registry.npmjs.org/@nerdvana%2F${pkg}" || true)"
+              [ "$CODE" = "200" ] || MISSING="${MISSING} ${pkg}"
+            done
+            if [ -z "$MISSING" ]; then
+              echo "플랫폼 패키지 8종이 모두 레지스트리에 보인다 (attempt ${attempt})"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::레지스트리 전파 지연 — 다음 패키지들이 아직 보이지 않는다:${MISSING}. publish 는 이미 성공했다. 재게시하지 말고 전파를 기다릴 것."
+          exit 1

@@ -22,6 +22,7 @@
 
 import { homedir } from "node:os";
 import { REDACTED_TOKEN } from "../engine/mask-map.js";
+import { findAllRanges, type RegexEngineOptions } from "../engine/regex-engine.js";
 import type { FixtureRedaction } from "./manifest.js";
 
 /** 기본 가림 규칙. 순서가 의미다 — 먼저 걸린 규칙이 값을 차지한다. */
@@ -37,6 +38,8 @@ export interface SanitizeOptions {
   home?:       string;
   /** 사용자 추가 규칙. 기본 규칙 뒤에 적용된다. */
   extraRules?: SanitizeRule[];
+  /** 정규식 엔진이 TypeScript 로 되돌아간 사실을 받는다. */
+  engine?:     RegexEngineOptions;
 }
 
 /**
@@ -82,19 +85,20 @@ export function defaultRules(home: string): SanitizeRule[] {
   ];
 }
 
-/** 원문 문자열에서 규칙이 맞는 구간을 전부 찾는다. */
-function findRanges(text: string, rule: SanitizeRule): SanitizeRange[] {
+/**
+ * 원문 문자열에서 규칙이 맞는 구간을 전부 찾는다.
+ *
+ * 정규식은 `regex-engine.ts` 를 거친다. Rust 엔진이 있으면 그것을 쓰고,
+ * 재현할 수 없는 패턴은 TypeScript 로 되돌아간다.
+ */
+async function findRanges(text: string, rule: SanitizeRule, opts?: RegexEngineOptions): Promise<SanitizeRange[]> {
   const source = typeof rule.pattern === "string" ? escapeRegExp(rule.pattern) : rule.pattern.source;
   const flags  = typeof rule.pattern === "string" ? "g" : (rule.pattern.flags.includes("g") ? rule.pattern.flags : `${rule.pattern.flags}g`);
-  const re     = new RegExp(source, flags);
-  const found: SanitizeRange[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    /** 빈 문자열 매치는 무한 루프가 된다 — 한 칸 밀고 계속한다. */
-    if (m[0].length === 0) { re.lastIndex += 1; continue; }
-    found.push({ start: m.index, end: m.index + m[0].length, replacement: rule.replace ?? REDACTED_TOKEN });
-  }
-  return found;
+  const found  = await findAllRanges(source, text, flags, opts);
+  /** 빈 매칭은 구간이 아니다. */
+  return found.value
+    .filter(m => m.end > m.start)
+    .map(m => ({ start: m.start, end: m.end, replacement: rule.replace ?? REDACTED_TOKEN }));
 }
 
 /** 같은 규칙이 같은 표시자로 몇 번 가렸는지 접는다. */
@@ -111,14 +115,14 @@ function tally(ranges: readonly SanitizeRange[], kind: FixtureRedaction["kind"])
  * 오프셋이 밀려 근거 span 이 어긋난다. 겹치는 구간에서는 앞선 규칙이 이긴다
  * (시크릿 문자열 안에 홈 경로가 들어 있는 경우처럼).
  */
-export function sanitizeText(text: string, options: SanitizeOptions = {}): SanitizeResult {
+export async function sanitizeText(text: string, options: SanitizeOptions = {}): Promise<SanitizeResult> {
   const home  = options.home ?? homedir();
   const rules = [...defaultRules(home), ...(options.extraRules ?? [])];
 
   const accepted: SanitizeRange[] = [];
   const redactions: FixtureRedaction[] = [];
   for (const rule of rules) {
-    const hits = findRanges(text, rule).filter(c => !accepted.some(t => c.start < t.end && t.start < c.end));
+    const hits = (await findRanges(text, rule, options.engine)).filter(c => !accepted.some(t => c.start < t.end && t.start < c.end));
     if (hits.length === 0) continue;
     accepted.push(...hits);
     redactions.push(...tally(hits, rule.kind));

@@ -44,6 +44,8 @@ interface ProcessOutcome {
   overflow: boolean;
   /** 프로세스를 띄우지 못했을 때의 오류 */
   error?:   NodeJS.ErrnoException;
+  /** 스폰 실패의 errno 코드. 메시지 문자열에서 다시 꺼내지 않고 구조적으로 읽게 한다. */
+  errorCode?: string;
 }
 
 /**
@@ -231,7 +233,12 @@ function classifyFailure(cmd: string, args: string[], r: ProcessOutcome, timeout
   }
   if (r.error) {
     const reason = r.error.code === "ENOENT" || r.error.code === "EACCES" ? "spawn_failed" : "non_zero_exit";
-    return { kind: "exec", reason, message: r.error.message };
+    /**
+     * errno 코드를 그대로 남긴다. `spawn helm ENOENT` 라는 메시지에서 코드를 다시 꺼내는 대신
+     * 구조적으로 읽게 해서, "명령이 없음"과 "실행 권한 없음"을 구분할 수 있게 한다.
+     * reason 값은 바꾸지 않는다(CON-002).
+     */
+    return { kind: "exec", reason, message: r.error.message, ...(r.error.code && { errorCode: r.error.code }) };
   }
   if (r.code !== 0) {
     return { kind: "exec", reason: "non_zero_exit", message: `Command failed: ${cmdline}\n${r.stderr}` };

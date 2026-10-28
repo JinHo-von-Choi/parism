@@ -1,0 +1,25 @@
+[package]
+name = "parism-regex"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "역추적 불가능 정규식 엔진. parism 의 사용자 제공 패턴만 담당한다."
+license = "MIT"
+
+[lib]
+name = "parism_regex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "parism-regex"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1.13"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

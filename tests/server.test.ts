@@ -239,6 +239,23 @@ describe("output redaction (opt-in)", () => {
     expect(result.stdout.raw).toContain(syntheticToken);
   });
 
+  it("redaction enabled: 비정상 종료 메시지의 stderr 와 인자도 치환된다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("ls", [syntheticToken], process.cwd(), redactionConfig, registry),
+    );
+    expect(result.failure?.reason).toBe("non_zero_exit");
+    expect(result.failure.message).not.toContain(syntheticToken);
+    expect(result.failure.message).toContain("[REDACTED]");
+  });
+
+  it("redaction enabled: json-no-raw 로 뺀 stdout.raw 를 다시 채우지 않는다", async () => {
+    const result = JSON.parse(
+      await buildRunResult("ls", ["-la"], process.cwd(), redactionConfig, registry, "json-no-raw"),
+    );
+    expect(result.stdout.parsed).not.toBeNull();
+    expect(result.stdout.raw).toBe("");
+  });
+
   it("buildPagedResult: redaction enabled이면 paged raw에서도 토큰이 치환된다", async () => {
     const result = JSON.parse(
       await buildPagedResult("echo", [syntheticArg], process.cwd(), 0, 5, redactionConfig),

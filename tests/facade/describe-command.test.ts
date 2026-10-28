@@ -160,3 +160,40 @@ describe("describe(cmd) 내용", () => {
     expect(result.guard_summary.profile).toBe("readonly");
   });
 });
+
+describe("describe() 설치 상태", () => {
+  const engine = engineWith();
+
+  it("허용 명령 전체의 설치 상태를 돌려준다", () => {
+    const availability = engine.describe().command_availability!;
+    expect(Object.keys(availability)).toHaveLength(DEFAULT_CONFIG.guard.allowed_commands.length);
+    expect(Object.keys(availability).sort()).toEqual([...DEFAULT_CONFIG.guard.allowed_commands].sort());
+  });
+
+  it("설치 상태 값은 세 가지 중 하나다", () => {
+    const availability = engine.describe().command_availability!;
+    const allowed = new Set(["installed", "missing", "not_executable"]);
+    for (const [cmd, status] of Object.entries(availability)) {
+      expect(allowed.has(status), `${cmd}=${status}`).toBe(true);
+    }
+  });
+
+  it("PATH 에 있는 명령은 installed로 표시한다", () => {
+    const availability = engine.describe().command_availability!;
+    /** PATH 조회로 판정하므로 이 호스트에 있는 명령만 installed 가 된다. */
+    const installed = Object.entries(availability).filter(([, s]) => s === "installed").map(([c]) => c);
+    expect(installed.length).toBeGreaterThan(0);
+  });
+
+  it("명령별 응답에는 없을 때만 availability를 붙인다", () => {
+    /** 2KB 예산을 지키기 위해 installed 는 싣지 않는다. */
+    const result = described(engine, "ls");
+    if (result.availability) expect(["missing", "not_executable"]).toContain(result.availability.status);
+  });
+
+  it("설치 상태는 포맷 힌트와 다른 필드다", () => {
+    const result = described(engine, "git");
+    expect(result.alternatives).toBeDefined();
+    expect(result.availability).not.toBe("installed");
+  });
+});

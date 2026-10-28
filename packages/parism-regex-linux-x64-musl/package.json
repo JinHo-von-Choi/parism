@@ -1,0 +1,23 @@
+{
+  "name": "@nerdvana/parism-regex-linux-x64-musl",
+  "version": "2.1.1",
+  "description": "역추적 불가능 정규식 엔진 (parism 용). 사전 빌드된 바이너리.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JinHo-von-Choi/parism.git"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "preferUnplugged": true
+}

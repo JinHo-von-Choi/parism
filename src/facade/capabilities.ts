@@ -12,6 +12,7 @@ import { hasFormatDeclaration, NUMBER_FLAG }      from "../parsers/format.js";
 import type { FailureInfo }                       from "../types/envelope.js";
 import type { CommandOutcomeCounts }              from "../engine/telemetry.js";
 import { checkGuard, GuardError }                 from "../engine/guard.js";
+import { probeCommand }                          from "../engine/availability.js";
 import { effectiveFlags, policySource, resolvePolicies, type CommandPolicy } from "../engine/policy.js";
 
 /**
@@ -143,6 +144,16 @@ export interface CommandDescription {
   examples:     string[][];
   /** 텔레메트리를 켰을 때만 있는 이 명령의 결과 횟수 */
   stats?:       CommandOutcomeCounts;
+  /**
+   * 이 명령이 이 호스트에 **없을 때만** 있는 설치 상태.
+   *
+   * `alternatives` 와 **다른 개념**이다. alternatives 는 포맷 힌트, availability 는 설치 상태다.
+   *
+   * "설치돼 있음" 은 기본값이라 싣지 않는다. 모든 명령에 붙이면
+   * `describe(cmd)` 의 2KB 예산을 다 쓰고, 알려줄 일 없는 정보가 된다.
+   * 없는 것과 실행 권한이 없는 것만 행동이 달라지니 그때만 채운다.
+   */
+  availability?: { status: "missing" | "not_executable" };
 }
 
 export interface CommandDescriptionFailure {
@@ -287,6 +298,7 @@ export function describeCommand(
       },
     };
   }
+  const status = probeCommand(cmd).status;
   return {
     cmd,
     profile:      config.guard.profile ?? "readonly",
@@ -294,5 +306,6 @@ export function describeCommand(
     parser:       describeParser(registry, cmd, policy(config, cmd)),
     alternatives: describeAlternatives(registry, cmd),
     examples:     describeExamples(config, cmd),
+    ...(status !== "installed" && { availability: { status } }),
   };
 }
