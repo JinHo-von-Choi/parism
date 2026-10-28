@@ -7,6 +7,31 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-29
+
+### 호환성 주의
+
+- **MCP 결과 첫 줄에 cwd 배너가 붙는다.** `run`과 `run_paged`의 텍스트 결과는 `[cwd] <실제 절대 경로>`와 빈 줄 하나로 시작한다. 텍스트를 바로 JSON으로 파싱하던 소비자는 앞의 두 줄을 빼야 한다. 결정 기록: `docs/adr/2026-10-22-mcp-cwd-banner.md`.
+- **스키마 의존성이 zod 4로 바뀐다.** zod 3.x 전체가 영향받는 high 취약점(GHSA-mrhx-c7xc-m3w5)을 해소하는 수정판이 4.6.6에만 있다. 커스텀 파서는 zod 4로 스키마를 작성한다. `zod-to-json-schema` 의존성을 없애고 `exportJsonSchema`는 `z.toJSONSchema`로 만든다.
+
+### Added
+
+- **환경 인식.** 명령이 없어서 스폰이 실패하면(ENOENT) `failure.availability`에 설치 상태, 이 호스트에 있는 패키지 관리자 기준의 설치 명령, 같은 일을 하는 대체 명령을 싣는다. 실패에는 `failure.errorCode`가 붙는다. `describe(cmd)`는 명령이 없거나 실행 권한이 없을 때 `availability.status`를 돌려준다. 결정 기록: `docs/adr/2026-10-22-environment-awareness-layer.md`.
+- **네이티브 정규식 엔진.** 사용자가 준 패턴을 쓰는 마스킹, 근거 대응표, fixture 정제를 역추적 없는 Rust 엔진(`crates/parism-regex`)으로 실행할 수 있다. Rust와 의미가 다른 패턴(`i`·`m`·`u`·`y` 플래그, 역참조, lookaround)은 TypeScript로 실행하고, 그 사실을 결과의 `regex_engine.fallbacks`에 사유와 함께 싣는다. 바이트 동일성 게이트에서 2,886건을 비교해 불일치는 0건이었다. 엔진 선택은 `PARISM_REGEX_ENGINE`, 바이너리 경로는 `PARISM_REGEX_BIN`으로 정한다. npm 배포본에는 바이너리가 없어 TypeScript 엔진으로 동작한다. 결정 기록: `docs/adr/2026-10-22-native-regex-engine.md`.
+- **외부 파서 샌드박스.** 팩 디렉터리에 `parser.wasm`과 `contract.json`이 있으면 Wasmtime capability 샌드박스(`crates/parism-sandbox`)에서 실행한다. 파일과 환경 변수는 `parsers.external_capabilities`로 열어 준 것만 쓸 수 있고, 네트워크는 없다. 결정 기록: `docs/adr/2026-10-22-agent-parser-sandbox.md` 7절.
+
+### Fixed
+
+- 출력 마스킹을 켜면 `failure.message`도 마스킹한다. 비정상 종료 메시지에 stderr와 인자가 마스킹 없이 들어갔다.
+- `json-no-raw`와 적응형 형식으로 응답에서 뺀 `stdout.raw`를 마스킹 단계가 다시 채우지 않는다.
+- 기본 계약(`contract_version` 미지정)에서 `budget`으로 받은 cursor를 `fetch_result`로 이어 읽을 수 있다. 결과 식별자가 `"unretained"`로 나가고 페이지가 보관되지 않았다. 이어 읽기 페이지는 최대 16개까지 보관한다.
+- pnpm이 없을 때 인자와 상관없이 `npm install`을 대체 명령으로 내지 않는다. 뜻이 같은 하위 명령(install, add, list, outdated, run, test, audit)과 옵션만 npm으로 옮긴다.
+- 대체 명령은 인자까지 가드를 통과할 때만 안내한다.
+
+### Security
+
+- `body-parser`, `fast-uri`, `ip-address`, `qs`를 패치 버전으로 올렸다. `npm audit` 결과는 0건이다.
+
 ## [2.1.1] - 2026-10-22
 
 이번 릴리즈는 **코드가 아니라 파이프라인**을 고친다. 런타임 동작과 공개 API는 바뀌지 않는다.
