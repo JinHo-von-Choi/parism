@@ -102,7 +102,9 @@ function installShutdownHooks(): void {
  * 그룹이 이미 없으면(ESRCH) 할 일이 없다. 그 밖의 실패와 Windows에서는 자식에게만 신호를 보낸다.
  */
 function killProcessTree(child: ChildProcess, useGroup: boolean): void {
-  if (useGroup && child.pid !== undefined) {
+  /** 스폰에 실패한 자식은 pid 가 없다. 그대로 `kill()` 하면 pid 0, 곧 이 프로세스 그룹 전체에 신호가 간다. */
+  if (child.pid === undefined) return;
+  if (useGroup) {
     try {
       process.kill(-child.pid, "SIGKILL");
       return;

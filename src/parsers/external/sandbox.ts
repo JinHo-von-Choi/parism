@@ -135,6 +135,16 @@ class SandboxProcess {
 
     const child = spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
     /**
+     * 실행 권한이 없거나 파일이 없으면 pid 없이 돌아오고, 오류는 다음 틱에야 온다.
+     * 이 자식을 보관하면 안 된다. 응답을 기다리는 동안 이벤트 루프가 멈춰 오류가 처리되지 않은 채로
+     * `kill()` 하면 Node 는 pid 0 으로 신호를 보낸다 — 이 프로세스 그룹 전체가 SIGTERM 을 받는다.
+     */
+    if (child.pid === undefined) {
+      child.on("error", () => { /** 위에서 실패로 처리했다. */ });
+      this.failed = `외부 파서 샌드박스를 실행할 수 없다: ${binary}`;
+      throw new SandboxUnavailableError(this.failed);
+    }
+    /**
      * 부모가 샌드박스 때문에 죽지 않게 한다.
      * 샌드박스는 보조 수단이다 — 이것이 남아 있다고 서버가 종료되지 않아야 한다.
      */
@@ -186,6 +196,8 @@ class SandboxProcess {
     this.child = null;
     if (!child) return;
     try { child.stdin.end(); } catch { /** 이미 끝났다. */ }
+    /** pid 가 없거나 이미 끝난 자식에게 신호를 보내지 않는다. pid 0 신호는 프로세스 그룹 전체로 간다. */
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
     try { child.kill(); } catch { /** 이미 죽었다. */ }
   }
 }
