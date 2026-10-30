@@ -20,7 +20,7 @@ jobs:
 
       - name: Create reminder issue if token expires within 30 days
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const title = 'NPM_TOKEN expired or invalid — renew required';
