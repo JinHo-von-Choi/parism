@@ -7,10 +7,13 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-12
+
 아래 옵션, 도구, 응답 필드는 `contract_version: "next"`에서만 동작한다. 기본 계약의 응답 형태는 바뀌지 않는다.
 
 ### Added
 
+- **`lspci` 파서.** 장치마다 `slot`, `class`, `description`을 돌려준다. `-D`(도메인 포함 슬롯)를 받는다. 기본 계약에서도 동작한다.
 - **`guard.workspace_executables`.** 켜면 build 프로필에서 경로로 지정한 실행 파일(`./configure`, 빌드한 바이너리)을 `allowed_commands`에 없어도 실행한다. 실제 파일이 `allowed_paths` 안에 있어야 하고, 기본값은 꺼짐이며 신뢰하지 않는 프로젝트 설정으로는 켤 수 없다.
 - **시험·빌드·린트 파서.** `vitest`, `jest`, `tsc`, `eslint`(직접 실행 또는 `npx`), `pytest`, `go test`, `ruff check`, `mypy`, `cargo test`, `cargo build`, `cargo check`의 결과를 구조화한다. 실패한 시험과 진단은 모두 싣고 통과한 항목은 개수만 싣는다. 러너가 보고한 실패 수와 파싱한 항목 수가 다르면 결과를 만들지 않고 원문을 돌려준다.
 - **`run`의 `machine_format`.** 러너의 기계용 출력 형식 인자를 실행 전에 덧붙인다. 덧붙인 인자도 가드 검사를 받고 응답의 `args`에 실린다. vitest와 pytest의 보고서는 임시 파일로 받아 읽고 지운다. 결정 기록: `docs/adr/2026-11-11-devloop-runner-guard.md`.
