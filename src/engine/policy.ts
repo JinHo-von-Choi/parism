@@ -512,6 +512,15 @@ const CARGO_QUERY_POLICY: CommandPolicy = {
   positionals: "any",
 };
 
+const CARGO_BUILD_FLAGS: Record<string, FlagKind> = {
+  ...bools(
+    "--lib", "--bins", "--tests", "--examples", "--all-targets", "--workspace", "--release",
+    "--all-features", "--no-default-features", "--no-fail-fast", "--locked", "--offline", "--frozen",
+  ),
+  "-p": "value", "--package": "value", "--bin": "value", "--test": "value", "--example": "value",
+  "--features": "value", "-j": "value", "--jobs": "value", "--message-format": "value",
+};
+
 /** yarn 은 저장소가 지정한 yarnPath 스크립트를 실행하므로 build 프로필에서만 허용한다. */
 const YARN_POLICY: CommandPolicy = {
   subcommands: ["list", "ls", "outdated", "why", "info", "--version"],
@@ -529,6 +538,12 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   yarn:      extendSubcommands(YARN_POLICY, ["run", "test"]),
   cargo:     extendSubcommands(CARGO_QUERY_POLICY, ["build", "test", "check"], {
     subPositionals: { build: "none", check: "none" },
+    /**
+     * 빌드와 시험 대상을 고르는 옵션과 진단 출력 형식. build, test, check는 이미 저장소의 빌드 스크립트를
+     * 실행하므로 이 옵션들이 새 권한을 열지는 않는다. 출력 형식은 json만 받는다.
+     */
+    subFlags: Object.fromEntries(["build", "test", "check"].map(sub => [sub, CARGO_BUILD_FLAGS])),
+    allowedValues: { "--message-format": ["json"] },
   }),
   terraform: extendSubcommands(DEFAULT_POLICIES.terraform!, ["show", "validate", "providers", "plan", "init"], {
     subPositionals: { show: "path" },

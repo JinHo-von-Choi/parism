@@ -73,12 +73,59 @@ export interface PrismParsersConfig {
   };
 }
 
+/**
+ * 장기 실행 태스크(run의 mode="task") 한도.
+ * 일반 실행의 max_concurrency, timeout_ms와 따로 센다. 프로젝트 설정은 두 값을 줄일 수만 있다.
+ */
+export interface PrismTasksConfig {
+  /** 동시에 실행하는 태스크 수 상한. 넘는 요청은 대기시키지 않고 거절한다. */
+  max_concurrency: number;
+  /** 태스크 하나의 최대 실행 시간(ms). 0은 무제한. */
+  timeout_ms:      number;
+}
+
+/**
+ * 실행 영수증. 호스트 설정(전역 설정 파일, 직접 지정한 설정 파일)에서만 읽는다.
+ * 프로젝트 설정의 이 항목은 버린다.
+ */
+export interface PrismReceiptsConfig {
+  /** true면 run이 끝날 때마다 영수증을 디스크에 남긴다. */
+  enabled:             boolean;
+  /** 보관할 영수증 최대 개수. 넘으면 오래된 것부터 지운다. */
+  max_entries:         number;
+  /** 보관 기간(일). 지난 영수증은 지운다. */
+  max_age_days:        number;
+  /** 작업 공간 상태에 내용 해시를 포함할 추적되지 않는 파일의 최대 개수 */
+  untracked_max_files: number;
+  /** 작업 공간 상태에 내용 해시를 포함할 추적되지 않는 파일의 합계 최대 바이트 */
+  untracked_max_bytes: number;
+  /** 서명 키 파일 경로. 있으면 영수증에 HMAC-SHA256 서명을 붙인다. 키는 자식 프로세스에 넘기지 않는다. */
+  key_file?:           string;
+}
+
+/** 완료 조건이 되는 명령 목록. 호스트 설정에서만 읽는다. 각 항목은 [명령, 인자...]이다. */
+export interface PrismVerifyConfig {
+  commands: string[][];
+}
+
+/** 결과 보관함 한도. 호스트 설정에서만 읽는다. */
+export interface PrismResultsConfig {
+  /** 보관할 최대 결과 개수 */
+  max_entries: number;
+  /** 보관 기간(ms) */
+  ttl_ms:      number;
+}
+
 export interface PrismConfig {
   guard:      PrismGuardConfig;
   /** 전역 설정 파일에서만 유효. true면 프로젝트 설정이 가드를 넓힐 수 있다. */
   trust_project_config?: boolean;
   parsers?:   PrismParsersConfig;
   telemetry?: PrismTelemetryConfig;
+  tasks?:     PrismTasksConfig;
+  receipts?:  PrismReceiptsConfig;
+  verify?:    PrismVerifyConfig;
+  results?:   PrismResultsConfig;
 }
 
 export interface PrismTelemetryConfig {
@@ -100,7 +147,23 @@ export const EXTERNAL_PARSER_DEFAULTS = {
   external_capabilities:    {} as ExternalCapabilityConfig,
 } as const satisfies PrismParsersConfig;
 
+export const DEFAULT_TASKS: PrismTasksConfig = { max_concurrency: 2, timeout_ms: 600_000 };
+
+export const DEFAULT_RECEIPTS: PrismReceiptsConfig = {
+  enabled:             false,
+  max_entries:         500,
+  max_age_days:        30,
+  untracked_max_files: 2000,
+  untracked_max_bytes: 64 * 1024 * 1024,
+};
+
+export const DEFAULT_RESULTS: PrismResultsConfig = { max_entries: 16, ttl_ms: 60_000 };
+
 export const DEFAULT_CONFIG: PrismConfig = {
+  tasks:    DEFAULT_TASKS,
+  receipts: DEFAULT_RECEIPTS,
+  verify:   { commands: [] },
+  results:  DEFAULT_RESULTS,
   parsers: {
     strict_schemas: false,
     ...EXTERNAL_PARSER_DEFAULTS,
@@ -363,6 +426,23 @@ function narrowParsers(base: PrismParsersConfig | undefined, project: PrismParse
   return out;
 }
 
+const HOST_ONLY_KEYS = ["receipts", "verify", "results"] as const;
+
+/** 레이어에 들어 있는 호스트 전용 키 이름 */
+function hostOnlyKeysIn(layer: Partial<PrismConfig>): string[] {
+  return HOST_ONLY_KEYS.filter(key => layer[key] !== undefined);
+}
+
+/** 프로젝트 설정의 태스크 한도는 기준값보다 작을 때만 반영한다. */
+function narrowTasks(base: PrismTasksConfig, project: Partial<PrismTasksConfig> | undefined): PrismTasksConfig {
+  if (!project) return base;
+  const concurrency = project.max_concurrency;
+  return {
+    max_concurrency: typeof concurrency === "number" && concurrency >= 1 ? Math.min(base.max_concurrency, concurrency) : base.max_concurrency,
+    timeout_ms:      narrowTimeout(base.timeout_ms, project.timeout_ms),
+  };
+}
+
 /** 설정 파일을 JSON으로 읽는다. 없으면 undefined, 읽기·파싱 실패는 경고 후 undefined. */
 async function readJsonLayer(filePath: string): Promise<unknown> {
   try {
@@ -411,11 +491,23 @@ export async function loadConfigMultiLayer(opts?: {
   const projectJson = await readJsonLayer(projectPath);
   if (projectJson !== undefined) {
     const layer = resolveProjectPaths(toLayer(projectJson, projectPath), projectPath);
+    /**
+     * 영수증, 검증 묶음, 보관함 한도는 호스트 설정에서만 읽는다. 저장소가 자기 완료 조건을 정하지 못하게 한다.
+     * 태스크 한도는 신뢰 여부와 관계없이 줄이는 방향만 받는다.
+     */
+    const hostOnly = hostOnlyKeysIn(layer);
+    if (hostOnly.length > 0) {
+      process.stderr.write(`[parism] WARNING: ${hostOnly.join(", ")} in ${projectPath} ignored; these are read from the host config only.\n`);
+    }
+    const projectLayer: Partial<PrismConfig> = {
+      ...layer, receipts: undefined, verify: undefined, results: undefined,
+      tasks: narrowTasks(config.tasks ?? DEFAULT_TASKS, layer.tasks),
+    };
     if (trustProject) {
-      config = mergeConfig(config, layer);
+      config = mergeConfig(config, projectLayer);
     } else {
       config = {
-        ...mergeConfig(config, { ...layer, guard: undefined, parsers: narrowParsers(config.parsers, layer.parsers) }),
+        ...mergeConfig(config, { ...projectLayer, guard: undefined, parsers: narrowParsers(config.parsers, layer.parsers) }),
         guard: narrowGuard(config.guard, (layer.guard ?? {}) as PartialPrismGuardConfig),
       };
     }
@@ -523,5 +615,9 @@ function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismCo
       ...(base.telemetry ?? {}),
       ...(override.telemetry ?? {}),
     },
+    tasks:    { ...DEFAULT_TASKS,    ...(base.tasks ?? {}),    ...(override.tasks ?? {}) },
+    receipts: { ...DEFAULT_RECEIPTS, ...(base.receipts ?? {}), ...(override.receipts ?? {}) },
+    verify:   { commands: override.verify?.commands ?? base.verify?.commands ?? [] },
+    results:  { ...DEFAULT_RESULTS,  ...(base.results ?? {}),  ...(override.results ?? {}) },
   };
 }

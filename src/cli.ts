@@ -238,5 +238,61 @@ export function createCli(): Command {
       console.log("\n  관측은 관측이다. 기대를 세우지 않은 항목은 비율에 들어가지 않는다.");
     });
 
+  const receipts = program
+    .command("receipts")
+    .description("Read run receipts written when receipts.enabled is set in the host config");
+
+  receipts
+    .command("check")
+    .description("Exit 0 only if every required command has a passing receipt taken in the current workspace state. Never runs a command")
+    .option("--cwd <dir>", "Workspace to check (default: current directory)")
+    .option("--require <command>", "Command that must have passed, e.g. \"npx vitest run\" or a JSON array. Repeatable. Default: verify.commands", (value: string, all: string[]) => [...all, value], [] as string[])
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .option("--json", "Print the report as JSON")
+    .action(async (options: { cwd?: string; require: string[]; config?: string; json?: boolean }) => {
+      const { receiptsCheck, formatCheck, parseRequire } = await import("./cli/receipts.js");
+      let required: string[][];
+      try {
+        required = options.require.map(parseRequire);
+      } catch (err) {
+        console.error(`[parism receipts] ${(err as Error).message}`);
+        process.exitCode = 2;
+        return;
+      }
+      const report = await receiptsCheck({ cwd: options.cwd, require: required, config: options.config });
+      if ("error" in report) {
+        console.error(`[parism receipts] ${report.error}`);
+        process.exitCode = 2;
+        return;
+      }
+      console.log(options.json ? JSON.stringify(report) : formatCheck(report));
+      if (!report.ok) process.exitCode = 1;
+    });
+
+  receipts
+    .command("list")
+    .description("Show recent receipts, newest first")
+    .option("--limit <n>", "How many to show", "20")
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .option("--json", "Print as JSON")
+    .action(async (options: { limit: string; config?: string; json?: boolean }) => {
+      const { receiptsList } = await import("./cli/receipts.js");
+      const limit = Number(options.limit);
+      const list  = await receiptsList({ limit: Number.isInteger(limit) && limit > 0 ? limit : 20, config: options.config });
+      if (options.json) {
+        console.log(JSON.stringify(list));
+        return;
+      }
+      if (list.length === 0) {
+        console.log("no receipts. Set receipts.enabled to true in the host config (~/.parism/prism.config.json).");
+        return;
+      }
+      for (const r of list) {
+        const summary = r.summary?.kind === "test" ? `passed ${r.summary.passed} failed ${r.summary.failed}`
+          : r.summary?.kind === "diagnostics" ? `errors ${r.summary.errors} warnings ${r.summary.warnings}` : "";
+        console.log(`${r.started_at}  exit ${r.exit_code}  ${[r.cmd, ...(r.args_requested ?? r.args)].join(" ")}  ${summary}`);
+      }
+    });
+
   return program;
 }

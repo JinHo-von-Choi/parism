@@ -1,0 +1,2 @@
+{"file": "pkg/mod.py", "line": 7, "column": 9, "end_line": 7, "end_column": 14, "message": "Incompatible types in assignment (expression has type \"str\", variable has type \"int\")", "hint": null, "code": "assignment", "severity": "error"}
+{"file": "pkg/mod.py", "line": 8, "column": 11, "end_line": 8, "end_column": 14, "message": "Argument 2 to \"add\" has incompatible type \"str\"; expected \"int\"", "hint": null, "code": "arg-type", "severity": "error"}

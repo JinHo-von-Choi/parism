@@ -448,6 +448,22 @@ describe("조회 정책 범위", () => {
     expect(reason(() => checkGuard("cargo", ["tree", "--depth", "1"], root, build))).toBe("pass");
   });
 
+  it("build 프로필의 cargo build, test, check는 대상 선택 옵션과 json 진단 형식만 받는다", () => {
+    for (const a of [
+      ["build", "--message-format=json"], ["check", "--message-format", "json", "--all-targets"],
+      ["test", "--lib", "--no-fail-fast"], ["test", "-p", "sample", "--", "--nocapture"], ["build", "--release", "--features", "x"],
+    ]) {
+      expect(reason(() => checkGuard("cargo", a, root, build)), a.join(" ")).toBe("pass");
+      expect(reason(() => checkGuard("cargo", a, root, cfg)), a.join(" ")).toBe("arg_not_allowed");
+    }
+    for (const a of [
+      ["build", "--message-format=short"], ["build", "--config", "x=1"], ["test", "--target-dir", "/tmp/x"],
+      ["build", "--manifest-path", "/etc/Cargo.toml"], ["tree", "--message-format=json"],
+    ]) {
+      expect(reason(() => checkGuard("cargo", a, root, build)), a.join(" ")).toBe("arg_not_allowed");
+    }
+  });
+
   it("kubectl -o는 열거된 출력 형식만 허용한다", () => {
     for (const a of [["-o", "json"], ["-o", "wide"], ["-oyaml"], ["-ojsonpath={.items[*].metadata.name}"], ["--output=custom-columns=NAME:.metadata.name"], ["--output", "go-template={{.kind}}"]]) {
       expect(reason(() => checkGuard("kubectl", ["get", "pods", ...a], root, cfg))).toBe("pass");

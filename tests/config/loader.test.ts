@@ -898,3 +898,66 @@ describe("외부 파서 격리 설정", () => {
     expect(cfg.parsers?.external_time_limit_ms).toBe(3000);
   });
 });
+
+describe("태스크, 영수증, 검증 묶음, 보관함 설정", () => {
+  const write = async (name: string, body: unknown): Promise<string> => {
+    const file = `/tmp/prism-next-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    await writeFile(file, JSON.stringify(body), "utf-8");
+    return file;
+  };
+
+  it("기본값: 영수증은 꺼져 있고 태스크는 동시에 2개, 10분까지다", async () => {
+    const cfg = await loadConfig("/tmp/prism-does-not-exist.json");
+    expect(cfg.receipts).toMatchObject({ enabled: false, max_entries: 500 });
+    expect(cfg.tasks).toEqual({ max_concurrency: 2, timeout_ms: 600_000 });
+    expect(cfg.verify).toEqual({ commands: [] });
+    expect(cfg.results).toEqual({ max_entries: 16, ttl_ms: 60_000 });
+  });
+
+  it("호스트 설정에서 읽는다", async () => {
+    const globalPath = await write("global", {
+      receipts: { enabled: true, max_entries: 10 },
+      verify:   { commands: [["npx", "vitest", "run"]] },
+      results:  { max_entries: 64, ttl_ms: 600_000 },
+      tasks:    { max_concurrency: 4, timeout_ms: 1_800_000 },
+    });
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath: "/tmp/prism-none.json", envPrefix: "PARISM_TEST_NONE_" });
+
+    expect(cfg.receipts).toMatchObject({ enabled: true, max_entries: 10, max_age_days: 30 });
+    expect(cfg.verify?.commands).toEqual([["npx", "vitest", "run"]]);
+    expect(cfg.results).toEqual({ max_entries: 64, ttl_ms: 600_000 });
+    expect(cfg.tasks).toEqual({ max_concurrency: 4, timeout_ms: 1_800_000 });
+  });
+
+  it("프로젝트 설정의 영수증, 검증 묶음, 보관함 한도는 신뢰 여부와 관계없이 버린다", async () => {
+    const project = { receipts: { enabled: false }, verify: { commands: [["true"]] }, results: { max_entries: 999 } };
+    for (const trust of [false, true]) {
+      const globalPath  = await write("g", { trust_project_config: trust, receipts: { enabled: true }, verify: { commands: [["npx", "vitest", "run"]] } });
+      const projectPath = await write("p", project);
+      const cfg = await loadConfigMultiLayer({ globalPath, projectPath, envPrefix: "PARISM_TEST_NONE_" });
+
+      expect(cfg.receipts?.enabled).toBe(true);
+      expect(cfg.verify?.commands).toEqual([["npx", "vitest", "run"]]);
+      expect(cfg.results?.max_entries).toBe(16);
+    }
+  });
+
+  it("프로젝트 설정은 태스크 한도를 줄일 수만 있다", async () => {
+    const globalPath = await write("g", { trust_project_config: true, tasks: { max_concurrency: 2, timeout_ms: 600_000 } });
+
+    const wider = await loadConfigMultiLayer({ globalPath, projectPath: await write("p", { tasks: { max_concurrency: 16, timeout_ms: 9_000_000 } }), envPrefix: "PARISM_TEST_NONE_" });
+    expect(wider.tasks).toEqual({ max_concurrency: 2, timeout_ms: 600_000 });
+
+    const narrower = await loadConfigMultiLayer({ globalPath, projectPath: await write("p", { tasks: { max_concurrency: 1, timeout_ms: 60_000 } }), envPrefix: "PARISM_TEST_NONE_" });
+    expect(narrower.tasks).toEqual({ max_concurrency: 1, timeout_ms: 60_000 });
+  });
+
+  it("형식이 틀린 값은 버리고 기본값을 유지한다", async () => {
+    const globalPath = await write("g", { verify: { commands: [["ok"], []] }, tasks: { max_concurrency: 0 }, receipts: { enabled: "yes" } });
+    const cfg = await loadConfigMultiLayer({ globalPath, projectPath: "/tmp/prism-none.json", envPrefix: "PARISM_TEST_NONE_" });
+
+    expect(cfg.verify?.commands).toEqual([]);
+    expect(cfg.tasks?.max_concurrency).toBe(2);
+    expect(cfg.receipts?.enabled).toBe(false);
+  });
+});

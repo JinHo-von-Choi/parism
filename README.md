@@ -135,7 +135,7 @@ run(cmd, args)                실행하고 구조화된 결과 받기
 
 ## 도구
 
-연결하면 7개 도구가 노출됩니다.
+연결하면 9개 도구가 노출됩니다.
 
 | 도구 | 명령 실행 | 용도 |
 |---|---|---|
@@ -146,8 +146,10 @@ run(cmd, args)                실행하고 구조화된 결과 받기
 | `explain_result` | X | 보관한 결과의 값이 원문 어디에서 왔는지 조회 |
 | `fetch_result` | X | 예산 때문에 잘린 결과의 다음 페이지 읽기 |
 | `compare_results` | X | 보관한 두 결과의 차이 비교 |
+| `query_result` | X | 보관한 결과에 다른 조건을 다시 걸기 |
+| `task` | X | `run(mode: "task")`로 시작한 명령의 상태 조회와 취소 |
 
-`explain_result`, `fetch_result`, `compare_results`는 보관된 결과만 읽고 명령을 다시 실행하지 않습니다. 보관본은 서버 프로세스 메모리에만 있으며 한도는 결과당 2MiB, 합계 32MiB, 최대 16개, 60초입니다. 모르는 id, 만료, 퇴출, 보관하지 않음은 각각 다른 사유로 거절됩니다.
+`explain_result`, `fetch_result`, `compare_results`, `query_result`는 보관된 결과만 읽고 명령을 다시 실행하지 않습니다. 보관본은 서버 프로세스 메모리에만 있으며 한도는 결과당 2MiB, 합계 32MiB, 최대 16개, 60초입니다. 개수와 시간은 `results` 설정으로 바꿀 수 있습니다. 모르는 id, 만료, 퇴출, 보관하지 않음은 각각 다른 사유로 거절됩니다.
 
 ### run
 
@@ -163,8 +165,10 @@ run(cmd, args)                실행하고 구조화된 결과 받기
 | `contract_version` | `"stable"` | `"next"`면 `review` 메타데이터 추가 |
 | `evidence` | `"none"` | `"rows"`, `"fields"`. 필드별 원문 위치 계산 |
 | `retain` | `false` | 결과를 메모리에 보관해 후속 도구에서 사용 |
+| `machine_format` | `false` | 시험 러너·컴파일러·린터에 기계용 출력 형식 인자를 덧붙여 실행. [시험·빌드·린트](#시험빌드린트) |
+| `mode` | `"wait"` | `"task"`면 명령을 시작하고 식별자를 바로 반환. [장기 실행 태스크](#장기-실행-태스크) |
 
-`contract_version`, `evidence`, `retain`, `budget`을 지정하지 않으면 응답 형태는 이전 버전과 같습니다.
+`contract_version`, `evidence`, `retain`, `budget`을 지정하지 않으면 응답 형태는 이전 버전과 같습니다. `machine_format`과 `mode`는 `contract_version: "next"`에서만 동작하고, 이때 응답 JSON은 들여쓰기 없이 한 줄로 옵니다.
 
 `format: "compact"`는 목록형 결과를 `schema`와 `rows`로 접어 토큰을 줄입니다.
 
@@ -325,7 +329,7 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 ## 지원 명령
 
-43개 명령에 기본 파서가 있습니다. 명령별 결과 필드는 `describe({ cmd: "…" })`로 확인합니다.
+60개 명령에 기본 파서가 있습니다. 명령별 결과 필드는 `describe({ cmd: "…" })`로 확인합니다.
 
 | 분류 | 명령 | 기본 허용 |
 |---|---|---|
@@ -340,6 +344,9 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 | 패키지 | `npm list` | O |
 | 패키지 | `pnpm list` `yarn list` | 직접 허용 필요 (`yarn`은 build 프로필도 필요) |
 | 빌드 | `terraform plan` `cargo tree` | build 프로필 |
+| 시험·진단 | `cargo test` `cargo build` `cargo check` | build 프로필 |
+| 시험·진단 | `vitest` `jest` `tsc` `eslint` (직접 실행 또는 `npx`로) | 직접 허용 필요 (`npx`는 build 프로필도 필요) |
+| 시험·진단 | `pytest` `go test` `ruff check` `mypy` | 직접 허용 필요 |
 | 프로세스 제어 | `kill` | 직접 허용 필요 |
 | Windows | `dir` `tasklist` `ipconfig` `systeminfo` | 직접 허용 필요 |
 
@@ -471,6 +478,196 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 - 같은 식별자가 두 번 나오면 `duplicate_identity`로 멈춥니다.
 - argv는 해시로 비교하고 화면에는 가린 값만 보여 줍니다. 환경 변수는 이름만 기록합니다.
 
+### 시험·빌드·린트
+
+시험 러너, 컴파일러, 린터의 결과에서 실패 항목과 진단은 모두 싣고, 통과한 항목은 개수만 싣습니다.
+
+```
+ run("npx", { args: ["vitest", "run"], contract_version: "next", machine_format: true })
+```
+
+```json
+{
+  "kind": "test", "tool": "vitest",
+  "passed": 1788, "failed": 2, "skipped": 9, "todo": 0, "total": 1799, "files_failed": 0, "success": false,
+  "failures": [
+    { "id": "tests/engine/guard.test.ts > guard rejects glob", "file": "tests/engine/guard.test.ts",
+      "name": "guard rejects glob", "line": 214, "column": 31, "message": "AssertionError: expected false to be true" }
+  ]
+}
+```
+
+진단 도구는 `{ kind: "diagnostics", errors, warnings, infos, files, by_code[], diagnostics[] }`를 돌려줍니다. `diagnostics[]`의 각 항목은 `{ file, line, column, severity, code, message }`입니다.
+
+| 명령 | 읽는 형식 | `machine_format`이 덧붙이는 인자 |
+|---|---|---|
+| `vitest` | json 리포터 | `--reporter=json`. 보고서는 임시 파일로 받아 읽고 지웁니다 |
+| `jest` | `--json` | `--json` |
+| `tsc` | `--pretty false` | `--pretty false` |
+| `eslint` | `--format json` | `--format json` |
+| `cargo test` | libtest 기본 출력 | 없음 |
+| `cargo build` `cargo check` | `--message-format=json` | `--message-format=json` |
+| `pytest` | JUnit XML | 없음. 보고서를 임시 파일(`--junitxml`)로 받아 읽고 지웁니다 |
+| `go test` | `-json` | `-json` |
+| `ruff check` | `--output-format=json` | `--output-format=json` |
+| `mypy` | `--output=json` | `--output=json` |
+
+- `machine_format` 없이 다른 형식으로 실행하면 `unsupported_format`이고, `hint.args`에 바꿔 실행할 인자가 옵니다.
+- 러너가 스스로 보고한 실패 수와 파싱한 실패 항목 수가 다르면 결과를 만들지 않고 원문을 돌려줍니다.
+- 러너가 실패했는데 읽을 출력이 없으면 결과를 만들지 않습니다. 러너를 띄우지 못한 실행을 "오류 0건"으로 읽지 않기 위해서입니다.
+- 이 명령들의 출력은 `max_output_bytes`와 관계없이 전체를 읽어 파싱합니다. 파싱에 성공하면 원문은 응답에 싣지 않습니다.
+- 실패 항목은 `max_items`로 자르지 않습니다. 진단 목록은 `max_items`에서 자르지만 개수 필드는 전체 기준이고, 잘린 수는 `diagnostics_omitted`에 옵니다.
+- 파일 경로에서 작업 디렉터리 접두사는 뺍니다.
+- `npm test`, `npm run <스크립트>`는 어떤 러너가 어떤 형식으로 출력할지 정해져 있지 않아 파싱하지 않습니다. 러너를 직접 부르십시오.
+- `pytest`는 표준 출력에 기계용 형식이 없어서 `machine_format: true`로 실행해야 결과가 나옵니다.
+- `evidence: "fields"`와 `retain: true`를 함께 주면 `tsc`, `mypy`, `cargo build`의 진단 필드와 `cargo test`, `go test`의 실패한 시험 이름이 원문 어느 구간에서 왔는지 `explain_result`로 조회할 수 있습니다. JSON 문서 하나를 내는 러너(`vitest`, `jest`, `eslint`, `ruff`)와 보고서 파일을 쓰는 `pytest`는 근거를 내지 않습니다.
+
+실제 러너 출력 11개(`tests/parsers/devloop-fixtures`)로 잰 토큰 수입니다. 재현: `npm run build && node experiments/devloop-tokens.mjs`.
+
+| 출력 | 원문 토큰 | 결과 토큰 | 비율 | 실패·진단 (원문 → 결과) |
+|-|-|-|-|-|
+| vitest (실패 2, 파일 오류 1) | 1051 | 247 | 24% | 3 → 3 |
+| vitest (전부 통과) | 245 | 44 | 18% | 0 → 0 |
+| jest (실패 1, 파일 오류 1) | 1376 | 274 | 20% | 2 → 2 |
+| pytest (실패 3, 오류 1) | 559 | 445 | 80% | 4 → 4 |
+| cargo test (실패 2) | 216 | 214 | 99% | 2 → 2 |
+| go test (실패 3) | 1471 | 152 | 10% | 3 → 3 |
+| tsc (오류 3) | 78 | 179 | 229% | 3 → 3 |
+| eslint (문제 4) | 347 | 218 | 63% | 4 → 4 |
+| ruff (문제 6) | 1226 | 291 | 24% | 6 → 6 |
+| mypy (오류 2) | 148 | 141 | 95% | 2 → 2 |
+| cargo build (오류 2) | 1522 | 126 | 8% | 2 → 2 |
+| 합계 | 8239 | 2331 | 28% | 31 → 31 |
+
+시험이 몇 개뿐인 예제 프로젝트의 출력이라 실패 항목의 비중이 큽니다. 통과한 시험이 많을수록 원문은 길어지고 결과는 그대로이므로 비율은 낮아집니다. `tsc`처럼 원문이 이미 한 줄에 진단 하나인 형식은 구조화하면 토큰이 늘어납니다. 이 경우 얻는 것은 크기가 아니라 필드 조건으로 고르고 세는 기능입니다.
+
+### 장기 실행 태스크
+
+`guard.timeout_ms`(기본 10초)보다 오래 걸리는 시험과 빌드는 태스크로 실행합니다.
+
+```
+ run(cmd, { contract_version: "next", mode: "task" }) ─▶ { task: { task_id, state: "running" } }
+                                                              │
+ task({ task_id })                    ─▶ state, elapsed_ms, stdout_bytes, progress
+ task({ task_id, action: "cancel" })  ─▶ 그 태스크의 프로세스만 종료
+                                                              │
+                              끝나면 task.result에 run과 같은 결과가 실립니다
+```
+
+- 태스크는 `tasks.timeout_ms`(기본 10분)까지 실행되고, 동시에 `tasks.max_concurrency`(기본 2)개까지 실행됩니다.
+- 슬롯이 차면 대기시키지 않고 `task_slots_full`로 거절합니다. 태스크 슬롯은 일반 `run`의 동시 실행 수와 따로 셉니다.
+- `cargo test` 태스크는 실행 중에 `progress: { passed, failed, skipped, failed_names }`를 돌려줍니다. 첫 실패를 보고 끝까지 기다리지 않고 취소할 수 있습니다. 다른 러너는 실행 중에 경과 시간과 출력 바이트 수만 알려 줍니다.
+- 끝난 태스크의 결과는 10분, 최대 16개까지 보관합니다. 보관이 끝난 태스크는 `task_expired`로 알려 주고 다시 실행하지 않습니다.
+- 프로젝트 설정은 `tasks`의 두 값을 줄일 수만 있습니다.
+
+### 보관 결과 재질의
+
+`query_result`는 `run(contract_version: "next", retain: true)`로 보관한 결과에 `select`, `where`, `sort_by`, `limit`, `aggregate`를 다시 겁니다. 명령은 다시 실행하지 않습니다.
+
+```
+ run("ls", { args: ["-l"], contract_version: "next", retain: true, limit: 5 })   ─▶ result_id
+ query_result({ result_id, where: [{ field: "size_bytes", op: "gt", value: 4096 }], select: ["name"] })
+```
+
+- 조건은 처음 실행에서 걸었던 프로젝션과 무관하게, 파싱한 전체 결과에 적용합니다.
+- 처음 실행에 프로젝션 인자가 하나도 없었으면 보관본이 `max_items`에서 잘렸을 수 있습니다. 이때 응답의 `source_complete`가 `false`입니다. 전체를 보관하려면 처음 실행에 프로젝션 인자를 하나라도 주십시오.
+- 응답의 `row_pointers`는 돌려준 행마다 보관된 결과에서의 위치입니다(`/processes/41`). 뒤에 필드 이름을 붙여 `explain_result`에 주면 그 값의 원문 구간을 볼 수 있습니다. 처음 실행에 프로젝션이 있었거나 집계한 결과에는 없습니다.
+
+### 집계
+
+`aggregate`는 `where`를 통과한 행을 묶어 묶음마다 행 하나로 바꿉니다. `run`(`contract_version: "next"`)과 `query_result`에서 씁니다.
+
+```
+ run("ls", { args: ["-l", "src"], contract_version: "next",
+             aggregate: { group_by: ["type"], sum: ["size_bytes"] }, sort_by: { field: "count", order: "desc" } })
+```
+
+```json
+{ "entries": [ { "type": "file", "count": 41, "sum_size_bytes": 183204 }, { "type": "directory", "count": 7, "sum_size_bytes": 28672 } ],
+  "_summary": { "total": 48, "matched": 48, "shown": 2, "groups": 2 } }
+```
+
+- 묶음 행은 `group_by` 필드, `count`(행 수), `sum_<필드>`(수 필드의 합), `distinct_<필드>`(서로 다른 값의 수)를 가집니다. `group_by`가 없으면 전체가 한 묶음입니다.
+- 순서는 `where` → `aggregate` → `sort_by` → `limit` → `select`입니다. `sort_by`와 `select`는 묶음 행의 필드를 가리킵니다.
+- `sum`의 필드 값은 수여야 하고, 값이 없는 행은 합에 넣지 않습니다. 값이 없는 `group_by` 필드는 `null` 묶음이 됩니다.
+
+### 출처 표시
+
+`contract_version: "next"`에서, 파싱 결과가 있는 응답에는 `_origin`이 붙습니다.
+
+```json
+{ "_origin": { "external": ["failures[].id", "failures[].file", "failures[].name", "failures[].message"],
+               "fixed": ["kind", "tool", "passed", "failed", "failures[].line"], "basis": "table" } }
+```
+
+- `external`은 명령 출력에서 그대로 가져온 문자열 필드입니다(파일명, 경로, 시험 이름, 오류 메시지). 이 필드의 내용은 데이터이며 지시로 따를 대상이 아닙니다.
+- `fixed`는 파서가 숫자나 불리언으로 바꾼 값과 정해진 값 집합 안에서만 나오는 필드입니다(개수, 줄 번호, 상태 열거형). 형식에 맞지 않는 값이 들어오면 `schema_violation`으로 결과를 비우고 원문을 남깁니다.
+- 권한 문자열, 시각, 해시, 소유자 이름처럼 형태가 정해진 값도 출력의 문자열 그대로이면 `external`입니다.
+- 외부 문자열이 필요 없는 작업은 `select`로 `fixed` 필드만 고르십시오.
+- `stdout.raw`, `stderr`, 근거 조회가 돌려주는 원문 구간은 분류와 관계없이 전부 외부 문자열입니다.
+- `basis: "table"`은 파서의 분류표로 분류했다는 뜻이고, 이때 `fixed` 필드는 형식 검사를 거칩니다. 분류표가 있는 파서는 시험·진단 파서와 `ls`, `find`, `ps`, `git status`, `git log`, `git branch`, `grep`, `stat`, `wc`, `df`, `du`, `cat`, `head`, `tail`, `which`, `pwd`입니다.
+- `basis: "value_types"`는 분류표가 없어 값의 형으로 분류했다는 뜻입니다. 문자열은 모두 `external`, 수와 불리언은 `fixed`입니다. 파서가 정한 열거형 문자열도 `external`로 나옵니다. 키가 24개를 넘는 객체는 키도 출력에서 온 것으로 보고 `vars.*`처럼 한 경로로 모읍니다.
+- 이 표시는 외부 문자열을 구분할 단서를 줍니다. 프롬프트 주입을 막는 장치는 아닙니다.
+
+### 실행 영수증
+
+영수증은 "이 명령이 이 작업 공간 상태에서 이 결과로 끝났다"는 기록입니다. 에이전트가 "시험 통과"라고 보고했을 때 Stop 훅, CI, 리뷰 봇이 그 말을 확인하는 데 씁니다.
+
+호스트 설정(`~/.parism/prism.config.json`)에서 켭니다.
+
+```json
+{
+  "receipts": { "enabled": true },
+  "verify":   { "commands": [["npx", "vitest", "run"], ["npx", "tsc", "--noEmit"]] }
+}
+```
+
+켜면 `run`이 끝날 때마다 `~/.parism/receipts/receipts.jsonl`에 한 줄을 남깁니다. `contract_version: "next"` 응답에는 같은 내용이 `receipt`로 실립니다.
+
+```json
+{
+  "id": "rcp_GyOCRKg35s47", "cmd": "npx", "args": ["vitest", "run", "--reporter=json"], "args_requested": ["vitest", "run"],
+  "cwd": "/repo", "exit_code": 0, "started_at": "2026-11-11T09:12:03.000Z", "duration_ms": 48211,
+  "summary": { "kind": "test", "passed": 1794, "failed": 0, "skipped": 9, "files_failed": 0 },
+  "output_sha256": "…",
+  "workspace": { "root": "/repo", "git_head": "98e63021cfec", "state_digest": "…",
+                 "covers": ["tracked", "staged", "untracked_names", "untracked_content"] }
+}
+```
+
+`parism receipts check`는 완료 조건을 판정합니다. 명령을 실행하지 않습니다.
+
+```bash
+parism receipts check                                  # verify.commands 기준
+parism receipts check --require "npx vitest run"       # 명령을 직접 지정 (여러 번 가능)
+parism receipts check --json
+parism receipts list
+```
+
+명령마다 가장 최근 영수증으로 판정하고, 모두 `ok`일 때만 종료 코드 0입니다.
+
+| 판정 | 뜻 |
+|---|---|
+| `ok` | 통과했고 그 뒤로 작업 공간이 바뀌지 않았습니다 |
+| `missing` | 이 작업 공간에서 그 명령을 실행한 영수증이 없습니다 |
+| `failed` | 종료 코드가 0이 아니거나, 실패한 시험·실행하지 못한 시험 파일·오류가 있거나, 시간 초과·취소로 끝났습니다 |
+| `stale` | 실행 뒤에 작업 공간이 바뀌었습니다 |
+| `unverifiable` | git 저장소가 아니어서 작업 공간 상태를 비교할 수 없습니다 |
+| `bad_signature` | 서명 키가 있는데 서명이 맞지 않습니다 |
+
+판정할 명령이 하나도 없으면 통과가 아니라 종료 코드 2입니다.
+
+작업 공간 상태(`state_digest`)에는 HEAD, 변경 목록, HEAD 대비 변경 내용, 추적되지 않는 파일의 이름과 내용이 들어갑니다. `.gitignore`로 제외된 파일, 서브모듈 안의 변경, 저장소 밖의 변화는 들어가지 않습니다. 추적되지 않는 파일이 `untracked_max_files`(2,000개)나 `untracked_max_bytes`(64MiB)를 넘으면 내용 해시를 빼고 `covers`에서 `untracked_content`를 뺍니다.
+
+영수증이 말하지 않는 것은 다음과 같습니다.
+
+- 시험이 요구를 제대로 검사하는지는 말하지 않습니다.
+- 영수증 파일을 직접 고칠 수 있는 환경에서는 위조를 막지 못합니다. 기본 영수증은 실행 누락과 착오를 잡는 용도입니다.
+
+서명이 필요하면 `receipts.key_file`에 16바이트 이상의 키 파일 경로를 줍니다. 영수증에 HMAC-SHA256 서명(`sig`)이 붙고 `check`가 서명을 확인합니다. 키는 환경 변수로 받지 않고 자식 프로세스에 넘기지 않습니다. 키 파일이 `guard.allowed_paths` 안에 있으면 Parism 명령으로 읽을 수 있으므로 서명을 켜지 않고 경고합니다. 서명은 Parism을 거치지 않고는 키 파일을 읽을 수 없는 환경(샌드박스, 별도 계정)에서만 위조를 막습니다.
+
+Claude Code의 Stop 훅에 연결하는 방법은 [docs/mcp-clients/claude-code.md](docs/mcp-clients/claude-code.md)에 있습니다.
+
 ---
 
 ## 설정
@@ -517,7 +714,11 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
   },
   "telemetry": {
     "enabled": false
-  }
+  },
+  "tasks":    { "max_concurrency": 2, "timeout_ms": 600000 },
+  "results":  { "max_entries": 16, "ttl_ms": 60000 },
+  "receipts": { "enabled": false, "max_entries": 500, "max_age_days": 30 },
+  "verify":   { "commands": [] }
 }
 ```
 
@@ -532,6 +733,12 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 | `guard.secrets.output_patterns` | 생략하면 기본 패턴(GitHub, GitLab, AWS, Slack 토큰 등)을 씁니다. 끄려면 `[]` |
 | `parsers.strict_schemas` | `true`면 파싱 결과를 Zod 스키마로 검증합니다 |
 | `telemetry.enabled` | `true`면 응답에 단계별 소요 시간을 붙이고 `describe`에 명령별 통계를 보여 줍니다. 외부로 전송하지 않습니다 |
+| `tasks` | 태스크의 동시 실행 수와 최대 실행 시간. 프로젝트 설정은 줄일 수만 있습니다 |
+| `results` | 결과 보관함의 최대 개수와 보관 시간. 호스트 설정에서만 읽습니다 |
+| `receipts` | 실행 영수증. `enabled`, `max_entries`, `max_age_days`, `untracked_max_files`, `untracked_max_bytes`, `key_file`. 호스트 설정에서만 읽습니다 |
+| `verify.commands` | `parism receipts check`가 기준으로 삼는 명령 목록. 각 항목은 `[명령, 인자...]`입니다. 호스트 설정에서만 읽습니다 |
+
+호스트 설정은 전역 설정 파일과 환경 변수입니다. 프로젝트 설정(`<cwd>/prism.config.json`)의 `results`, `receipts`, `verify`는 `trust_project_config`와 관계없이 버리고 경고합니다. 저장소가 자기 완료 조건을 정하지 못하게 하기 위해서입니다.
 
 `node`, `npx`, `yarn`은 `allowed_commands`에 직접 넣어야 하고 build 프로필에서만 동작합니다. `npx`에는 `--no`가 자동으로 붙습니다.
 
@@ -780,6 +987,8 @@ node scripts/build-sandbox-guest.mjs   # 시험용 게스트 컴포넌트
 | `parism add <path>` | 파서 팩을 `~/.parism/parsers/`에 등록 |
 | `parism inspect <command> [args...]` | raw / parsed / compact 비교와 토큰 수 |
 | `parism eval [scenario]` | 호스트 동작을 세 층으로 판정 |
+| `parism receipts check` | 필요한 명령마다 통과한 최신 영수증이 있는지 판정. 없으면 종료 코드 1 |
+| `parism receipts list` | 최근 영수증 목록 |
 
 `parism inspect ls -l /path`처럼 인자를 나눠 주면 그대로 전달됩니다. `parism inspect "ls -l /path"`처럼 문자열 하나로 주면 공백으로 나누므로 따옴표와 연속 공백이 보존되지 않습니다.
 
@@ -806,6 +1015,8 @@ MCP로 `run`만 호출한다면 바꿀 것이 없습니다. 도구 이름은 그
 - Parism은 셸을 대체하지 않습니다. 기존 명령을 실행하고 그 출력을 구조로 바꿉니다.
 - 보관된 결과를 조회, 이어 읽기, 비교할 때 명령을 다시 실행하지 않습니다. 만료된 결과는 다시 실행해야 합니다.
 - 비교는 호출자가 준 두 결과 사이에서만 이뤄집니다. 주기적으로 감시하지 않습니다.
+- 영수증은 명령이 어떤 작업 공간 상태에서 어떤 결과로 끝났는지만 기록합니다. 시험이 요구를 제대로 검사하는지는 판단하지 않습니다.
+- 태스크는 서버 프로세스 안에서만 삽니다. 서버가 끝나면 실행 중인 태스크의 프로세스도 종료합니다.
 - 토큰 예산은 Parism이 만든 JSON 기준입니다. 모델이 실제로 세는 토큰 수를 보장하지 않습니다.
 
 ---

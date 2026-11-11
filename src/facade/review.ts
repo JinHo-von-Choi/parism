@@ -40,6 +40,8 @@ export interface ReviewInput {
   canonicalStdout: string; canonicalStderr: string;
   maskRanges: readonly MaskedRange[];
   wantRetain: boolean; projection: ReturnType<typeof parseProjection> | undefined;
+  /** 파싱 때 항목 수 상한을 적용하지 않았는지 */
+  sourceComplete: boolean;
 }
 
 // ── 보관 크기 ──────────────────────────────────────────────────────────────
@@ -54,7 +56,7 @@ export interface ReviewInput {
  * 순서도 의미가 있다 — 싼 것(문자열 길이)부터 재고, 비싼 것(직렬화)을 마지막에 본다.
  */
 function storedBytesOf(
-  input: { canonicalStdout: string; canonicalStderr: string; final: unknown },
+  input: { canonicalStdout: string; canonicalStderr: string; final: unknown; parsed: unknown },
   evidence: Record<string, FieldEvidence[]>,
   cap: number,
 ): number {
@@ -63,6 +65,12 @@ function storedBytesOf(
 
   total += Buffer.byteLength(JSON.stringify(input.final ?? null, null, 2), "utf8");
   if (total > cap) return cap + 1;
+
+  /** 프로젝션 전 결과를 따로 보관할 때는 그 크기도 센다. */
+  if (input.parsed !== input.final) {
+    total += Buffer.byteLength(JSON.stringify(input.parsed ?? null), "utf8");
+    if (total > cap) return cap + 1;
+  }
 
   return total + evidenceBytes(evidence, cap - total);
 }
@@ -103,7 +111,8 @@ export function buildEvidence(
     (input.projection.options.where !== undefined ||
      input.projection.options.sort_by !== undefined ||
      (input.projection.options.limit ?? 0) > 0 ||
-     input.projection.options.array !== undefined);
+     input.projection.options.array !== undefined ||
+     input.projection.options.aggregate !== undefined);
   if (reorders || Object.keys(input.rawEvidence).length === 0) return {};
 
   const unmaskedIndex = buildLineIndex(input.unmaskedStdout);
@@ -172,7 +181,8 @@ export function attachReview(
     (input.projection.options.where !== undefined ||
      input.projection.options.sort_by !== undefined ||
      (input.projection.options.limit ?? 0) > 0 ||
-     input.projection.options.array !== undefined);
+     input.projection.options.array !== undefined ||
+     input.projection.options.aggregate !== undefined);
   if (reorderRequested) {
     warnings.push("projection reordered or filtered rows: field evidence was dropped rather than guessed");
   }
@@ -219,6 +229,8 @@ export function attachReview(
     stdout:    input.canonicalStdout,
     stderr:    input.canonicalStderr,
     parsed:    input.final,
+    ...(input.parsed !== input.final && { source: input.parsed }),
+    sourceComplete: input.sourceComplete,
     evidence,
     review,
     /**

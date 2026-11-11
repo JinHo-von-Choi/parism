@@ -1,0 +1,32 @@
+{"Time":"2026-11-11T01:38:14.073110522+09:00","Action":"start","Package":"sample"}
+{"Time":"2026-11-11T01:38:14.07763177+09:00","Action":"run","Package":"sample","Test":"TestAdds"}
+{"Time":"2026-11-11T01:38:14.077665092+09:00","Action":"output","Package":"sample","Test":"TestAdds","Output":"=== RUN   TestAdds\n"}
+{"Time":"2026-11-11T01:38:14.077737669+09:00","Action":"output","Package":"sample","Test":"TestAdds","Output":"--- PASS: TestAdds (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.077748251+09:00","Action":"pass","Package":"sample","Test":"TestAdds","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.077761223+09:00","Action":"run","Package":"sample","Test":"TestFailsOnPurpose"}
+{"Time":"2026-11-11T01:38:14.077769586+09:00","Action":"output","Package":"sample","Test":"TestFailsOnPurpose","Output":"=== RUN   TestFailsOnPurpose\n"}
+{"Time":"2026-11-11T01:38:14.077788995+09:00","Action":"output","Package":"sample","Test":"TestFailsOnPurpose","Output":"noise from test\n"}
+{"Time":"2026-11-11T01:38:14.077797515+09:00","Action":"output","Package":"sample","Test":"TestFailsOnPurpose","Output":"    sample_test.go:17: expected 3, got 2\n"}
+{"Time":"2026-11-11T01:38:14.077809258+09:00","Action":"output","Package":"sample","Test":"TestFailsOnPurpose","Output":"--- FAIL: TestFailsOnPurpose (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.077841519+09:00","Action":"fail","Package":"sample","Test":"TestFailsOnPurpose","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.077851157+09:00","Action":"run","Package":"sample","Test":"TestSkipped"}
+{"Time":"2026-11-11T01:38:14.077858555+09:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"=== RUN   TestSkipped\n"}
+{"Time":"2026-11-11T01:38:14.077866605+09:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"    sample_test.go:21: not now\n"}
+{"Time":"2026-11-11T01:38:14.077876436+09:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"--- SKIP: TestSkipped (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.077885123+09:00","Action":"skip","Package":"sample","Test":"TestSkipped","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.077893432+09:00","Action":"run","Package":"sample","Test":"TestNested"}
+{"Time":"2026-11-11T01:38:14.077900557+09:00","Action":"output","Package":"sample","Test":"TestNested","Output":"=== RUN   TestNested\n"}
+{"Time":"2026-11-11T01:38:14.077915124+09:00","Action":"run","Package":"sample","Test":"TestNested/inner_fails"}
+{"Time":"2026-11-11T01:38:14.077926824+09:00","Action":"output","Package":"sample","Test":"TestNested/inner_fails","Output":"=== RUN   TestNested/inner_fails\n"}
+{"Time":"2026-11-11T01:38:14.077935007+09:00","Action":"output","Package":"sample","Test":"TestNested/inner_fails","Output":"    sample_test.go:24: boom 42\n"}
+{"Time":"2026-11-11T01:38:14.077944738+09:00","Action":"output","Package":"sample","Test":"TestNested/inner_fails","Output":"--- FAIL: TestNested/inner_fails (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.077953792+09:00","Action":"fail","Package":"sample","Test":"TestNested/inner_fails","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.077962562+09:00","Action":"run","Package":"sample","Test":"TestNested/inner_ok"}
+{"Time":"2026-11-11T01:38:14.077969964+09:00","Action":"output","Package":"sample","Test":"TestNested/inner_ok","Output":"=== RUN   TestNested/inner_ok\n"}
+{"Time":"2026-11-11T01:38:14.077979795+09:00","Action":"output","Package":"sample","Test":"TestNested/inner_ok","Output":"--- PASS: TestNested/inner_ok (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.077988702+09:00","Action":"pass","Package":"sample","Test":"TestNested/inner_ok","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.077997886+09:00","Action":"output","Package":"sample","Test":"TestNested","Output":"--- FAIL: TestNested (0.00s)\n"}
+{"Time":"2026-11-11T01:38:14.07800653+09:00","Action":"fail","Package":"sample","Test":"TestNested","Elapsed":0}
+{"Time":"2026-11-11T01:38:14.078019908+09:00","Action":"output","Package":"sample","Output":"FAIL\n"}
+{"Time":"2026-11-11T01:38:14.078386311+09:00","Action":"output","Package":"sample","Output":"FAIL\tsample\t0.005s\n"}
+{"Time":"2026-11-11T01:38:14.078403989+09:00","Action":"fail","Package":"sample","Elapsed":0.005}

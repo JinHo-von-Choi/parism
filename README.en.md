@@ -135,7 +135,7 @@ run(cmd, args)                execute and get structured output
 
 ## Tools
 
-Seven tools are exposed once connected.
+Nine tools are exposed once connected.
 
 | Tool | Runs a command | Purpose |
 |---|---|---|
@@ -146,8 +146,10 @@ Seven tools are exposed once connected.
 | `explain_result` | No | Show where a value in a retained result came from in the raw output |
 | `fetch_result` | No | Read the next page of a result cut by a budget |
 | `compare_results` | No | Diff two retained results |
+| `query_result` | No | Apply different conditions to a retained result |
+| `task` | No | Read or cancel a command started with `run(mode: "task")` |
 
-`explain_result`, `fetch_result`, and `compare_results` only read retained results and never re-run a command. Retained results live in server process memory only, limited to 2 MiB per result, 32 MiB total, 16 results, and 60 seconds. Unknown ids, expired results, evicted results, and results never retained are rejected with distinct reasons.
+`explain_result`, `fetch_result`, `compare_results`, and `query_result` only read retained results and never re-run a command. Retained results live in server process memory only, limited to 2 MiB per result, 32 MiB total, 16 results, and 60 seconds. The count and the time can be changed with the `results` setting. Unknown ids, expired results, evicted results, and results never retained are rejected with distinct reasons.
 
 ### run
 
@@ -291,7 +293,7 @@ The guard is a process-level defense, not a kernel sandbox. See [SECURITY.md](SE
 
 ## Supported commands
 
-43 commands have built-in parsers. Check each command's result fields with `describe({ cmd: "…" })`.
+60 commands have built-in parsers. Check each command's result fields with `describe({ cmd: "…" })`.
 
 | Category | Commands | Allowed by default |
 |---|---|---|
@@ -436,6 +438,127 @@ Key fields of `review`, added when `contract_version: "next"`:
 - Row identity: git uses the repository's real path plus the file path; Kubernetes uses context, namespace, kind, and `metadata.uid`. Table output without a uid is never treated as the same resource. `ps` comparisons are withheld because PIDs get reused.
 - A duplicated identity stops the comparison with `duplicate_identity`.
 - argv is compared by hash and displayed only in masked form. Environment variables are recorded by name only.
+
+### Tests, builds and linters
+
+The options, tools and fields in this and the next four sections work only with `contract_version: "next"`. With it, the `run` response JSON comes on one line.
+
+Results from test runners, compilers and linters list every failure and diagnostic and only count what passed.
+
+```
+ run("npx", { args: ["vitest", "run"], contract_version: "next", machine_format: true })
+```
+
+```json
+{
+  "kind": "test", "tool": "vitest",
+  "passed": 1788, "failed": 2, "skipped": 9, "todo": 0, "total": 1799, "files_failed": 0, "success": false,
+  "failures": [
+    { "id": "tests/engine/guard.test.ts > guard rejects glob", "file": "tests/engine/guard.test.ts",
+      "name": "guard rejects glob", "line": 214, "column": 31, "message": "AssertionError: expected false to be true" }
+  ]
+}
+```
+
+Diagnostic tools return `{ kind: "diagnostics", errors, warnings, infos, files, by_code[], diagnostics[] }`, where each diagnostic is `{ file, line, column, severity, code, message }`.
+
+| Command | Format read | Arguments `machine_format` adds |
+|---|---|---|
+| `vitest` | json reporter | `--reporter=json`; the report is received in a temporary file, read, and removed |
+| `jest` | `--json` | `--json` |
+| `tsc` | `--pretty false` | `--pretty false` |
+| `eslint` | `--format json` | `--format json` |
+| `cargo test` | default libtest output | none |
+| `cargo build` `cargo check` | `--message-format=json` | `--message-format=json` |
+| `pytest` | JUnit XML | none; the report is received in a temporary file (`--junitxml`), read, and removed |
+| `go test` | `-json` | `-json` |
+| `ruff check` | `--output-format=json` | `--output-format=json` |
+| `mypy` | `--output=json` | `--output=json` |
+
+- Run in another format without `machine_format` and you get `unsupported_format` with `hint.args` to rerun with.
+- If the failure count the runner reports differs from the failures parsed, no result is produced and the raw output is returned.
+- If the runner failed and printed nothing to read, no result is produced, so a runner that never started is not read as "0 errors".
+- Output of these commands is read in full regardless of `max_output_bytes`. Failures are never cut by `max_items`; the diagnostics list is, with counts covering everything and `diagnostics_omitted` saying how many were left out.
+- `vitest`, `jest`, `tsc`, `eslint`, `pytest`, `go`, `ruff`, `mypy` must be added to `allowed_commands` (the first four also run through `npx`, which needs the build profile). `cargo test/build/check` need the build profile.
+- `pytest` has no machine-readable format on stdout, so it returns a parsed result only with `machine_format: true`.
+- With `evidence: "fields"` and `retain: true`, `explain_result` shows where diagnostic fields of `tsc`, `mypy`, `cargo build` and failed test names of `cargo test`, `go test` came from in the raw output. Runners that print one JSON document or write a report file produce no evidence.
+- Measured on 11 real runner outputs (`node experiments/devloop-tokens.mjs`): 8,239 raw tokens became 2,331 (28%) with all 31 failures and diagnostics kept. The samples are tiny projects; already line-per-diagnostic formats such as `tsc` grow when structured (78 → 179 tokens).
+- `npm test` and `npm run <script>` are not parsed. Call the runner directly.
+
+### Long-running tasks
+
+Commands longer than `guard.timeout_ms` (10 seconds by default) run as tasks.
+
+```
+ run(cmd, { contract_version: "next", mode: "task" }) ─▶ { task: { task_id, state: "running" } }
+ task({ task_id })                    ─▶ state, elapsed_ms, stdout_bytes, progress
+ task({ task_id, action: "cancel" })  ─▶ stops only that task's processes
+```
+
+- A task runs up to `tasks.timeout_ms` (10 minutes) and at most `tasks.max_concurrency` (2) run at once. When all slots are taken the start is refused with `task_slots_full` instead of queued. Task slots are separate from the concurrency of ordinary `run` calls.
+- A `cargo test` task reports `progress: { passed, failed, skipped, failed_names }` while running. Other runners report elapsed time and output bytes only.
+- A finished task's result is kept for 10 minutes, 16 at most. It is never re-run.
+
+### Querying a retained result
+
+`query_result` applies `select`, `where`, `sort_by`, `limit` and `aggregate` again to a result kept with `run(contract_version: "next", retain: true)`. It works on the whole parsed result, independent of the projection of the first run, and never re-runs the command. `source_complete: false` means the first run had no projection argument and may have been cut at `max_items`. `row_pointers` gives each returned row's position in the retained result (`/processes/41`); append a field name and pass it to `explain_result`.
+
+### Aggregation
+
+`aggregate: { group_by?, sum?, distinct? }` groups the rows that pass `where` and returns one row per group with `count`, `sum_<field>` and `distinct_<field>`. Without `group_by` everything is one group. The order is `where` → `aggregate` → `sort_by` → `limit` → `select`, and `_summary.groups` is the number of groups. It works in `run` (with `contract_version: "next"`) and in `query_result`.
+
+### Field origin
+
+Responses that carry a parsed result also carry `_origin`.
+
+```json
+{ "_origin": { "external": ["failures[].id", "failures[].file", "failures[].name", "failures[].message"],
+               "fixed": ["kind", "tool", "passed", "failed", "failures[].line"], "basis": "table" } }
+```
+
+- `external` fields hold text taken verbatim from command output (file names, paths, test names, messages). Treat it as data, not instructions.
+- `fixed` fields are computed by Parism or limited to a known value set. A value outside that form empties the result with `schema_violation`.
+- `stdout.raw`, `stderr` and quoted evidence are always external text.
+- Strings copied from the output are external even when their form is fixed: permission strings, timestamps, hashes, owner names.
+- Origin tables exist for the test and diagnostic parsers and for `ls`, `find`, `ps`, `git status`, `git log`, `git branch`, `grep`, `stat`, `wc`, `df`, `du`, `cat`, `head`, `tail`, `which`, `pwd`. These report `basis: "table"` and their fixed values are checked. Other parsers report `basis: "value_types"`: every string is external and numbers and booleans are fixed. This marking helps tell external text apart; it does not block prompt injection.
+
+### Run receipts
+
+A receipt records that a command ended with a given result in a given workspace state. A Stop hook, CI job or review bot uses it to check an agent's "tests pass" claim.
+
+Enable it in the host config (`~/.parism/prism.config.json`):
+
+```json
+{
+  "receipts": { "enabled": true },
+  "verify":   { "commands": [["npx", "vitest", "run"], ["npx", "tsc", "--noEmit"]] }
+}
+```
+
+Every `run` then appends a line to `~/.parism/receipts/receipts.jsonl` with the command, exit code, test or diagnostic summary and the git workspace state at the end of the run.
+
+```bash
+parism receipts check                              # uses verify.commands
+parism receipts check --require "npx vitest run"   # repeatable
+parism receipts list
+```
+
+`check` never runs a command. It takes the latest receipt for each command and exits 0 only when every one is `ok`.
+
+| Verdict | Meaning |
+|---|---|
+| `ok` | Passed, and the workspace has not changed since |
+| `missing` | No receipt for that command in this workspace |
+| `failed` | Non-zero exit, failed tests, test files that did not run, errors, timeout or cancellation |
+| `stale` | The workspace changed after the run |
+| `unverifiable` | Not a git repository, so the workspace state cannot be compared |
+| `bad_signature` | A signing key is configured and the signature does not match |
+
+The workspace state covers HEAD, the change list, the diff against HEAD and the names and contents of untracked files. Files excluded by `.gitignore`, changes inside submodules and anything outside the repository are not covered.
+
+A receipt does not say whether the tests check the right thing, and it does not stop forgery where the receipt file can be edited directly. Set `receipts.key_file` to add an HMAC-SHA256 signature; the key is never read from the environment or passed to child processes, and a key file inside `guard.allowed_paths` is refused. Signing only prevents forgery where the key file cannot be read except through Parism.
+
+`results`, `receipts` and `verify` are read from the host config only; the same keys in a project config are dropped with a warning. A project config can only lower the two `tasks` limits.
 
 ---
 
@@ -661,6 +784,8 @@ Worker isolation contains faults; it is not a security sandbox. Workers have the
 | `parism add <path>` | Register a parser pack in `~/.parism/parsers/` |
 | `parism inspect <command> [args...]` | Compare raw / parsed / compact output with token counts |
 | `parism eval [scenario]` | Judge host behavior in three layers |
+| `parism receipts check` | Exit 0 only if each required command has a passing, fresh receipt |
+| `parism receipts list` | Show recent receipts |
 
 Arguments passed separately, as in `parism inspect ls -l /path`, are forwarded as is. A single string, as in `parism inspect "ls -l /path"`, is split on spaces, so quotes and repeated spaces are not preserved.
 

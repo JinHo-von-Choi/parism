@@ -167,3 +167,35 @@ describe.skipIf(process.platform === "win32")("프로세스 그룹 추적", () =
     expect(trackedProcessGroups().size).toBe(0);
   }, 10000);
 });
+
+describe("execute() 개별 취소", () => {
+  it("취소 신호를 받은 실행만 끝나고 다른 실행은 계속된다", async () => {
+    const controller = new AbortController();
+    const cancelled  = execute("sleep", ["5"], process.cwd(), [], 10000, 0, false, { signal: controller.signal });
+    const other      = execute("sleep", ["0.4"], process.cwd(), [], 10000, 0, false);
+
+    setTimeout(() => controller.abort(), 50);
+    const [first, second] = await Promise.all([cancelled, other]);
+
+    expect(first.ok).toBe(false);
+    expect(first.failure?.reason).toBe("cancelled");
+    expect(first.duration_ms).toBeLessThan(3000);
+    expect(second.ok).toBe(true);
+  });
+
+  it("시작 전에 이미 취소된 실행은 프로세스를 띄우지 않는다", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await execute("sleep", ["5"], process.cwd(), [], 10000, 0, false, { signal: controller.signal });
+
+    expect(result.failure?.reason).toBe("cancelled");
+    expect(result.duration_ms).toBeLessThan(1000);
+  });
+
+  it("출력을 받을 때마다 지금까지의 바이트 수를 알린다", async () => {
+    const seen: number[] = [];
+    await execute("echo", ["hello"], process.cwd(), [], 5000, 0, false, { onProgress: b => seen.push(b.stdout) });
+
+    expect(seen.at(-1)).toBe(6);
+  });
+});

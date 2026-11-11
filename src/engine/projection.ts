@@ -14,6 +14,11 @@
  *              값이 없는 행은 방향과 관계없이 뒤에 둔다. 값이 있는 행의 형은 수, 문자열, 불리언 가운데 하나로 같아야 한다.
  *   limit   -- 남길 행 수(0 이상 정수). 0이면 행 없이 _summary만 남는다.
  *   array   -- 대상 배열의 키. 없으면 파서 계약의 rowsKey, 그것도 없으면 결과의 유일한 배열이다.
+ *   aggregate -- { group_by?, sum?, distinct? }. where를 통과한 행을 group_by 필드 값이 같은 것끼리 묶어
+ *              묶음마다 행 하나로 바꾼다. 묶음 행은 group_by 필드, count(행 수), sum_<필드>(수 필드의 합),
+ *              distinct_<필드>(서로 다른 값의 수)를 가진다. group_by가 없으면 전체가 한 묶음이다.
+ *              묶음은 처음 나온 순서대로 둔다. sort_by, limit, select는 묶음 행에 적용한다.
+ *              sum의 필드 값은 수여야 하고, 값이 없는 행은 합에 넣지 않는다.
  *
  * 작성자: 최진호
  * 작성일: 2026-10-03
@@ -39,6 +44,11 @@ export const PROJECTION_SHAPE = {
   sort_by: SORT_SCHEMA.optional(),
   limit:   z.number().int().min(0).optional(),
   array:   FIELD_NAME.optional(),
+  aggregate: z.object({
+    group_by: z.array(FIELD_NAME).min(1).max(8).optional(),
+    sum:      z.array(FIELD_NAME).min(1).max(8).optional(),
+    distinct: z.array(FIELD_NAME).min(1).max(8).optional(),
+  }).strict().optional(),
 };
 
 export const PROJECTION_SCHEMA = z.object(PROJECTION_SHAPE).strict();
@@ -65,12 +75,20 @@ export interface ProjectionSummary {
   truncated?:        true;
   /** 결과 객체 안에서 대상이 아닌 배열 가운데 guard.max_items 상한으로 자른 배열의 키 */
   truncated_arrays?: string[];
+  /** aggregate를 적용했을 때만 있다. 묶음 수다. shown은 그 가운데 남긴 묶음 행 수다. */
+  groups?:           number;
 }
 
 export type ProjectionErrorReason = "invalid_projection" | "array_not_found" | "array_ambiguous" | "unknown_field" | "type_mismatch";
 
 export type ProjectionOutcome =
-  | { ok: true;  parsed: unknown; rows: unknown[]; summary: ProjectionSummary }
+  | {
+      ok: true; parsed: unknown; rows: unknown[]; summary: ProjectionSummary;
+      /** 대상 배열의 키. 결과가 최상위 배열이면 null이다. */
+      key: string | null;
+      /** 남긴 행마다 투영 전 대상 배열에서의 위치. 집계한 결과에는 없다(묶음 행은 원래 행 하나에 대응하지 않는다). */
+      indices?: number[];
+    }
   | { ok: false; reason: ProjectionErrorReason; message: string };
 
 /** 대상 배열을 고르고 필드 이름을 검사하는 데 쓰는 파서 계약의 출력 모양 */
@@ -82,7 +100,7 @@ export interface ProjectionShape {
 /** 투영 인자가 하나라도 있는지 */
 export function hasProjection(options: Partial<ProjectionOptions>): boolean {
   return options.select !== undefined || options.where !== undefined || options.sort_by !== undefined
-    || options.limit !== undefined || options.array !== undefined;
+    || options.limit !== undefined || options.array !== undefined || options.aggregate !== undefined;
 }
 
 /**
@@ -92,7 +110,7 @@ export function parseProjection(input: unknown): { ok: true; options: Projection
   const parsed = PROJECTION_SCHEMA.safeParse(input);
   if (parsed.success) return { ok: true, options: parsed.data };
   const issues = parsed.error.issues.map(i => `${i.path.length > 0 ? i.path.join(".") + ": " : ""}${i.message}`).join("; ");
-  return { ok: false, reason: "invalid_projection", message: `Invalid select/where/sort_by/limit/array: ${issues}` };
+  return { ok: false, reason: "invalid_projection", message: `Invalid select/where/sort_by/limit/array/aggregate: ${issues}` };
 }
 
 class ProjectionError extends Error {
@@ -225,6 +243,62 @@ function selectFields(row: Row, fields: readonly string[]): Row {
   return out;
 }
 
+type AggregateSpec = NonNullable<ProjectionOptions["aggregate"]>;
+
+/** 묶음 키로 쓸 수 있는 값인지. 문자열, 유한한 수, 불리언, 값 없음(null)만 받는다. */
+function groupValue(row: Row, field: string): string | number | boolean | null {
+  const value = fieldOf(row, field);
+  if (value === undefined) return null;
+  if (typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) return value;
+  throw new ProjectionError("type_mismatch", `Field '${field}' has a ${typeName(value)} value; group_by needs a string, number or boolean`);
+}
+
+/**
+ * 행을 group_by 값이 같은 것끼리 묶어 묶음마다 행 하나를 만든다. 묶음은 처음 나온 순서다.
+ * 시간 복잡도는 행 수에 선형이다.
+ */
+function aggregateRows(rows: Row[], spec: AggregateSpec): Row[] {
+  const groupBy  = spec.group_by ?? [];
+  const sums     = spec.sum ?? [];
+  const distinct = spec.distinct ?? [];
+  const groups   = new Map<string, { keys: (string | number | boolean | null)[]; count: number; sums: number[]; seen: Set<string>[] }>();
+
+  for (const row of rows) {
+    const keys = groupBy.map(f => groupValue(row, f));
+    const id   = JSON.stringify(keys);
+    let   g    = groups.get(id);
+    if (!g) {
+      g = { keys, count: 0, sums: sums.map(() => 0), seen: distinct.map(() => new Set<string>()) };
+      groups.set(id, g);
+    }
+    g.count++;
+    sums.forEach((field, i) => {
+      const value = fieldOf(row, field);
+      if (value === undefined) return;
+      if (typeof value !== "number" || !Number.isFinite(value)) throw mismatch(field, "sum", value);
+      g.sums[i]! += value;
+    });
+    distinct.forEach((field, i) => {
+      const value = fieldOf(row, field);
+      if (value !== undefined) g.seen[i]!.add(JSON.stringify(value));
+    });
+  }
+
+  return [...groups.values()].map(g => {
+    const out = Object.create(null) as Row;
+    groupBy.forEach((field, i) => { out[field] = g.keys[i]; });
+    out.count = g.count;
+    sums.forEach((field, i) => { out[`sum_${field}`] = g.sums[i]; });
+    distinct.forEach((field, i) => { out[`distinct_${field}`] = g.seen[i]!.size; });
+    return out;
+  });
+}
+
+/** 묶음 행이 가지는 필드 이름 */
+function aggregateFields(spec: AggregateSpec): string[] {
+  return [...(spec.group_by ?? []), "count", ...(spec.sum ?? []).map(f => `sum_${f}`), ...(spec.distinct ?? []).map(f => `distinct_${f}`)];
+}
+
 /**
  * 결과 객체를 만든다. 대상 배열은 투영한 행으로 바꾸고, 대상이 아닌 최상위 배열은 cap을 넘으면 cap까지 자른다.
  * 프로토타입 없는 객체에 키를 옮기므로 __proto__ 같은 키도 일반 속성이다. 자른 배열의 키를 돌려준다.
@@ -260,26 +334,50 @@ export function applyProjection(
   try {
     const { key, rows } = pickTarget(parsed, options.array, shape?.rowsKey);
     const rowFields     = key !== null && key === shape?.rowsKey ? shape.rowFields : undefined;
-    const referenced    = [...(options.select ?? []), ...(options.where ?? []).map(c => c.field), ...(options.sort_by ? [options.sort_by.field] : [])];
-    checkFields(rows, referenced, key, rowFields);
+    const aggregate     = options.aggregate;
+    /** 묶기 전의 행을 가리키는 필드와 묶은 뒤의 행을 가리키는 필드를 따로 검사한다. */
+    const afterShape    = [...(options.select ?? []), ...(options.sort_by ? [options.sort_by.field] : [])];
+    const beforeShape   = [
+      ...(options.where ?? []).map(c => c.field),
+      ...(aggregate ? [...(aggregate.group_by ?? []), ...(aggregate.sum ?? []), ...(aggregate.distinct ?? [])] : afterShape),
+    ];
+    checkFields(rows, beforeShape, key, rowFields);
+
+    /** 남긴 행이 원래 어느 위치의 행인지 따라가기 위해 행 객체와 위치를 짝지어 둔다. */
+    const position = new Map<unknown, number>();
+    rows.forEach((row, index) => { if (isRow(row)) position.set(row, index); });
 
     let out = options.where ? (rows as Row[]).filter(r => options.where!.every(c => matches(r, c))) : rows;
     const matched = out.length;
+    let   groups: number | undefined;
+    if (aggregate) {
+      if (rows.some(r => !isRow(r))) throw new ProjectionError("unknown_field", "Rows are not objects and cannot be aggregated");
+      const known   = aggregateFields(aggregate);
+      const unknown = afterShape.filter(f => !known.includes(f));
+      if (unknown.length > 0) {
+        throw new ProjectionError("unknown_field", `Unknown field(s) ${unknown.map(f => `'${f}'`).join(", ")} after aggregate; fields: ${known.join(", ")}`);
+      }
+      out    = aggregateRows(out as Row[], aggregate);
+      groups = out.length;
+    }
+    const beforeCut = out.length;
     if (options.sort_by) out = sortRows(out as Row[], options.sort_by);
 
     const cap   = maxItems > 0 ? maxItems : Infinity;
     const limit = Math.min(options.limit ?? Infinity, cap);
     if (out.length > limit) out = out.slice(0, limit);
+    const kept    = aggregate ? undefined : out.map(row => position.get(row));
+    const indices = kept !== undefined && kept.every((i): i is number => i !== undefined) ? kept : undefined;
     if (options.select) out = (out as Row[]).map(r => selectFields(r, options.select!));
 
-    const summary: ProjectionSummary = { total: rows.length, matched, shown: out.length };
-    if (matched > cap && (options.limit === undefined || options.limit > cap)) summary.truncated = true;
-    if (key === null) return { ok: true, parsed: out, rows: out, summary };
+    const summary: ProjectionSummary = { total: rows.length, matched, shown: out.length, ...(groups !== undefined && { groups }) };
+    if (beforeCut > cap && (options.limit === undefined || options.limit > cap)) summary.truncated = true;
+    if (key === null) return { ok: true, parsed: out, rows: out, summary, key, ...(indices && { indices }) };
 
     const { result, cut } = buildResult(parsed as Row, key, out, cap);
     if (cut.length > 0) summary.truncated_arrays = cut;
     result._summary = summary;
-    return { ok: true, parsed: result, rows: out, summary };
+    return { ok: true, parsed: result, rows: out, summary, key, ...(indices && { indices }) };
   } catch (err) {
     if (err instanceof ProjectionError) return { ok: false, reason: err.reason, message: err.message };
     throw err;

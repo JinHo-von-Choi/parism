@@ -32,8 +32,8 @@ function resolveRealPath(target: string): string {
  * 배너 뒤에는 빈 줄 하나를 둔다. 그래야 배너와 JSON 의 경계가 눈에 보인다.
  * 배너는 `[cwd] ` 로 시작하는 한 줄이며, JSON 파싱 전에 이 줄과 빈 줄을 빼야 한다.
  */
-function withCwdBanner(cwd: string, payload: unknown): string {
-  return `[cwd] ${resolveRealPath(cwd)}\n\n${JSON.stringify(payload, null, 2)}`;
+function withCwdBanner(cwd: string, payload: unknown, compact = false): string {
+  return `[cwd] ${resolveRealPath(cwd)}\n\n${compact ? JSON.stringify(payload) : JSON.stringify(payload, null, 2)}`;
 }
 
 const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
@@ -55,6 +55,7 @@ Tools:
 - dry_run: Check if a command would pass the guard WITHOUT executing it.
 - run: Execute command, get structured JSON. format: json|compact|json-no-raw. Optional select/where/sort_by/limit filter the parsed row array on the server; the result then carries _summary {total, matched, shown} and omits stdout.raw.
 - run_paged: Paginated stdout for large output. parsed is always null.
+- query_result / task: see describe. They work on results and tasks created with contract_version "next".
 
 Usage:
 1. Call describe first to understand what commands and parsers are available.
@@ -67,6 +68,8 @@ Usage:
 8. run and run_paged results start with a '[cwd] <absolute path>' line, then a blank line, then the JSON. Strip those two lines before JSON.parse. The cwd is where the command actually ran.
 9. When a command is not installed, failure.reason = 'spawn_failed' and failure.availability says so: status is 'missing' or 'not_executable', install.command is the exact install command to run, and alternatives lists other commands that do the same job. Follow install.command or an alternative instead of retrying the same command.
 10. describe without cmd returns command_availability: the install status of every allowed command. Check it before running something that may not be installed.
+11. Test runners, compilers and linters (vitest, jest, tsc, eslint, also through npx): run with contract_version "next" and machine_format true. The result lists every failure or diagnostic and only counts what passed. For commands longer than the timeout add mode "task", then poll task(action "status").
+12. describe().next_contract explains the options and fields that exist only with contract_version "next": machine_format, mode, aggregate, query_result, _origin, receipt.
 
 Notes:
 - When config.telemetry.enabled is true, responses include a telemetry field with per-stage timing (guard_ms, exec_ms, parse_ms, redact_ms, total_ms, raw_bytes).
@@ -159,12 +162,69 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
                    .describe("Keep the result in this session so explain_result can revisit it. Held in memory with a TTL; not written to disk, and never re-executed automatically."),
       budget:     BUDGET_SHAPE.optional()
                    .describe("Token budget for the response. Shrinks what is returned to fit; does NOT reduce command time or capture. Returns a budget report and an omission list saying which stage dropped what."),
+      aggregate:  PROJECTION_SHAPE.aggregate
+                   .describe("contract_version 'next' only. {group_by?, sum?, distinct?}: group the rows that pass where and return one row per group with count, sum_<field>, distinct_<field>. sort_by, limit and select then apply to the group rows."),
+      machine_format: z.boolean().default(false)
+                   .describe("contract_version 'next' only. For test runners, compilers and linters, add the tool's machine-readable output flags before running. The response args are the arguments actually run."),
+      mode:       z.enum(["wait", "task"]).default("wait")
+                   .describe("contract_version 'next' only. 'task' starts the command, returns a task_id at once and keeps it running under the task time limit; read it with the task tool."),
     },
-    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget }) => {
-      const result = await engine.run(cmd, { args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, ...(budget && { budget }) });
-      return {
-        content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result) }],
+    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget, machine_format, mode, aggregate }) => {
+      const opts = {
+        args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain,
+        ...(aggregate && { aggregate }),
+        ...(budget && { budget }), ...(machine_format && { machine_format }),
       };
+      const next = contract_version === "next";
+      if (mode === "task") {
+        const started = engine.startTask(cmd, opts);
+        const text    = started.started
+          ? withCwdBanner(started.task.cwd, { task: started.task }, true)
+          : withCwdBanner(started.envelope.cwd, started.envelope, next);
+        return { content: [{ type: "text" as const, text }] };
+      }
+      const result = await engine.run(cmd, opts);
+      return {
+        content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result, next) }],
+      };
+    },
+  );
+
+  server.tool(
+    "task",
+    "Read or cancel a task started by run(mode='task'). " +
+    "status returns state (running, completed, cancelled), elapsed time and output bytes so far; once finished it carries the full run result. " +
+    "cancel stops only that task's processes. A finished task's result is kept for a limited time and is never re-run.",
+    {
+      task_id: z.string().describe("task_id from run(mode='task')"),
+      action:  z.enum(["status", "cancel"]).default("status").describe("'status' reads the task, 'cancel' stops it"),
+    },
+    async ({ task_id, action }) => {
+      const lookup = action === "cancel" ? engine.taskCancel(task_id) : engine.taskStatus(task_id);
+      return { content: [{ type: "text" as const, text: JSON.stringify(lookup.found ? { ok: true, task: lookup.task } : { ok: false, reason: lookup.reason, message: lookup.message }) }] };
+    },
+  );
+
+  server.tool(
+    "query_result",
+    "Filter, sort, limit or pick fields of a RETAINED result again WITHOUT re-running the command. " +
+    "Works on the result as parsed before any select/where/sort_by/limit of the original run. " +
+    "Use the result_id from run(contract_version='next', retain=true). An expired or unknown id returns an error and is never re-executed.",
+    {
+      result_id: z.string().describe("Result id from run(review.result_id)"),
+      select:    PROJECTION_SHAPE.select.describe("Keep only these fields in each row."),
+      where:     PROJECTION_SHAPE.where.describe("Row conditions, all must hold. Same operators as run."),
+      sort_by:   PROJECTION_SHAPE.sort_by.describe("{field, order: asc|desc}."),
+      limit:     PROJECTION_SHAPE.limit.describe("Maximum rows to return. 0 returns only _summary."),
+      array:     PROJECTION_SHAPE.array.describe("Key of the array to query when the result has several."),
+      aggregate: PROJECTION_SHAPE.aggregate.describe("{group_by?, sum?, distinct?}: one row per group with count, sum_<field>, distinct_<field>."),
+    },
+    async ({ result_id, select, where, sort_by, limit, array, aggregate }) => {
+      const query: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries({ select, where, sort_by, limit, array, aggregate })) {
+        if (value !== undefined) query[key] = value;
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(engine.queryResult(result_id, query)) }] };
     },
   );
 

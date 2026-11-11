@@ -9,6 +9,7 @@
  */
 
 import type { ParserContract } from "./registry.js";
+import { cargoSubcommandContract } from "./devloop/index.js";
 import type { FlagArity }      from "./format.js";
 import { NUMBER_FLAG }         from "./format.js";
 import { supportsGrep }     from "./text/grep.js";
@@ -297,6 +298,10 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
         rowsKey: "crates", rowLine: /^(?:(?:│|\|)\s{3}|\s{4})*(?:(?:├|└)──\s|(?:\||`)--\s)?\S+ v\d/,
         rowFields: ["name", "version", "path", "source", "depth", "deduped", "proc_macro"],
       },
+      /** 시험과 빌드 진단. 형식 규칙은 devloop/index.ts에 있다. */
+      test:  cargoSubcommandContract("test"),
+      build: cargoSubcommandContract("build"),
+      check: cargoSubcommandContract("check"),
     },
   },
   git: {

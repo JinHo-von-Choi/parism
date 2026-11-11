@@ -24,6 +24,8 @@ import type { Continuation }                                   from "../engine/b
 import type { SourceSpan }                                     from "../engine/evidence.js";
 import type { UserContext }                                    from "../engine/compare/fingerprint.js";
 import type { FailureInfo, ResponseEnvelope, ReviewField }     from "../types/envelope.js";
+import type { ProjectionSummary }                              from "../engine/projection.js";
+import type { TaskSnapshot }                                   from "../engine/tasks.js";
 
 // ── 타입 ──────────────────────────────────────────────────────────────────
 
@@ -60,7 +62,38 @@ export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {
    * 지문의 일부로 비교에 쓰이지만 env 전체를 담지 않는다 — 환경 변수는 '이름'만 관찰 기록에 남긴다.
    */
   context?:      UserContext;
+  /**
+   * 시험 러너·컴파일러·린터를 기계용 출력 형식으로 실행하도록 인자를 실행 전에 덧붙인다.
+   * 응답의 args는 실제로 실행한 인자다. contract_version: "next"에서만 쓸 수 있다.
+   */
+  machine_format?: boolean;
 }
+
+/** query_result 의 결과. 보관된 결과에 다른 조건을 걸어 돌려준다. 명령을 다시 실행하지 않는다. */
+export type QueryResult =
+  | {
+      ok: true; result_id: string; age_ms: number; value: unknown; _summary?: ProjectionSummary;
+      /**
+       * 보관본이 처음 실행 때 항목 수 상한(max_items)에서 잘린 것일 수 있으면 false다.
+       * 처음 실행에 where, sort_by, limit, select 가운데 하나라도 주면 상한 없이 보관된다.
+       */
+      source_complete: boolean;
+      /**
+       * 돌려준 행마다 보관된 결과에서의 JSON Pointer. 뒤에 `/필드`를 붙여 explain_result에 주면 그 값의 원문 구간을 본다.
+       * 처음 실행에 프로젝션이 있었거나 집계한 결과에는 없다.
+       */
+      row_pointers?: string[];
+    }
+  | {
+      ok: false; result_id: string;
+      reason: "unknown_id" | "expired" | "evicted" | "not_retained" | "no_parsed_result" | string;
+      message: string;
+    };
+
+/** run(mode="task")의 결과. 시작했으면 태스크 상태를, 시작하지 못했으면 거절 봉투를 준다. */
+export type TaskStartResult =
+  | { started: true;  task: TaskSnapshot }
+  | { started: false; envelope: ResponseEnvelope };
 
 /** explain_result 의 결과. 재실행 없이 보관된 값만 돌려준다. */
 export type ExplainResult =

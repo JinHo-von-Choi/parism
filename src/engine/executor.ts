@@ -46,6 +46,20 @@ interface ProcessOutcome {
   error?:   NodeJS.ErrnoException;
   /** 스폰 실패의 errno 코드. 메시지 문자열에서 다시 꺼내지 않고 구조적으로 읽게 한다. */
   errorCode?: string;
+  /** 호출자가 취소 신호를 보내 종료시켰는지 */
+  cancelled?: boolean;
+}
+
+/**
+ * 실행 하나에 대한 제어. 모두 선택 항목이다.
+ * signal     -- 중단되면 이 실행의 프로세스 그룹만 종료한다. 다른 실행에는 신호를 보내지 않는다.
+ * onProgress -- 출력 조각을 받을 때마다 지금까지 모은 stdout, stderr 바이트 수를 알린다.
+ * onStdout   -- stdout 조각을 그대로 넘긴다. 진행 중 출력을 읽는 쪽이 쓴다.
+ */
+export interface ExecControl {
+  signal?:     AbortSignal;
+  onProgress?: (bytes: { stdout: number; stderr: number }) => void;
+  onStdout?:   (chunk: Buffer) => void;
 }
 
 /**
@@ -128,10 +142,17 @@ function runProcess(
   cwd:       string,
   env:       NodeJS.ProcessEnv,
   timeoutMs: number,
+  control:   ExecControl = {},
 ): Promise<ProcessOutcome> {
   const useGroup = process.platform !== "win32";
 
   return new Promise((resolve) => {
+    /** 시작 전에 이미 취소된 실행은 프로세스를 띄우지 않는다. */
+    if (control.signal?.aborted) {
+      resolve({ stdout: "", stderr: "", code: null, timedOut: false, overflow: false, cancelled: true });
+      return;
+    }
+
     let child: ChildProcess;
     try {
       child = spawn(cmd, args, { cwd, env, detached: useGroup, windowsHide: true });
@@ -149,9 +170,10 @@ function runProcess(
     const out:  Buffer[] = [];
     const err:  Buffer[] = [];
     const size  = { out: 0, err: 0 };
-    let timedOut = false;
-    let overflow = false;
-    let settled  = false;
+    let timedOut  = false;
+    let overflow  = false;
+    let cancelled = false;
+    let settled   = false;
     let killed   = false;
     let exited   = false;
     let exitCode: number | null = null;
@@ -163,12 +185,14 @@ function runProcess(
       if (timer) clearTimeout(timer);
       if (grace) clearTimeout(grace);
       if (pgid !== undefined) liveGroups.delete(pgid);
+      control.signal?.removeEventListener("abort", onAbort);
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
         code,
         timedOut,
         overflow,
+        ...(cancelled && { cancelled }),
         ...(error && { error }),
       });
     };
@@ -194,6 +218,14 @@ function runProcess(
       ? setTimeout(() => { timedOut = true; terminate(); }, timeoutMs)
       : undefined;
 
+    /** 취소는 이 실행의 자식과 그 프로세스 그룹에만 신호를 보낸다. */
+    function onAbort(): void {
+      if (settled || killed) return;
+      cancelled = true;
+      terminate();
+    }
+    control.signal?.addEventListener("abort", onAbort, { once: true });
+
     const collect = (chunks: Buffer[], key: "out" | "err") => (chunk: Buffer) => {
       if (overflow) return;
       const room = MAX_BUFFER_BYTES - size[key];
@@ -206,6 +238,8 @@ function runProcess(
       }
       chunks.push(chunk);
       size[key] += chunk.length;
+      if (key === "out") control.onStdout?.(chunk);
+      control.onProgress?.({ stdout: size.out, stderr: size.err });
     };
     child.stdout?.on("data", collect(out, "out"));
     child.stderr?.on("data", collect(err, "err"));
@@ -222,11 +256,14 @@ function runProcess(
 
 /**
  * 실행 결과를 failure 분류로 바꾼다. 성공이면 undefined.
- *   시간 초과 → timeout, 버퍼 상한 초과 → output_overflow,
+ *   취소 → cancelled, 시간 초과 → timeout, 버퍼 상한 초과 → output_overflow,
  *   ENOENT/EACCES(스폰 실패) → spawn_failed, 그 외 비정상 종료 → non_zero_exit
  */
 function classifyFailure(cmd: string, args: string[], r: ProcessOutcome, timeoutMs: number): FailureInfo | undefined {
   const cmdline = [cmd, ...args].join(" ");
+  if (r.cancelled) {
+    return { kind: "exec", reason: "cancelled", message: `Command was cancelled: ${cmdline}` };
+  }
   if (r.timedOut) {
     return { kind: "exec", reason: "timeout", message: `Command timed out after ${timeoutMs} ms: ${cmdline}` };
   }
@@ -264,11 +301,12 @@ export async function execute(
   timeoutMs:       number   = 10000,
   maxOutputBytes:  number   = 0,      // 0 = 무제한
   includeDiff:     boolean  = true,
+  control:         ExecControl = {},
 ): Promise<ResponseEnvelope> {
   const start   = Date.now();
   const before  = includeDiff ? await takeSnapshot(cwd) : null;
   const env     = { ...buildSanitizedEnv(secretPatterns), LC_ALL: "C", LANG: "C" };
-  const result  = await runProcess(cmd, args, cwd, env, timeoutMs);
+  const result  = await runProcess(cmd, args, cwd, env, timeoutMs, control);
   const after   = includeDiff ? await takeSnapshot(cwd) : null;
   const failure = classifyFailure(cmd, args, result, timeoutMs);
 

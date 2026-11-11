@@ -99,6 +99,17 @@ const CASES: Array<[string, string[], string[], string]> = [
 
 const POLICY_CONFIG: PrismConfig = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [], profile: "readonly" } };
 
+/**
+ * build 프로필에서만 실행되는 명령의 안내. 원래 명령이 build 프로필에서만 통과하므로
+ * 안내 인자도 build 프로필 정책으로 확인한다.
+ */
+const BUILD_CASES: Array<[string, string[], string[], string]> = [
+  ["cargo", ["build"], ["build", "--message-format=json"], "{\"reason\":\"build-finished\",\"success\":true}\n"],
+  ["cargo", ["check", "--all-targets"], ["check", "--all-targets", "--message-format=json"], "{\"reason\":\"build-finished\",\"success\":true}\n"],
+];
+
+const BUILD_CONFIG: PrismConfig = { ...DEFAULT_CONFIG, guard: { ...DEFAULT_CONFIG.guard, allowed_paths: [], profile: "build" } };
+
 describe("failure.hint 안내 인자", () => {
   it.each(CASES)("%s %j 는 %j 를 안내한다", (cmd, args, expected) => {
     const hint = hintFor(cmd, args);
@@ -116,10 +127,19 @@ describe("failure.hint 안내 인자", () => {
     expect(r.parsed).not.toBeNull();
   });
 
+  it.each(BUILD_CASES)("%s %j 는 %j 를 안내하고, 그 인자는 build 프로필 정책을 통과하며 다시 실행하면 파싱된다", (cmd, args, expected, raw) => {
+    expect(hintFor(cmd, args)?.args).toEqual(expected);
+    expect(() => checkGuard(cmd, expected, process.cwd(), BUILD_CONFIG)).not.toThrow();
+    expect(() => checkGuard(cmd, expected, process.cwd(), POLICY_CONFIG)).toThrow();
+    const r = reg.parseWithFallback(cmd, expected, raw, { maxItems: 0, format: "json" });
+    expect(r.parse_error).toBeUndefined();
+    expect(r.parsed).not.toBeNull();
+  });
+
   it("안내 함수가 있는 내장 계약은 모두 시험 사례가 있다", () => {
     const hinted = (c: ParserContract): boolean => c.hint !== undefined || Object.values(c.subcommands ?? {}).some(hinted);
     const withHints = Object.entries(BUILTIN_CONTRACTS).filter(([, c]) => hinted(c)).map(([cmd]) => cmd).sort();
-    const covered   = [...new Set(CASES.map(([cmd]) => cmd))].sort();
+    const covered   = [...new Set([...CASES, ...BUILD_CASES].map(([cmd]) => cmd))].sort();
     expect(covered).toEqual(withHints);
   });
 

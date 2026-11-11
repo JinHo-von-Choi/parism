@@ -108,6 +108,29 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
     },
   },
   telemetry:            { fields: { enabled: z.boolean() } },
+  tasks:                {
+    fields: {
+      max_concurrency: POSITIVE_LIMIT_SCHEMA,
+      timeout_ms:      LIMIT_SCHEMA,
+    },
+  },
+  receipts:             {
+    fields: {
+      enabled:             z.boolean(),
+      max_entries:         POSITIVE_LIMIT_SCHEMA,
+      max_age_days:        POSITIVE_LIMIT_SCHEMA,
+      untracked_max_files: LIMIT_SCHEMA,
+      untracked_max_bytes: LIMIT_SCHEMA,
+      key_file:            z.string().min(1),
+    },
+  },
+  verify:               { fields: { commands: z.array(z.array(z.string().min(1)).min(1)) } },
+  results:              {
+    fields: {
+      max_entries: POSITIVE_LIMIT_SCHEMA,
+      ttl_ms:      POSITIVE_LIMIT_SCHEMA,
+    },
+  },
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

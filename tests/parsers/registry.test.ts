@@ -293,7 +293,7 @@ describe("exportJsonSchema()", () => {
 });
 
 describe("createRegistry()", () => {
-  it("52개 내장 파서가 등록된 레지스트리를 반환한다", () => {
+  it("61개 내장 파서가 등록된 레지스트리를 반환한다", () => {
     const registry = createRegistry();
     const commands = [
       "ls", "find", "stat", "du", "df", "tree",
@@ -306,11 +306,12 @@ describe("createRegistry()", () => {
       "kubectl", "docker", "gh", "helm", "terraform",
       "apt", "brew",
       "npm", "pnpm", "yarn", "cargo",
+      "vitest", "jest", "tsc", "eslint", "npx", "pytest", "mypy", "go", "ruff",
       "git",
     ];
 
-    expect(commands).toHaveLength(52);
-    expect(registry.parsers.size).toBe(52);
+    expect(commands).toHaveLength(61);
+    expect(registry.parsers.size).toBe(61);
 
     for (const cmd of commands) {
       expect(registry.parsers.has(cmd), `${cmd} 파서가 등록되지 않았다`).toBe(true);

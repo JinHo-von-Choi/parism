@@ -1,0 +1,30 @@
+
+running 4 tests
+test tests::ignored_one ... ignored
+test tests::adds ... ok
+test tests::fails_on_purpose ... FAILED
+test tests::nested::panics ... FAILED
+
+failures:
+
+---- tests::fails_on_purpose stdout ----
+
+thread 'tests::fails_on_purpose' (2443610) panicked at src/lib.rs:9:29:
+assertion `left == right` failed
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::nested::panics stdout ----
+noise from test
+
+thread 'tests::nested::panics' (2443611) panicked at src/lib.rs:15:52:
+boom: 42
+
+
+failures:
+    tests::fails_on_purpose
+    tests::nested::panics
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

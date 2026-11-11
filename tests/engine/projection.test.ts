@@ -332,3 +332,71 @@ describe("applyProjection()과 compact", () => {
     });
   });
 });
+
+describe("applyProjection() 집계", () => {
+  const rowsOf = (result: ReturnType<typeof run>): Record<string, unknown>[] => {
+    if (!result.ok) throw new Error(result.message);
+    return (result.parsed as { entries: Record<string, unknown>[] }).entries.map(r => ({ ...r }));
+  };
+
+  it("group_by로 묶어 묶음마다 행 수, 합, 서로 다른 값의 수를 낸다", () => {
+    const result = run(sample(), { aggregate: { group_by: ["type"], sum: ["size_bytes"], distinct: ["size_bytes"] } });
+
+    expect(rowsOf(result)).toEqual([
+      { type: "file",      count: 3, sum_size_bytes: 50,   distinct_size_bytes: 2 },
+      { type: "directory", count: 1, sum_size_bytes: 4096, distinct_size_bytes: 1 },
+      { type: "symlink",   count: 1, sum_size_bytes: 5,    distinct_size_bytes: 1 },
+    ]);
+    expect(result.ok && result.summary).toEqual({ total: 5, matched: 5, shown: 3, groups: 3 });
+  });
+
+  it("집계 값이 행 목록을 직접 센 값과 같다", () => {
+    const rows   = sample().entries;
+    const result = rowsOf(run(sample(), { aggregate: { group_by: ["type"], sum: ["size_bytes"] } }));
+    for (const group of result) {
+      const members = rows.filter(r => r.type === group.type);
+      expect(group.count).toBe(members.length);
+      expect(group.sum_size_bytes).toBe(members.reduce((n, r) => n + (r.size_bytes as number), 0));
+    }
+    expect(result.reduce((n, g) => n + (g.count as number), 0)).toBe(rows.length);
+  });
+
+  it("group_by가 없으면 전체가 한 묶음이다", () => {
+    expect(rowsOf(run(sample(), { aggregate: { sum: ["size_bytes"] } }))).toEqual([{ count: 5, sum_size_bytes: 4151 }]);
+    expect(rowsOf(run(sample(), { aggregate: {} }))).toEqual([{ count: 5 }]);
+  });
+
+  it("where는 묶기 전에, sort_by·limit·select는 묶은 뒤에 적용한다", () => {
+    const result = run(sample(), {
+      where: [{ field: "size_bytes", op: "lt", value: 1000 }],
+      aggregate: { group_by: ["type"] }, sort_by: { field: "count", order: "desc" }, limit: 1, select: ["type", "count"],
+    });
+    expect(rowsOf(result)).toEqual([{ type: "file", count: 3 }]);
+    expect(result.ok && result.summary).toEqual({ total: 5, matched: 4, shown: 1, groups: 2 });
+  });
+
+  it("값이 없는 필드는 null 묶음이 되고, 합과 서로 다른 값 수에는 넣지 않는다", () => {
+    const result = rowsOf(run(sample(), { aggregate: { group_by: ["target"], distinct: ["target"] } }));
+    expect(result).toEqual([{ target: null, count: 4, distinct_target: 0 }, { target: "a.txt", count: 1, distinct_target: 1 }]);
+  });
+
+  it("여러 필드로 묶을 수 있다", () => {
+    const result = rowsOf(run(sample(), { aggregate: { group_by: ["type", "size_bytes"] } }));
+    expect(result).toContainEqual({ type: "file", size_bytes: 10, count: 2 });
+    expect(result).toHaveLength(4);
+  });
+
+  it("모르는 필드, 수가 아닌 합, 묶은 뒤에 없는 필드는 이유와 함께 거절한다", () => {
+    expect(run(sample(), { aggregate: { group_by: ["nope"] } })).toMatchObject({ ok: false, reason: "unknown_field" });
+    expect(run(sample(), { aggregate: { sum: ["name"] } })).toMatchObject({ ok: false, reason: "type_mismatch" });
+    expect(run(sample(), { aggregate: { group_by: ["type"] }, sort_by: { field: "name" } })).toMatchObject({ ok: false, reason: "unknown_field" });
+    expect(run(sample(), { aggregate: { group_by: ["type"] }, select: ["size_bytes"] })).toMatchObject({ ok: false, reason: "unknown_field" });
+  });
+
+  it("문법 밖의 집계 인자는 받지 않는다", () => {
+    expect(PROJECTION_SCHEMA.safeParse({ aggregate: { group_by: [] } }).success).toBe(false);
+    expect(PROJECTION_SCHEMA.safeParse({ aggregate: { avg: ["size_bytes"] } }).success).toBe(false);
+    expect(PROJECTION_SCHEMA.safeParse({ aggregate: { group_by: ["type"], sum: ["size_bytes"] } }).success).toBe(true);
+    expect(hasProjection({ aggregate: {} })).toBe(true);
+  });
+});

@@ -1,0 +1,3 @@
+{"Time":"2026-11-11T01:38:32.177779125+09:00","Action":"start","Package":"sample"}
+{"Time":"2026-11-11T01:38:32.177912284+09:00","Action":"output","Package":"sample","Output":"FAIL\tsample [build failed]\n"}
+{"Time":"2026-11-11T01:38:32.177924521+09:00","Action":"fail","Package":"sample","Elapsed":0}

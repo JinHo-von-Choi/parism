@@ -39,6 +39,13 @@ export interface StoredResult {
   stdout:     string;
   stderr:     string;
   parsed:     unknown;
+  /**
+   * 프로젝션과 표시 변환을 적용하기 전의 파싱 결과. 재질의(query_result)가 이 값을 쓴다.
+   * 응답에 실린 값(parsed)과 같으면 따로 두지 않는다.
+   */
+  source?:    unknown;
+  /** source가 처음 실행 때 항목 수 상한 없이 파싱된 것인지 */
+  sourceComplete?: boolean;
   /** JSON Pointer -> 근거 */
   evidence:   Readonly<Record<string, FieldEvidence[]>>;
   review:     Review;

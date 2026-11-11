@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="3" skipped="1" tests="7" time="0.086" timestamp="2026-11-11T01:38:59.202011+09:00" hostname="host"><testcase classname="tests.test_sample" name="test_ok" time="0.001" /><testcase classname="tests.test_sample" name="test_fails_on_purpose" time="0.001"><failure message="assert (1 + 1) == 3">def test_fails_on_purpose():
+&gt;       assert 1 + 1 == 3
+E       assert (1 + 1) == 3
+
+tests/test_sample.py:7: AssertionError</failure></testcase><testcase classname="tests.test_sample" name="test_skipped" time="0.000"><skipped type="pytest.skip" message="not now">/work/sample/tests/test_sample.py:9: not now</skipped></testcase><testcase classname="tests.test_sample.TestNested" name="test_raises" time="0.001"><failure message="ValueError: boom &lt;&amp;&gt; &quot;quoted&quot;">self = &lt;test_sample.TestNested object at 0x7bc3676d6710&gt;
+
+    def test_raises(self):
+        print("noise from test")
+&gt;       raise ValueError("boom &lt;&amp;&gt; \"quoted\"")
+E       ValueError: boom &lt;&amp;&gt; "quoted"
+
+tests/test_sample.py:16: ValueError</failure></testcase><testcase classname="tests.test_sample" name="test_error_in_setup" time="0.001"><error message="failed on setup with &quot;RuntimeError: fixture failed&quot;">@pytest.fixture
+    def broken_fixture():
+&gt;       raise RuntimeError("fixture failed")
+E       RuntimeError: fixture failed
+
+tests/test_sample.py:20: RuntimeError</error></testcase><testcase classname="tests.test_sample" name="test_param[1]" time="0.001" /><testcase classname="tests.test_sample" name="test_param[2]" time="0.001"><failure message="assert 2 == 1">n = 2
+
+    @pytest.mark.parametrize("n", [1, 2])
+    def test_param(n):
+&gt;       assert n == 1
+E       assert 2 == 1
+
+tests/test_sample.py:27: AssertionError</failure></testcase></testsuite></testsuites>

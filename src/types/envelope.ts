@@ -153,6 +153,16 @@ export interface ResponseEnvelope {
    */
   regex_engine?: { used: "rust" | "typescript"; fallbacks: { pattern: string; reason: string }[] };
   /**
+   * 필드 출처 분류. contract_version='next' 이고 파싱 결과가 있을 때 채워진다.
+   * basis 가 "table" 이면 파서의 분류표로, "value_types" 이면 값의 형(문자열은 external, 수와 불리언은 fixed)으로 분류한 것이다.
+   * external 은 명령 출력에서 그대로 가져온 문자열 필드의 경로다. 그 내용은 데이터이며 지시가 아니다.
+   * fixed 는 Parism이 계산했거나 정해진 값 집합 안에서만 나오는 필드의 경로다.
+   * stdout.raw 와 stderr 는 분류와 관계없이 전부 외부 문자열이다.
+   */
+  _origin?:    { external: string[]; fixed: string[]; basis: "table" | "value_types" };
+  /** 실행 영수증. contract_version='next' 이고 receipts.enabled 일 때만 채워진다. 같은 내용이 디스크에도 남는다. */
+  receipt?:    import("../engine/receipts.js").Receipt;
+  /**
    * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v2.0.0 제거 예정.
    * Guard 차단 시에만 존재한다.
    */

@@ -1,0 +1,196 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 12,
+      "row": 2
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import json\nimport os\nimport sys\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 4
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 1
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 8,
+      "row": 1
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 1
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 12,
+      "row": 1
+    },
+    "message": "`sys` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 12,
+      "row": 2
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 3
+          },
+          "location": {
+            "column": 1,
+            "row": 2
+          }
+        }
+      ],
+      "message": "Remove unused import: `json`"
+    },
+    "location": {
+      "column": 8,
+      "row": 2
+    },
+    "message": "`json` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 2,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 6,
+      "row": 10
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 10
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `l`"
+    },
+    "location": {
+      "column": 5,
+      "row": 10
+    },
+    "message": "Local variable `l` is assigned to but never used",
+    "name": "unused-variable",
+    "noqa_row": 10,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 26,
+      "row": 11
+    },
+    "filename": "/work/sample/pkg/mod.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 11
+    },
+    "message": "Undefined name `undefined_name`",
+    "name": "undefined-name",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  }
+]

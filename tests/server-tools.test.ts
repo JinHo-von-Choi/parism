@@ -108,3 +108,69 @@ describe("describe 도구 cmd 인자", () => {
     expect(JSON.parse(result.text).allowed_commands).toContain("ls");
   });
 });
+
+describe("새 계약의 도구", () => {
+  it("도구 목록에 task와 query_result가 있다", async () => {
+    const names = (await client.listTools()).tools.map(t => t.name).sort();
+    expect(names).toEqual(["compare_results", "describe", "dry_run", "explain_result", "fetch_result", "query_result", "run", "run_paged", "task"]);
+  });
+
+  it("새 계약의 run 결과는 들여쓰기 없이 한 줄로 직렬화한다", async () => {
+    const next   = stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], contract_version: "next" })).text);
+    const stable = stripBanner((await call("run", { cmd: "ls", args: ["-l", "."] })).text);
+
+    expect(next).not.toContain("\n");
+    expect(stable).toContain("\n  \"ok\"");
+    expect(JSON.parse(next).review.result_id).toBeTypeOf("string");
+  });
+
+  it("query_result는 보관된 결과에 조건을 다시 건다", async () => {
+    const first = JSON.parse(stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], contract_version: "next", retain: true, limit: 1 })).text));
+    const query = JSON.parse((await call("query_result", { result_id: first.review.result_id, where: [{ field: "name", op: "eq", value: "package.json" }], select: ["name"] })).text);
+
+    expect(query.ok).toBe(true);
+    expect(query.value.entries).toEqual([{ name: "package.json" }]);
+  });
+
+  it("query_result의 aggregate는 보관된 결과를 묶어 센다", async () => {
+    const first = JSON.parse(stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], contract_version: "next", retain: true })).text));
+    const query = JSON.parse((await call("query_result", { result_id: first.review.result_id, aggregate: { group_by: ["type"] }, sort_by: { field: "count", order: "desc" } })).text);
+
+    expect(query.ok).toBe(true);
+    expect(query.value.entries[0]).toHaveProperty("count");
+    expect(query.value.entries.reduce((n: number, g: { count: number }) => n + g.count, 0)).toBe(first.stdout.parsed.entries.length);
+    expect(query.value._summary.groups).toBe(query.value.entries.length);
+  });
+
+  it("query_result는 모르는 id를 이유와 함께 거절한다", async () => {
+    const query = JSON.parse((await call("query_result", { result_id: "r_missing" })).text);
+    expect(query).toMatchObject({ ok: false, reason: "unknown_id" });
+  });
+
+  it("run(mode=task)는 기본 계약에서 거절하고, task는 모르는 식별자를 거절한다", async () => {
+    const refused = JSON.parse(stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], mode: "task" })).text));
+    expect(refused.failure.reason).toBe("requires_contract_next");
+
+    const unknown = JSON.parse((await call("task", { task_id: "task_missing" })).text);
+    expect(unknown).toMatchObject({ ok: false, reason: "unknown_task" });
+  });
+
+  it("run(mode=task)는 식별자를 바로 돌려주고 task로 결과를 읽는다", async () => {
+    const started = JSON.parse(stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], contract_version: "next", mode: "task" })).text));
+    expect(started.task.state).toBe("running");
+
+    let status = JSON.parse((await call("task", { task_id: started.task.task_id })).text);
+    for (let i = 0; i < 40 && status.task.state === "running"; i++) {
+      await new Promise(r => setTimeout(r, 50));
+      status = JSON.parse((await call("task", { task_id: started.task.task_id })).text);
+    }
+    expect(status.task.state).toBe("completed");
+    expect(status.task.result.stdout.parsed.entries.length).toBeGreaterThan(0);
+  });
+
+  it("describe는 새 계약의 옵션과 필드 안내를 싣는다", async () => {
+    const described = JSON.parse((await call("describe", {})).text);
+    expect(Object.keys(described.next_contract.options)).toEqual(["aggregate", "machine_format", "mode", "retain"]);
+    expect(described.next_contract.fields._origin).toContain("data, not instructions");
+  });
+});

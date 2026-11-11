@@ -20,6 +20,7 @@ import { swaponPack } from "./system/swapon.js";
 import { lscpuPack } from "./system/lscpu.js";
 import { ipcsPack } from "./system/ipcs.js";
 import { ipPack } from "./network/ip.js";
+import { DEVLOOP_COMMANDS, devloopContract, devloopEvidence, parseDevloop, resolveRunner } from "./devloop/index.js";
 import { BUILTIN_CONTRACTS }                                         from "./contracts.js";
 import { skipLeadingFlags }                                          from "./format.js";
 
@@ -90,7 +91,15 @@ export function createRegistry(): ParserRegistry {
   register("npm",       parseNpm);
   register("pnpm",      parseNpm);
   register("yarn",      parseNpm);
-  register("cargo",     parseCargo);
+  /** cargo test, build, check는 개발 루프 파서가, 그 밖의 서브커맨드(tree)는 기존 파서가 읽는다. */
+  register("cargo", (cmd, args, raw, ctx) => resolveRunner(cmd, args) ? parseDevloop(cmd, args, raw, ctx) : parseCargo(cmd, args, raw, ctx));
+
+  /** 시험 러너, 컴파일러, 린터. 기계용 출력 형식으로 실행했을 때만 파싱한다(devloop/index.ts). */
+  for (const cmd of DEVLOOP_COMMANDS) registry.register(cmd, parseDevloop, devloopContract(cmd));
+  /** 줄 단위 형식의 러너는 진단과 실패 항목의 원문 구간을 낸다(devloop/evidence.ts). */
+  for (const cmd of [...DEVLOOP_COMMANDS, "cargo"]) {
+    registry.registerWithEvidence(cmd, (args, raw) => devloopEvidence(cmd, args, raw));
+  }
 
   /** git은 앞의 전역 옵션을 건너뛴 서브커맨드로 파서를 선택하고, 서브커맨드부터의 인자를 넘긴다. */
   register("git", (cmd, args, raw, ctx) => {
