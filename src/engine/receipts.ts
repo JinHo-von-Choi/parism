@@ -16,7 +16,7 @@
 
 import { spawn }                                        from "node:child_process";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import path                                             from "node:path";
 import { buildExecArgs }                                from "./policy.js";
 import { realPathOf }                                   from "./guard.js";
@@ -31,7 +31,7 @@ export interface WorkspaceState {
   /** git 저장소 최상위 경로 */
   root:         string;
   git_head:     string;
-  /** HEAD, 변경 목록, HEAD 대비 변경 내용, 추적되지 않는 파일 내용을 묶은 해시 */
+  /** 작업 트리에 있는 파일의 경로와 내용을 묶은 해시. HEAD와 스테이징 여부는 들어가지 않는다. */
   state_digest: string;
   /** state_digest에 들어간 범위 */
   covers:       ("tracked" | "staged" | "untracked_names" | "untracked_content")[];
@@ -127,17 +127,95 @@ function hashFile(file: string): Promise<string | null> {
   });
 }
 
-/** porcelain v2 -z 출력에서 추적되지 않는 파일 경로를 꺼낸다. */
-function untrackedPaths(statusZ: string): string[] {
-  return statusZ.split("\0").filter(entry => entry.startsWith("? ")).map(entry => entry.slice(2)).sort();
+/** `git status --porcelain=v2 -z`에서 읽은 작업 트리의 변경 */
+interface StatusScan {
+  /** 작업 트리의 내용이 인덱스와 다른 추적 파일(충돌 중인 파일 포함) */
+  changed:   string[];
+  /** 작업 트리에서 지워진 추적 파일 */
+  deleted:   string[];
+  untracked: string[];
+}
+
+function scanStatus(statusZ: string): StatusScan {
+  const scan: StatusScan = { changed: [], deleted: [], untracked: [] };
+  const records = statusZ.split("\0");
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]!;
+    const kind   = record.slice(0, 2);
+    if (kind === "? ") { scan.untracked.push(record.slice(2)); continue; }
+    if (kind === "u ") { scan.changed.push(record.split(" ").slice(10).join(" ")); continue; }
+    if (kind !== "1 " && kind !== "2 ") continue;
+    const parts    = record.split(" ");
+    const worktree = parts[1]![1];
+    const file     = parts.slice(kind === "1 " ? 8 : 9).join(" ");
+    /** 이름 변경 항목은 원래 경로가 다음 레코드로 온다. */
+    if (kind === "2 ") i++;
+    /** 서브모듈 안의 변경은 다루지 않는다. 인덱스의 커밋 id를 그대로 쓴다. */
+    if (parts[2]![0] === "S" || worktree === ".") continue;
+    (worktree === "D" ? scan.deleted : scan.changed).push(file);
+  }
+  scan.untracked.sort();
+  return scan;
+}
+
+/** `git ls-files -s -z`에서 경로별 모드와 blob id를 읽는다. 충돌 중인 경로(스테이지 1~3)는 넣지 않는다. */
+function indexEntries(listZ: string): Map<string, { mode: string; blob: string }> {
+  const entries = new Map<string, { mode: string; blob: string }>();
+  for (const record of listZ.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const [mode, blob, stage] = record.slice(0, tab).split(" ");
+    if (stage === "0") entries.set(record.slice(tab + 1), { mode: mode!, blob: blob! });
+  }
+  return entries;
+}
+
+/** hash-object 한 번에 넘기는 경로 수와 인자 길이 상한 */
+const HASH_BATCH_FILES = 200;
+const HASH_BATCH_BYTES = 64 * 1024;
+
+/**
+ * 작업 트리 파일의 git blob id를 구한다. git이 커밋할 때 쓰는 id와 같아서,
+ * 같은 내용이면 커밋 전과 후의 값이 같다. git이 읽지 못한 파일은 파일 내용의 SHA-256으로 대신한다.
+ */
+async function blobIds(root: string, files: readonly string[]): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  for (let start = 0; start < files.length;) {
+    let end   = start;
+    let bytes = 0;
+    while (end < files.length && end - start < HASH_BATCH_FILES && (end === start || bytes + files[end]!.length < HASH_BATCH_BYTES)) {
+      bytes += files[end]!.length + 1;
+      end++;
+    }
+    const batch  = files.slice(start, end);
+    const hashed = await runGit(["hash-object", "--", ...batch], root, true);
+    const lines  = hashed.ok ? hashed.text.split("\n").filter(Boolean) : [];
+    if (lines.length === batch.length) {
+      batch.forEach((file, i) => ids.set(file, lines[i]!));
+    } else {
+      for (const file of batch) ids.set(file, `sha256:${await hashFile(path.join(root, file)) ?? "unreadable"}`);
+    }
+    start = end;
+  }
+  return ids;
+}
+
+/** 심볼릭 링크는 가리키는 경로로 식별한다. 링크가 아니거나 읽지 못하면 undefined. */
+function linkTarget(file: string): string | undefined {
+  try {
+    return lstatSync(file).isSymbolicLink() ? `link:${readlinkSync(file)}` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * cwd가 속한 git 저장소의 현재 상태를 계산한다. git 저장소가 아니거나 git을 실행할 수 없으면 undefined.
  *
- * 포함하는 것: HEAD, 변경 목록(스테이징과 추적되지 않는 파일 이름 포함), HEAD 대비 변경 내용,
- * 추적되지 않는 파일의 내용(한도 안일 때).
- * 포함하지 않는 것: .gitignore로 제외된 파일, 서브모듈 안의 변경, 저장소 밖.
+ * state_digest는 작업 트리에 있는 파일의 경로와 내용으로 만든다. 추적 파일과 추적되지 않는 파일을 구분하지 않고,
+ * HEAD와 스테이징 여부도 넣지 않는다. 그래서 내용이 같으면 스테이징하거나 커밋한 뒤에도 값이 같다.
+ *
+ * 포함하지 않는 것: .gitignore로 제외된 파일, 서브모듈 안의 변경, 실행 권한 비트, 저장소 밖.
  */
 export async function workspaceState(cwd: string, limits: WorkspaceLimits): Promise<WorkspaceState | undefined> {
   const top = await runGit(["rev-parse", "--show-toplevel"], cwd, true);
@@ -147,54 +225,60 @@ export async function workspaceState(cwd: string, limits: WorkspaceLimits): Prom
 
   const head   = await runGit(["rev-parse", "--verify", "HEAD"], root, true);
   const status = await runGit(["status", "--porcelain=v2", "--untracked-files=all", "-z"], root, true);
-  if (!status.ok) return undefined;
+  const listed = await runGit(["ls-files", "-s", "-z"], root, true);
+  if (!status.ok || !listed.ok) return undefined;
 
-  /** 커밋이 하나도 없는 저장소에는 HEAD가 없다. 스테이징과 작업 트리의 변경을 따로 본다. */
-  const diffs = head.ok
-    ? [await runGit(["diff", "HEAD", "--binary"], root, false)]
-    : [await runGit(["diff", "--cached", "--binary"], root, false), await runGit(["diff", "--binary"], root, false)];
-  if (diffs.some(d => !d.ok)) return undefined;
+  const scan    = scanStatus(status.text);
+  const entries = indexEntries(listed.text);
+  /** 경로 → 내용 식별자 */
+  const content = new Map<string, string>();
+  for (const [file, entry] of entries) {
+    content.set(file, entry.mode === "120000" ? linkTarget(path.join(root, file)) ?? entry.blob : entry.blob);
+  }
+  for (const file of scan.deleted) content.delete(file);
 
   const covers: WorkspaceState["covers"] = ["tracked", "staged", "untracked_names"];
-  const files  = untrackedPaths(status.text);
-  const parts  = createHash("sha256");
   let   skipped: WorkspaceState["untracked_skipped"];
-
-  if (files.length > limits.untrackedMaxFiles) {
-    skipped = { files: files.length, reason: `more than ${limits.untrackedMaxFiles} untracked files` };
+  if (scan.untracked.length > limits.untrackedMaxFiles) {
+    skipped = { files: scan.untracked.length, reason: `more than ${limits.untrackedMaxFiles} untracked files` };
   } else {
     let total = 0;
-    for (const rel of files) {
-      const file = path.join(root, rel);
-      let size: number;
+    for (const rel of scan.untracked) {
       try {
-        const info = statSync(file);
-        if (!info.isFile()) continue;
-        size = info.size;
+        const info = lstatSync(path.join(root, rel));
+        if (info.isFile()) total += info.size;
       } catch {
         continue;
       }
-      total += size;
       if (total > limits.untrackedMaxBytes) {
-        skipped = { files: files.length, reason: `untracked files exceed ${limits.untrackedMaxBytes} bytes` };
+        skipped = { files: scan.untracked.length, reason: `untracked files exceed ${limits.untrackedMaxBytes} bytes` };
         break;
       }
-      parts.update(`${rel}\0${await hashFile(file) ?? "unreadable"}\0`);
     }
   }
   if (!skipped) covers.push("untracked_content");
 
-  const digest = createHash("sha256")
-    .update(head.ok ? head.text.trim() : "no-head").update("\0")
-    .update(status.sha).update("\0")
-    .update(diffs.map(d => d.sha).join(":")).update("\0")
-    .update(skipped ? "untracked-content-skipped" : parts.digest("hex"))
-    .digest("hex");
+  /** 내용을 읽을 파일. 추적되지 않는 파일이 한도를 넘으면 이름만 넣는다. */
+  const toHash: string[] = [];
+  for (const file of [...scan.changed, ...(skipped ? [] : scan.untracked)]) {
+    const full = path.join(root, file);
+    const link = linkTarget(full);
+    if (link !== undefined) { content.set(file, link); continue; }
+    let isFile = false;
+    try { isFile = statSync(full).isFile(); } catch { /* 계산하는 사이에 지워진 파일 */ }
+    if (isFile) toHash.push(file);
+    else content.delete(file);
+  }
+  for (const [file, id] of await blobIds(root, toHash)) content.set(file, id);
+  if (skipped) for (const file of scan.untracked) content.set(file, "untracked");
+
+  const digest = createHash("sha256");
+  for (const file of [...content.keys()].sort()) digest.update(`${file}\0${content.get(file)!}\0`);
 
   return {
     root,
     git_head:     head.ok ? head.text.trim().slice(0, 12) : "",
-    state_digest: digest,
+    state_digest: digest.digest("hex"),
     covers,
     ...(skipped && { untracked_skipped: skipped }),
   };

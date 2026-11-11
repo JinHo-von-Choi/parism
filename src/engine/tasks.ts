@@ -28,6 +28,9 @@ export interface TaskLimits {
 
 export const DEFAULT_TASK_RETENTION = { keepFinished: 16, finishedTtlMs: 600_000 } as const;
 
+/** 상태 조회 한 번이 기다릴 수 있는 최대 시간(ms). 클라이언트의 요청 시간 제한보다 짧게 둔다. */
+export const MAX_TASK_WAIT_MS = 30_000;
+
 /** 태스크 한 건의 상태. result는 끝난 뒤에만 있다. */
 export interface TaskSnapshot {
   task_id:      string;
@@ -71,6 +74,22 @@ interface TaskEntry {
   bytes:      { stdout: number; stderr: number };
   progress?:  TaskProgress;
   result?:    ResponseEnvelope;
+  /** 진행 상태에서 마지막으로 본 실패 수. 늘어나면 기다리는 조회를 깨운다. */
+  failures:   number;
+  /** 이 태스크의 변화를 기다리는 조회 */
+  waiters:    Set<() => void>;
+}
+
+/** 진행 상태에서 실패(시험)나 오류(진단) 수를 읽는다. 없으면 0이다. */
+function failureCount(progress: TaskProgress | undefined): number {
+  if (!progress) return 0;
+  try {
+    const snapshot = progress.snapshot() as { failed?: unknown; errors?: unknown } | null;
+    const count    = snapshot?.failed ?? snapshot?.errors;
+    return typeof count === "number" ? count : 0;
+  } catch {
+    return 0;
+  }
 }
 
 export class TaskManager {
@@ -112,7 +131,12 @@ export class TaskManager {
       state:      "running",
       controller: new AbortController(),
       bytes:      { stdout: 0, stderr: 0 },
+      failures:   0,
+      waiters:    new Set(),
       ...(progress && { progress }),
+    };
+    const wake = (): void => {
+      for (const waiter of [...entry.waiters]) waiter();
     };
     this.tasks.set(entry.id, entry);
 
@@ -120,12 +144,20 @@ export class TaskManager {
       signal:     entry.controller.signal,
       onProgress: bytes => { entry.bytes = bytes; },
       /** 진행 상태 추적이 실패해도 실행에는 영향을 주지 않는다. */
-      ...(progress && { onStdout: (chunk: Buffer) => { try { progress.push(chunk.toString("utf8")); } catch { /* 진행 상태만 멈춘다 */ } } }),
+      ...(progress && { onStdout: (chunk: Buffer) => {
+        try { progress.push(chunk.toString("utf8")); } catch { /* 진행 상태만 멈춘다 */ }
+        const failures = failureCount(progress);
+        if (failures > entry.failures) {
+          entry.failures = failures;
+          wake();
+        }
+      } }),
     };
     const settle = (result: ResponseEnvelope): void => {
       entry.result     = result;
       entry.finishedAt = Date.now();
       entry.state      = result.failure?.reason === "cancelled" ? "cancelled" : "completed";
+      wake();
     };
     launch(control).then(settle, (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -148,6 +180,27 @@ export class TaskManager {
       return { found: false, reason: "task_expired", message: `task '${taskId}' finished and its result is no longer kept; run the command again` };
     }
     return { found: false, reason: "unknown_task", message: `task '${taskId}' is not known to this server` };
+  }
+
+  /**
+   * 태스크가 끝나거나, 실패 수가 늘거나, waitMs가 지날 때까지 기다린 뒤 상태를 돌려준다.
+   * 이미 끝났거나 모르는 태스크면 기다리지 않는다. waitMs는 MAX_TASK_WAIT_MS로 줄인다.
+   */
+  async wait(taskId: string, waitMs: number): Promise<TaskLookup> {
+    const entry = this.tasks.get(taskId);
+    const limit = Math.min(Math.max(0, waitMs), MAX_TASK_WAIT_MS);
+    if (entry?.state === "running" && limit > 0) {
+      await new Promise<void>(resolve => {
+        const done = (): void => {
+          clearTimeout(timer);
+          entry.waiters.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(done, limit);
+        entry.waiters.add(done);
+      });
+    }
+    return this.status(taskId);
   }
 
   /**

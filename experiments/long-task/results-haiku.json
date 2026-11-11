@@ -1,0 +1,415 @@
+{
+  "model": "haiku",
+  "repeats": 5,
+  "summary": {
+    "failing": {
+      "wait": {
+        "n": 5,
+        "success": 5,
+        "median_total_s": 47.3,
+        "median_knew_failure_s": 13.4,
+        "median_calls": 6,
+        "cancelled": 0
+      },
+      "wait-long": {
+        "n": 5,
+        "success": 5,
+        "median_total_s": 86.2,
+        "median_knew_failure_s": 83.8,
+        "median_calls": 1,
+        "cancelled": 0
+      },
+      "task": {
+        "n": 5,
+        "success": 5,
+        "median_total_s": 96.8,
+        "median_knew_failure_s": 13,
+        "median_calls": 5,
+        "cancelled": 0
+      }
+    },
+    "passing": {
+      "wait": {
+        "n": 5,
+        "success": 4,
+        "median_total_s": 96.8,
+        "median_knew_failure_s": 13.2,
+        "median_calls": 12,
+        "cancelled": 0
+      },
+      "wait-long": {
+        "n": 5,
+        "success": 5,
+        "median_total_s": 86.3,
+        "median_knew_failure_s": null,
+        "median_calls": 1,
+        "cancelled": 0
+      },
+      "task": {
+        "n": 5,
+        "success": 5,
+        "median_total_s": 97,
+        "median_knew_failure_s": 13,
+        "median_calls": 5,
+        "cancelled": 0
+      }
+    }
+  },
+  "trials": [
+    {
+      "kind": "failing",
+      "arm": "wait",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 6,
+      "cancelled": false,
+      "total_s": 62,
+      "knew_failure_s": 14.1,
+      "answer": "I couldn't get a complete result. `cargo test` runs longer than the shell tool's 10-second limit, so every full run timed out before finishing.\n\n**Confirmed failing:**\n- `tests::parses_negative_numbers`\n\n**Passing:**\n- `tests::parses_hundred`\n- `tests::parses_leading_zero`\n\n**Not yet determined:** t"
+    },
+    {
+      "kind": "failing",
+      "arm": "wait-long",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.7,
+      "knew_failure_s": 84.4,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). The assertion expected `-4` but got `4`. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "task",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97.6,
+      "knew_failure_s": 13.5,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). It asserts `4` equals `-4`, so the parser returns the absolute value instead of the negative. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "wait",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 3,
+      "cancelled": false,
+      "total_s": 33.2,
+      "knew_failure_s": 14.1,
+      "answer": "I couldn't get a complete result. The suite has 11 tests, and `cargo test` hits the tool's 10-second limit before finishing.\n\n- **Failed:** `tests::parses_negative_numbers` (from the first run).\n- **Passed:** `tests::parses_hundred`.\n- **Hanging:** `tests::parses_large_number` starts but doesn't fin"
+    },
+    {
+      "kind": "failing",
+      "arm": "wait-long",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 87,
+      "knew_failure_s": 84.4,
+      "answer": "One test fails: **`tests::parses_negative_numbers`** (in `src/lib.rs`, line 21). The assertion expected `-4` but got `4`. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "task",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97.4,
+      "knew_failure_s": 13.4,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). It asserts `4 == -4`, so the parser returns 4 for a negative input. The other 10 of 11 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "wait",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 15,
+      "cancelled": false,
+      "total_s": 126,
+      "knew_failure_s": 13.4,
+      "answer": "**One test fails: `tests::parses_negative_numbers`.** It asserts `4 == -4` at `src/lib.rs:21`.\n\nThe full `cargo test` run didn't finish within the 10-second tool limit, so I ran each test by name. The other 10 tests pass: `parses_hundred`, `parses_large_number`, `parses_leading_zero`, `parses_max_sm"
+    },
+    {
+      "kind": "failing",
+      "arm": "wait-long",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.2,
+      "knew_failure_s": 83.4,
+      "answer": "One test fails: `tests::parses_negative_numbers` (in `src/lib.rs`, line 21). It asserts `4 == -4`, so the parser returns 4 for a negative input. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "task",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 96.8,
+      "knew_failure_s": 13,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). It asserts `4 == -4`, so the parser returns 4 where -4 is expected. The other 10 of 11 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "wait",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 6,
+      "cancelled": false,
+      "total_s": 47.3,
+      "knew_failure_s": 13.3,
+      "answer": "I couldn't get a complete `cargo test` result because the tool stops commands after 10 seconds.\n\n**Fails:** `tests::parses_negative_numbers`. The run reported it as FAILED. The cause is in `parse`: `text.trim_start_matches('-')` strips the minus sign, so `parse(\"-4\")` returns `4`, not `-4`.\n\n**Not f"
+    },
+    {
+      "kind": "failing",
+      "arm": "wait-long",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.1,
+      "knew_failure_s": 83.8,
+      "answer": "One test fails: **`tests::parses_negative_numbers`** (`src/lib.rs:21`). The assertion failed with left `4` and right `-4`, so the parser returns the absolute value for negative input. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "task",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 96.7,
+      "knew_failure_s": 12.9,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). It asserts `4 == -4`, so the parser returns the wrong sign for negative input. The other 10 of 11 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "wait",
+      "repeat": 4,
+      "success": true,
+      "finished": true,
+      "calls": 2,
+      "cancelled": false,
+      "total_s": 19.3,
+      "knew_failure_s": 13.3,
+      "answer": "I could only get partial results. `cargo test` timed out after 10 seconds while the suite was still running, so I can't say which of the 11 tests fail.\n\n**Confirmed failing:**\n- `tests::parses_negative_numbers`\n\n**Passed before the timeout:**\n- `tests::parses_hundred`\n\nThe other 9 tests never report"
+    },
+    {
+      "kind": "failing",
+      "arm": "wait-long",
+      "repeat": 4,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 85.8,
+      "knew_failure_s": 83.4,
+      "answer": "One test fails: **`tests::parses_negative_numbers`** (src/lib.rs:21). The assertion got `4` where it expected `-4`. The other 10 tests pass."
+    },
+    {
+      "kind": "failing",
+      "arm": "task",
+      "repeat": 4,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 96.7,
+      "knew_failure_s": 12.9,
+      "answer": "One test fails: `tests::parses_negative_numbers` (src/lib.rs:21). It asserts `left == right` and gets `4` where `-4` was expected. The other 10 tests pass (11 total)."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 17,
+      "cancelled": false,
+      "total_s": 134.1,
+      "knew_failure_s": 13.1,
+      "answer": "No tests fail. All 11 tests in `tests::` pass when run individually.\n\nI couldn't get a single full `cargo test` run to finish. The tool stops commands at 10 seconds, and the suite hit that limit each time. Each individual test run took about 8 seconds, and the `cargo test` runs that matched more tha"
+    },
+    {
+      "kind": "passing",
+      "arm": "wait-long",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.9,
+      "answer": "All tests pass. `cargo test` exited with code 0 and reported 11 passed, 0 failed, 0 skipped."
+    },
+    {
+      "kind": "passing",
+      "arm": "task",
+      "repeat": 0,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 96.8,
+      "knew_failure_s": 12.9,
+      "answer": "All tests pass: 11 of 11 passed, 0 failed.\n\nThe first `cargo test` run hit the 10-second limit, so I reran it as a background task, which completed with exit code 0."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 11,
+      "cancelled": false,
+      "total_s": 94.6,
+      "knew_failure_s": 13.2,
+      "answer": "No tests fail, but I couldn't get a single complete `cargo test` run to finish.\n\n- The full `cargo test` hit the shell tool's 10-second limit. It reported only `parses_negative_numbers` and `parses_large_number` as passing before cutting off.\n- I then ran each of the other nine tests on its own with"
+    },
+    {
+      "kind": "passing",
+      "arm": "wait-long",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.3,
+      "answer": "All tests pass. `cargo test` exited with code 0 and reported 11 passed, 0 failed, 0 skipped."
+    },
+    {
+      "kind": "passing",
+      "arm": "task",
+      "repeat": 1,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97,
+      "knew_failure_s": 13,
+      "answer": "All tests pass: 11 of 11 in the unit test suite, with 0 failures. The doc-tests also ran without failures.\n\nThe first run hit the 10-second limit, so I reran it as a background task to let it finish."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 11,
+      "cancelled": false,
+      "total_s": 96.1,
+      "knew_failure_s": 13.8,
+      "answer": "No tests fail. All 11 pass.\n\n`cargo test` alone hit the tool's 10-second limit, so I ran the tests individually. Each passed. The run also shows no failing doc-tests."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait-long",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.9,
+      "answer": "All tests pass. `cargo test` exited with code 0 and reported 11 passed, 0 failed, 0 skipped. The run covered the unit tests in `src/lib.rs` and the doc tests."
+    },
+    {
+      "kind": "passing",
+      "arm": "task",
+      "repeat": 2,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97,
+      "knew_failure_s": 13.2,
+      "answer": "All tests pass: 11 unit tests passed, 0 failed. The run exited with code 0. The first run hit the 10-second limit, so I reran it as a background task to get the full result."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 12,
+      "cancelled": false,
+      "total_s": 96.8,
+      "knew_failure_s": 13.1,
+      "answer": "No tests failed. All 11 tests in the crate pass when run individually:\n\n- `parses_hundred`, `parses_negative_numbers` (also seen passing in the full run)\n- `parses_large_number`, `parses_leading_zero`, `parses_max_small`, `parses_nine`, `parses_one_digit`, `parses_ten`, `parses_thousand`, `parses_tw"
+    },
+    {
+      "kind": "passing",
+      "arm": "wait-long",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.3,
+      "answer": "All tests pass. `cargo test` exited with code 0 and reported 11 passed, 0 failed, 0 skipped."
+    },
+    {
+      "kind": "passing",
+      "arm": "task",
+      "repeat": 3,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97.1,
+      "knew_failure_s": 13,
+      "answer": "All tests pass: 11 of 11 in `cargo test` (exit code 0), with no failures.\n\nThe first run hit the 10-second tool limit, so I reran it as a background task. That run took about 80 seconds, mostly in the test binary, and the 11 tests passed."
+    },
+    {
+      "kind": "passing",
+      "arm": "wait",
+      "repeat": 4,
+      "success": false,
+      "finished": true,
+      "calls": 13,
+      "cancelled": false,
+      "total_s": 112.1,
+      "knew_failure_s": 13.3,
+      "answer": "I couldn't get a full `cargo test` summary, so I can't confirm the whole suite passes. No test has failed in anything I observed.\n\n- **Full run:** `cargo test` hit the 10-second tool limit both times. It printed `running 11 tests` and the first two results (`parses_negative_numbers`, `parses_hundred"
+    },
+    {
+      "kind": "passing",
+      "arm": "wait-long",
+      "repeat": 4,
+      "success": true,
+      "finished": true,
+      "calls": 1,
+      "cancelled": false,
+      "total_s": 86.3,
+      "answer": "All tests pass. `cargo test` exited with code 0 and reported 11 passed, 0 failed, 0 skipped."
+    },
+    {
+      "kind": "passing",
+      "arm": "task",
+      "repeat": 4,
+      "success": true,
+      "finished": true,
+      "calls": 5,
+      "cancelled": false,
+      "total_s": 97.1,
+      "knew_failure_s": 13.3,
+      "answer": "All tests pass. `cargo test` finished with 11 of 11 passing and no failures."
+    }
+  ]
+}

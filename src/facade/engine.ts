@@ -20,7 +20,7 @@ import { TaskManager, DEFAULT_TASK_RETENTION, type TaskLookup }                 
 import { ReceiptStore, loadSigningKey, newReceiptId, sha256, signReceipt, summarize,
          workspaceState, type Receipt }                                             from "../engine/receipts.js";
 import { devloopRowsKey, machineFormatArgs, progressFor, relativizeReport }         from "../parsers/devloop/index.js";
-import { deriveOrigin, externalFields, fixedFields, fixedViolations, originTableFor } from "../parsers/origin.js";
+import { deriveOrigin, externalFields, fixedFields, fixedViolations, originTableFor, tableForResult } from "../parsers/origin.js";
 import { DEFAULT_RECEIPTS, DEFAULT_RESULTS, DEFAULT_TASKS }                         from "../config/loader.js";
 import { checkGuard, GuardError }                                                   from "../engine/guard.js";
 import { buildAvailabilityFailure, probeAll }                                   from "../engine/availability.js";
@@ -518,10 +518,13 @@ export class ParismEngine {
        * 어느 쪽으로 분류했는지 basis에 적는다.
        */
       if (parsed != null) {
+        /** 결과의 모양이 분류표와 하나도 맞지 않으면 표로 분류한 것이 없으므로 값의 형으로 분류한다. */
+        const matched = originTable && tableForResult(originTable, parsed);
+        const shown   = matched && Object.keys(matched).length > 0 ? matched : undefined;
         enriched = {
           ...enriched,
-          _origin: originTable
-            ? { external: externalFields(originTable), fixed: fixedFields(originTable), basis: "table" as const }
+          _origin: shown
+            ? { external: externalFields(shown), fixed: fixedFields(shown), basis: "table" as const }
             : { ...deriveOrigin(parsed), basis: "value_types" as const },
         };
       }
@@ -686,6 +689,11 @@ export class ParismEngine {
   /** 태스크의 현재 상태. 끝났으면 결과 봉투가 함께 온다. */
   taskStatus(taskId: string): TaskLookup {
     return this.tasks.status(taskId);
+  }
+
+  /** 태스크가 끝나거나 새 실패가 나오거나 waitMs가 지날 때까지 기다린 뒤 상태를 돌려준다. */
+  taskWait(taskId: string, waitMs: number): Promise<TaskLookup> {
+    return this.tasks.wait(taskId, waitMs);
   }
 
   /** 태스크 하나를 취소한다. 다른 실행에는 영향을 주지 않는다. */
@@ -1044,7 +1052,7 @@ const NEXT_CONTRACT_GUIDE = {
   options: {
     aggregate:      "run and query_result: { group_by?, sum?, distinct? } turns the rows that pass where into one row per group with count, sum_<field> and distinct_<field>. sort_by, limit and select then apply to those group rows. _summary.groups is the number of groups.",
     machine_format: "run: add machine-readable output flags for vitest, jest, tsc, eslint (direct or through npx) before running. Without it a run in another format returns failure.hint.args to rerun with.",
-    mode:           "run: 'task' returns { task: { task_id, state } } at once. Poll with task(action='status'); stop with task(action='cancel'). Tasks use tasks.timeout_ms and their own slots; when all slots are taken the start is refused with task_slots_full.",
+    mode:           "run: 'task' returns { task: { task_id, state } } at once. Read it with task(action='status', wait_ms=30000), which answers when the task finishes or a new failure appears; stop with task(action='cancel'). Tasks use tasks.timeout_ms and their own slots; when all slots are taken the start is refused with task_slots_full.",
     retain:         "run: keep the result so explain_result, fetch_result, compare_results and query_result can use it.",
   },
   tools: {

@@ -159,3 +159,57 @@ describe("TaskManager 진행 상태", () => {
     expect(tasks.status(start.task.task_id).found).toBe(true);
   });
 });
+
+describe("TaskManager.wait()", () => {
+  it("태스크가 끝나면 기다리는 시간이 남아 있어도 바로 답한다", async () => {
+    const tasks = new TaskManager({ maxConcurrency: 1, keepFinished: 4, finishedTtlMs: 60_000 });
+    const run   = controllable();
+    const start = tasks.start(META, run.launch);
+    if (!start.ok) throw new Error("task did not start");
+
+    const waiting = tasks.wait(start.task.task_id, 20_000);
+    run.finish();
+    const done = await waiting;
+    expect(done.found && done.task.state).toBe("completed");
+  });
+
+  it("실패 수가 늘면 답하고, 통과만 늘면 계속 기다린다", async () => {
+    const tasks = new TaskManager({ maxConcurrency: 1, keepFinished: 4, finishedTtlMs: 60_000 });
+    let onStdout!: ExecControl["onStdout"];
+    let failed = 0;
+    const start = tasks.start(
+      META,
+      control => { onStdout = control.onStdout; return new Promise(() => {}); },
+      { push: text => { if (text.includes("FAILED")) failed++; }, snapshot: () => ({ failed }) },
+    );
+    if (!start.ok) throw new Error("task did not start");
+
+    let answered = false;
+    const waiting = tasks.wait(start.task.task_id, 20_000).then(lookup => { answered = true; return lookup; });
+    onStdout!(Buffer.from("test a ... ok\n"));
+    await flush();
+    expect(answered).toBe(false);
+
+    onStdout!(Buffer.from("test b ... FAILED\n"));
+    const seen = await waiting;
+    expect(seen.found && seen.task.state).toBe("running");
+    expect(seen.found && seen.task.progress).toEqual({ failed: 1 });
+  });
+
+  it("기다리는 시간이 지나면 실행 중 상태로 답하고, 끝난 태스크와 모르는 태스크는 기다리지 않는다", async () => {
+    const tasks = new TaskManager({ maxConcurrency: 1, keepFinished: 4, finishedTtlMs: 60_000 });
+    const run   = controllable();
+    const start = tasks.start(META, run.launch);
+    if (!start.ok) throw new Error("task did not start");
+
+    const timedOut = await tasks.wait(start.task.task_id, 20);
+    expect(timedOut.found && timedOut.task.state).toBe("running");
+
+    run.finish();
+    await flush();
+    const before = Date.now();
+    expect((await tasks.wait(start.task.task_id, 20_000)).found).toBe(true);
+    expect((await tasks.wait("task_unknown", 20_000)).found).toBe(false);
+    expect(Date.now() - before).toBeLessThan(1_000);
+  });
+});

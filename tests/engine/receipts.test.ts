@@ -71,21 +71,36 @@ describe("workspaceState()", () => {
     expect(first?.git_head).toMatch(/^[0-9a-f]{12}$/);
   });
 
-  it("추적 파일 수정, 스테이징, 새 파일, 새 파일의 내용 변경을 각각 다른 상태로 본다", async () => {
+  it("추적 파일 수정, 새 파일, 새 파일의 내용 변경, 파일 삭제를 각각 다른 상태로 본다", async () => {
     const seen = new Set<string>();
     const note = async (): Promise<void> => { seen.add((await workspaceState(dir, LIMITS))!.state_digest); };
 
     await note();
     writeFileSync(path.join(dir, "a.txt"), "two\n");
     await note();
-    git(dir, "add", "a.txt");
-    await note();
     writeFileSync(path.join(dir, "new.txt"), "x");
     await note();
     writeFileSync(path.join(dir, "new.txt"), "y");
     await note();
+    rmSync(path.join(dir, "a.txt"));
+    await note();
 
     expect(seen.size).toBe(5);
+  });
+
+  it("내용이 같으면 스테이징하거나 커밋한 뒤에도 같은 상태다", async () => {
+    writeFileSync(path.join(dir, "a.txt"), "two\n");
+    writeFileSync(path.join(dir, "new file.txt"), "x");
+    const edited = (await workspaceState(dir, LIMITS))!.state_digest;
+
+    git(dir, "add", "-A");
+    expect((await workspaceState(dir, LIMITS))!.state_digest).toBe(edited);
+    git(dir, "commit", "-q", "-m", "work");
+    expect((await workspaceState(dir, LIMITS))!.state_digest).toBe(edited);
+
+    writeFileSync(path.join(dir, "a.txt"), "three\n");
+    git(dir, "commit", "-q", "-am", "more");
+    expect((await workspaceState(dir, LIMITS))!.state_digest).not.toBe(edited);
   });
 
   it("수정을 되돌리면 처음 상태와 같다", async () => {

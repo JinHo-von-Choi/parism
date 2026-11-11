@@ -67,7 +67,8 @@ export function parseSs(cmd: string, args: string[], raw: string): { connections
     const recvQ = cols[at++];
     const sendQ = cols[at++];
     const addrs = cols.slice(at);
-    if (recvQ === undefined || sendQ === undefined || addrs.length < 1) continue;
+    /** 큐 길이가 숫자가 아닌 줄은 연결 행이 아니다(출력이 잘렸다는 표시 줄 등). */
+    if (recvQ === undefined || sendQ === undefined || !/^\d+$/.test(recvQ) || !/^\d+$/.test(sendQ) || addrs.length < 1) continue;
 
     let local: [string, string];
     let peer:  [string, string];

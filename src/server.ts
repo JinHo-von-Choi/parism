@@ -8,6 +8,7 @@ import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
 import { PACKAGE_VERSION }     from "./version.js";
 import { PROJECTION_SHAPE, BUDGET_SHAPE } from "./engine/projection.js";
+import { MAX_TASK_WAIT_MS }             from "./engine/tasks.js";
 
 export { PACKAGE_VERSION };
 
@@ -68,7 +69,7 @@ Usage:
 8. run and run_paged results start with a '[cwd] <absolute path>' line, then a blank line, then the JSON. Strip those two lines before JSON.parse. The cwd is where the command actually ran.
 9. When a command is not installed, failure.reason = 'spawn_failed' and failure.availability says so: status is 'missing' or 'not_executable', install.command is the exact install command to run, and alternatives lists other commands that do the same job. Follow install.command or an alternative instead of retrying the same command.
 10. describe without cmd returns command_availability: the install status of every allowed command. Check it before running something that may not be installed.
-11. Test runners, compilers and linters (vitest, jest, tsc, eslint, also through npx): run with contract_version "next" and machine_format true. The result lists every failure or diagnostic and only counts what passed. For commands longer than the timeout add mode "task", then poll task(action "status").
+11. Test runners, compilers and linters (vitest, jest, tsc, eslint, also through npx): run with contract_version "next" and machine_format true. The result lists every failure or diagnostic and only counts what passed. For commands longer than the timeout add mode "task", then read it with task(action "status", wait_ms 30000) until it finishes.
 12. describe().next_contract explains the options and fields that exist only with contract_version "next": machine_format, mode, aggregate, query_result, _origin, receipt.
 
 Notes:
@@ -230,13 +231,16 @@ export function createServer(config: PrismConfig, registry: ParserRegistry, task
     "task",
     "Read or cancel a task started by run(mode='task'). " +
     "status returns state (running, completed, cancelled), elapsed time and output bytes so far; once finished it carries the full run result. " +
-    "cancel stops only that task's processes. A finished task's result is kept for a limited time and is never re-run.",
+    "cancel stops only that task's processes. A finished task's result is kept for a limited time and is never re-run. " +
+    "Pass wait_ms with status instead of polling in a loop: the call answers when the task finishes, when a new test failure or error appears, or when the wait runs out.",
     {
       task_id: z.string().describe("task_id from run(mode='task')"),
       action:  z.enum(["status", "cancel"]).default("status").describe("'status' reads the task, 'cancel' stops it"),
+      wait_ms: z.number().int().min(0).max(MAX_TASK_WAIT_MS).default(0)
+                .describe(`status only. Wait up to this many milliseconds (at most ${MAX_TASK_WAIT_MS}) for the task to finish or a new failure to appear before answering. 0 answers at once.`),
     },
-    async ({ task_id, action }) => {
-      const lookup = action === "cancel" ? engine.taskCancel(task_id) : engine.taskStatus(task_id);
+    async ({ task_id, action, wait_ms }) => {
+      const lookup = action === "cancel" ? engine.taskCancel(task_id) : await engine.taskWait(task_id, wait_ms);
       return { content: [{ type: "text" as const, text: JSON.stringify(lookup.found ? { ok: true, task: lookup.task } : { ok: false, reason: lookup.reason, message: lookup.message }) }] };
     },
   );

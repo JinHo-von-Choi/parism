@@ -133,6 +133,12 @@ describe("parseSs()", () => {
     expect(result.connections[0].local_port).toBe("22");
   });
 
+  it("큐 길이가 숫자가 아닌 줄은 연결로 세지 않는다", () => {
+    const cut    = `${raw}\n...[truncated: output exceeded 102400 bytes]\n`;
+    const result = parseSs("ss", ["-tuln"], cut) as { connections: unknown[] };
+    expect(result.connections).toHaveLength(2);
+  });
+
   it("콜론 없는 주소는 local_port 빈 문자열", () => {
     const noPort = [
       "Netid  State   Recv-Q  Send-Q  Local Address:Port   Peer Address:Port",

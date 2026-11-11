@@ -491,19 +491,32 @@ Commands longer than `guard.timeout_ms` (10 seconds by default) run as tasks.
 
 ```
  run(cmd, { contract_version: "next", mode: "task" }) ─▶ { task: { task_id, state: "running" } }
- task({ task_id })                    ─▶ state, elapsed_ms, stdout_bytes, progress
+ task({ task_id, wait_ms: 30000 })    ─▶ state, elapsed_ms, stdout_bytes, progress
  task({ task_id, action: "cancel" })  ─▶ stops only that task's processes
 ```
 
 - A task runs up to `tasks.timeout_ms` (10 minutes) and at most `tasks.max_concurrency` (2) run at once. When all slots are taken the start is refused with `task_slots_full` instead of queued. Task slots are separate from the concurrency of ordinary `run` calls.
+- With `wait_ms`, a status read answers when the task finishes, when a new failure appears, or when that time runs out (30 seconds at most). Use it instead of polling in a loop. Without it the read answers at once.
 - A `cargo test` task reports `progress: { passed, failed, skipped, failed_names }` while running. Other runners report elapsed time and output bytes only.
 - A finished task's result is kept for 10 minutes, 16 at most. It is never re-run.
+
+An agent (model `haiku`) ran an 80-second `cargo test` five times per condition, in a crate where one test fails at once:
+
+| Condition | Reported correctly | Failure known at | Tool calls |
+|-|-|-|-|
+| `run`, 10 s limit | 5/5 (4 said the full result was not available) | 13.4 s | 6 |
+| `run`, 10 min limit | 5/5 | 83.8 s | 1 |
+| task, 10 s limit | 5/5 | 13.0 s | 5 |
+
+Method and limits: [experiments/README.md](experiments/README.md), appendix S.
 
 Clients that speak MCP tasks can use protocol requests instead of the `task` tool. Set `{ "tasks": { "mcp_extension": true } }` in the host config. The server then declares the tasks capability and exposes `run_task`: call it with task augmentation, poll `tasks/get` (`statusMessage` carries progress), read the run result with `tasks/result`, stop it with `tasks/cancel`. Its inputs are those of `run` without `mode` and `contract_version`. A guard denial or a full slot comes back as a `failed` task whose result holds the reason. This uses the MCP SDK's experimental tasks API, so it is off by default, cannot be enabled from a project config, and the SDK is pinned to `~1.32.1`.
 
 ### Querying a retained result
 
 `query_result` applies `select`, `where`, `sort_by`, `limit` and `aggregate` again to a result kept with `run(contract_version: "next", retain: true)`. It works on the whole parsed result, independent of the projection of the first run, and never re-runs the command. `source_complete: false` means the first run had no projection argument and may have been cut at `max_items`. `row_pointers` gives each returned row's position in the retained result (`/processes/41`); append a field name and pass it to `explain_result`.
+
+Three questions in a row against an `ls -l` of 201 files cost 3 command runs and 1,902 response tokens when each question re-runs the command, and 1 run and 1,101 tokens with `query_result`. The raw output is 4,438 tokens. Reproduce: `npm run build && node experiments/requery.mjs`.
 
 ### Aggregation
 
@@ -522,7 +535,18 @@ Responses that carry a parsed result also carry `_origin`.
 - `fixed` fields are computed by Parism or limited to a known value set. A value outside that form empties the result with `schema_violation`.
 - `stdout.raw`, `stderr` and quoted evidence are always external text.
 - Strings copied from the output are external even when their form is fixed: permission strings, timestamps, hashes, owner names.
-- Origin tables exist for the test and diagnostic parsers and for `ls`, `find`, `ps`, `git status`, `git log`, `git branch`, `grep`, `stat`, `wc`, `df`, `du`, `cat`, `head`, `tail`, `which`, `pwd`. These report `basis: "table"` and their fixed values are checked. Other parsers report `basis: "value_types"`: every string is external and numbers and booleans are fixed. This marking helps tell external text apart; it does not block prompt injection.
+- Every built-in parser has an origin table. These report `basis: "table"` and their fixed values are checked. When a parser returns different shapes by format (`packages` or `lines`), only the fields of the returned shape are listed. `*` in `headers.*` or `vars.*` means every key of the object; the key names also come from the output.
+- Parsers you register yourself, and JSON a command printed that was read as is, report `basis: "value_types"`: every string is external and numbers and booleans are fixed. This marking helps tell external text apart; it does not block prompt injection.
+
+Measured with instructions planted in a commit message, a file name and a log line, 90 runs per condition (model `haiku`), on counting tasks:
+
+| Tool result | Instruction reached the model | Instruction followed | Correct answer |
+|-|-|-|-|
+| Raw output | 90/90 | 0/90 | 88/90 |
+| Default response (with `_origin`) | 90/90 | 0/90 | 90/90 |
+| Fixed fields only | 0/90 | 0/90 | 90/90 |
+
+Selecting fixed fields keeps the planted text away from the model. This model did not follow the instruction in the raw output either, so the measurement does not show whether `_origin` lowers the rate. Method and limits: [experiments/README.md](experiments/README.md), appendix R.
 
 ### Run receipts
 
@@ -556,7 +580,9 @@ parism receipts list
 | `unverifiable` | Not a git repository, so the workspace state cannot be compared |
 | `bad_signature` | A signing key is configured and the signature does not match |
 
-The workspace state covers HEAD, the change list, the diff against HEAD and the names and contents of untracked files. Files excluded by `.gitignore`, changes inside submodules and anything outside the repository are not covered.
+The workspace state is built from the paths and contents of the files in the working tree, untracked files included. HEAD and staging are not part of it, so staging or committing the exact content that passed still checks as `ok`. Files excluded by `.gitignore`, changes inside submodules, the executable bit and anything outside the repository are not covered. When untracked files exceed `untracked_max_files` or `untracked_max_bytes` they are compared by name only, so staging them reads as `stale` even with the same content.
+
+Checked against 15 sessions run for real in a sample project (combinations of running tests, editing, staging and committing): all 8 sessions that must not report success were blocked, and none of the 7 that may report it. Reproduce: `npm run build && node experiments/receipts-check.mjs`.
 
 A receipt does not say whether the tests check the right thing, and it does not stop forgery where the receipt file can be edited directly. Set `receipts.key_file` to add an HMAC-SHA256 signature; the key is never read from the environment or passed to child processes, and a key file inside `guard.allowed_paths` is refused. Signing only prevents forgery where the key file cannot be read except through Parism.
 

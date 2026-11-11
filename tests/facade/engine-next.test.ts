@@ -178,8 +178,8 @@ describe("_origin", () => {
 
   it("분류표가 없는 파서의 결과는 값의 형으로 분류하고 그 사실을 밝힌다", async () => {
     const engine = engineFor();
-    const env    = await engine.run("env", { ...NEXT, args: [], cwd: work });
-    expect(env._origin).toEqual({ external: ["vars.*"], fixed: [], basis: "value_types" });
+    const json   = await engine.run("echo", { ...NEXT, args: ['{"name":"x","count":2}'], cwd: work });
+    expect(json._origin).toEqual({ external: ["name"], fixed: ["count"], basis: "value_types" });
 
     const tabled = await engine.run("ls", { ...NEXT, args: ["-l", path.join(work, "src")], cwd: work });
     expect(tabled._origin?.basis).toBe("table");

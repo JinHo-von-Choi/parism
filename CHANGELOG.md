@@ -13,13 +13,13 @@
 
 - **시험·빌드·린트 파서.** `vitest`, `jest`, `tsc`, `eslint`(직접 실행 또는 `npx`), `pytest`, `go test`, `ruff check`, `mypy`, `cargo test`, `cargo build`, `cargo check`의 결과를 구조화한다. 실패한 시험과 진단은 모두 싣고 통과한 항목은 개수만 싣는다. 러너가 보고한 실패 수와 파싱한 항목 수가 다르면 결과를 만들지 않고 원문을 돌려준다.
 - **`run`의 `machine_format`.** 러너의 기계용 출력 형식 인자를 실행 전에 덧붙인다. 덧붙인 인자도 가드 검사를 받고 응답의 `args`에 실린다. vitest와 pytest의 보고서는 임시 파일로 받아 읽고 지운다. 결정 기록: `docs/adr/2026-11-11-devloop-runner-guard.md`.
-- **장기 실행 태스크.** `run`의 `mode: "task"`는 명령을 시작하고 식별자를 바로 돌려준다. `task` 도구로 상태를 조회하고 그 태스크만 취소한다. 태스크는 `tasks.timeout_ms`(기본 10분)와 전용 슬롯 `tasks.max_concurrency`(기본 2)를 쓰고, 슬롯이 차면 대기 없이 거절한다. `cargo test`와 `go test` 태스크는 실행 중에 통과·실패 수와 실패한 시험 이름을 돌려준다.
+- **장기 실행 태스크.** `run`의 `mode: "task"`는 명령을 시작하고 식별자를 바로 돌려준다. `task` 도구로 상태를 조회하고 그 태스크만 취소한다. 상태 조회에 `wait_ms`를 주면 태스크가 끝나거나 새 실패가 나올 때까지(최대 30초) 기다렸다가 답한다. 태스크는 `tasks.timeout_ms`(기본 10분)와 전용 슬롯 `tasks.max_concurrency`(기본 2)를 쓰고, 슬롯이 차면 대기 없이 거절한다. `cargo test`와 `go test` 태스크는 실행 중에 통과·실패 수와 실패한 시험 이름을 돌려준다.
 - **MCP 태스크 요청.** 호스트 설정에서 `tasks.mcp_extension`을 켜면 서버가 태스크 기능을 선언하고 `run_task` 도구를 노출한다. MCP 태스크를 지원하는 클라이언트는 `tasks/get`, `tasks/result`, `tasks/cancel`로 같은 태스크를 다룬다. MCP SDK의 experimental API를 쓰므로 기본값은 꺼짐이다.
 - **`query_result` 도구.** 보관한 결과에 `select`, `where`, `sort_by`, `limit`, `aggregate`를 다시 건다. 처음 실행의 프로젝션과 무관하게 파싱한 전체 결과에 적용하고, 명령은 다시 실행하지 않는다. `row_pointers`로 돌려준 행의 원래 위치를 알려 주어 `explain_result`로 이어 갈 수 있다.
 - **집계 `aggregate`.** `{ group_by?, sum?, distinct? }`로 행을 묶어 묶음마다 `count`, `sum_<필드>`, `distinct_<필드>`를 가진 행 하나를 낸다. `run`과 `query_result`에서 쓴다.
 - **시험·진단 결과의 근거.** `tsc`, `mypy`, `cargo build`의 진단 필드와 `cargo test`, `go test`의 실패한 시험 이름이 원문 어느 구간에서 왔는지 `explain_result`로 조회한다.
-- **출처 표시 `_origin`.** 파싱 결과가 있는 응답에 외부 문자열 필드(`external`)와 고정 값 필드(`fixed`)의 경로를 싣는다. 분류표가 없는 파서는 값의 형으로 분류하고 `basis: "value_types"`로 알린다. `fixed` 필드에 형식 밖의 값이 들어오면 `schema_violation`으로 결과를 비운다. 분류표는 시험·진단 파서와 `ls`, `find`, `ps`, `git status`, `git log`, `git branch`, `grep`, `stat`, `wc`, `df`, `du`, `cat`, `head`, `tail`, `which`, `pwd`에 있다.
-- **실행 영수증.** 호스트 설정에서 `receipts.enabled`를 켜면 `run`이 끝날 때마다 명령, 종료 코드, 결과 요약, git 작업 공간 상태를 `~/.parism/receipts/receipts.jsonl`에 남긴다. `parism receipts check`는 `verify.commands`나 `--require`로 지정한 명령마다 통과한 최신 영수증이 있는지 판정한다(`ok`, `missing`, `failed`, `stale`, `unverifiable`, `bad_signature`). `receipts.key_file`을 주면 HMAC-SHA256 서명을 붙인다.
+- **출처 표시 `_origin`.** 파싱 결과가 있는 응답에 외부 문자열 필드(`external`)와 고정 값 필드(`fixed`)의 경로를 싣는다. 분류표가 없는 파서는 값의 형으로 분류하고 `basis: "value_types"`로 알린다. `fixed` 필드에 형식 밖의 값이 들어오면 `schema_violation`으로 결과를 비운다. 내장 파서는 모두 분류표가 있다. 직접 등록한 파서와 명령이 낸 JSON을 그대로 읽은 결과는 값의 형으로 분류한다.
+- **실행 영수증.** 호스트 설정에서 `receipts.enabled`를 켜면 `run`이 끝날 때마다 명령, 종료 코드, 결과 요약, git 작업 공간 상태를 `~/.parism/receipts/receipts.jsonl`에 남긴다. `parism receipts check`는 `verify.commands`나 `--require`로 지정한 명령마다 통과한 최신 영수증이 있는지 판정한다(`ok`, `missing`, `failed`, `stale`, `unverifiable`, `bad_signature`). 작업 공간 상태는 작업 트리 파일의 경로와 내용으로 만들어, 통과한 내용 그대로 스테이징하거나 커밋한 뒤에도 `ok`다. `receipts.key_file`을 주면 HMAC-SHA256 서명을 붙인다.
 - **설정 항목.** `tasks`, `results`, `receipts`, `verify`. `results`, `receipts`, `verify`는 호스트 설정에서만 읽고, 프로젝트 설정의 `tasks`는 줄이는 방향만 반영한다.
 - **실행 하나만 취소.** 실행기가 `AbortSignal`을 받아 그 실행의 프로세스 그룹에만 종료 신호를 보낸다. 실패 사유는 `cancelled`다.
 - **`describe`의 `next_contract`.** 새 계약에서만 동작하는 옵션, 도구, 필드의 안내를 돌려준다.
@@ -33,6 +33,11 @@
 - 결과 보관함의 최대 개수와 보관 시간을 `results` 설정으로 바꿀 수 있다. 기본값은 16개, 60초 그대로다.
 - build 프로필의 `cargo build`, `cargo test`, `cargo check`가 대상 선택 옵션(`--lib`, `-p`, `--features` 등)과 `--message-format=json`을 받는다.
 - `cargo build`, `cargo test`, `cargo check`를 기계용 형식 밖의 인자로 실행하면 `unsupported_format`과 바꿔 실행할 인자(`hint.args`)를 돌려준다. `cargo tree`의 동작은 그대로다.
+
+### Fixed
+
+- `ss`: 출력이 크기 상한에서 잘렸을 때 잘렸다는 표시 줄을 연결 행으로 읽던 문제. 큐 길이가 숫자가 아닌 줄은 행으로 세지 않는다.
+- `systeminfo`: 메모리 값에 숫자가 없으면(`N/A`) `total_memory_mb`, `available_memory_mb`가 `null`이다.
 
 ## [2.2.1] - 2026-10-29
 

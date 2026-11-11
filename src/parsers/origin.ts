@@ -18,6 +18,15 @@ import { resolveRunner }     from "./devloop/index.js";
 import { isPorcelainArgs }   from "./git/status-porcelain.js";
 import { skipLeadingFlags }  from "./format.js";
 import { BUILTIN_CONTRACTS } from "./contracts.js";
+import { singleValueFlag }   from "./system/id.js";
+import { ipPack }            from "./network/ip.js";
+import { vmstatPack }        from "./system/vmstat.js";
+import { lsmodPack }         from "./system/lsmod.js";
+import { lsusbPack }         from "./system/lsusb.js";
+import { lsblkPack }         from "./system/lsblk.js";
+import { swaponPack }        from "./system/swapon.js";
+import { lscpuPack }         from "./system/lscpu.js";
+import { ipcsPack }          from "./system/ipcs.js";
 
 /**
  * 필드 한 개의 분류.
@@ -28,6 +37,8 @@ export type FieldOrigin = "external" | "number" | "boolean" | readonly string[];
 
 /**
  * 필드 경로 → 분류. 경로는 `passed`, `failures[].message`처럼 쓴다. `[]`는 배열의 모든 원소다.
+ * `*`는 객체의 모든 키다. 키 이름이 출력에서 오는 객체(`vars.*`, `headers.*`)에 쓴다.
+ * external 경로는 그 아래의 값 전체를 가리킨다(`root.children[]`은 하위 트리 전체다).
  * 표에 없는 필드는 분류하지 않은 필드다.
  */
 export type OriginTable = Readonly<Record<string, FieldOrigin>>;
@@ -191,10 +202,229 @@ const DU: OriginTable = { "entries[].size": "external", "entries[].path": "exter
 const LINES: OriginTable = { "lines[]": "external" };
 const PATHS: OriginTable = { "paths[]": "external", ...SUMMARY };
 
+
+/** 파서가 표로 읽지 못했을 때 내는 줄 목록과 원문 */
+const FALLBACK: OriginTable = { "lines[]": "external", "raw": "external" };
+
+/** 접두사 아래의 필드를 한 분류로 묶어 표를 만든다. */
+function fields(prefix: string, origin: FieldOrigin, names: readonly string[]): OriginTable {
+  return Object.fromEntries(names.map(name => [`${prefix}${name}`, origin]));
+}
+
+const TREE: OriginTable = {
+  "root.name":       "external",
+  "root.type":       ["file", "directory"],
+  "root.children[]": "external",
+  "directories":     "number",
+  "files":           "number",
+};
+
+const PING: OriginTable = {
+  ...fields("", "external", ["target", "target_ip"]),
+  ...fields("", "number", ["packets_transmitted", "packets_received", "packet_loss_percent", "rtt_min_ms", "rtt_avg_ms", "rtt_max_ms"]),
+};
+
+function curlResponse(prefix: string): OriginTable {
+  return {
+    [`${prefix}status_code`]:        "number",
+    [`${prefix}status_text`]:        "external",
+    [`${prefix}headers.*`]:          "external",
+    [`${prefix}header_values.*[]`]:  "external",
+  };
+}
+const CURL: OriginTable = { ...curlResponse(""), ...curlResponse("history[]."), ...FALLBACK };
+
+const NETSTAT: OriginTable = fields("connections[].", "external", ["proto", "local_address", "foreign_address", "state"]);
+
+const LSOF: OriginTable = {
+  ...fields("entries[].", "external", ["command", "user", "fd", "type", "device", "name", "state"]),
+  "entries[].pid": "number",
+};
+
+const SS: OriginTable = {
+  ...fields("connections[].", "external", ["netid", "state", "local_address", "local_port", "peer_address", "peer_port"]),
+  ...fields("connections[].", "number", ["recv_q", "send_q"]),
+};
+
+function digQuery(prefix: string): OriginTable {
+  return {
+    ...fields(prefix, "external", ["query", "query_type", "server", "answers[].name", "answers[].type", "answers[].value"]),
+    ...fields(prefix, "number", ["query_time_ms", "answers[].ttl"]),
+    [`${prefix}answers[].class`]: ["IN", "CH", "HS"],
+  };
+}
+const DIG: OriginTable = { ...digQuery(""), ...digQuery("queries[].") };
+
+const FREE_ROW = [
+  "total", "used", "free", "shared", "buff_cache", "available",
+  "total_bytes", "used_bytes", "free_bytes", "shared_bytes", "buff_cache_bytes", "available_bytes",
+] as const;
+const FREE: OriginTable = {
+  ...fields("mem.", "number", FREE_ROW),
+  ...fields("swap.", "number", FREE_ROW),
+  "unit": ["bytes", "giga", "mega", "kilo", "GB", "MB", "KB"],
+};
+
+const UNAME: OriginTable = fields("", "external", ["kernel_name", "hostname", "kernel_release", "kernel_version", "machine", "os", "raw"]);
+
+const ID: OriginTable = {
+  "uid": "number", "user": "external", "gid": "number", "group": "external",
+  "groups[].id": "number", "groups[].name": "external",
+};
+/** `id -G`는 그룹 번호만 낸다. */
+const ID_GROUP_NUMBERS: OriginTable = { "groups[]": "number" };
+
+const SYSTEMCTL: OriginTable = {
+  ...fields("units[].", "external", ["name", "load", "active", "sub", "description", "job"]),
+  "units[].failed": "boolean",
+  ...FALLBACK,
+};
+
+const JOURNALCTL: OriginTable = {
+  ...fields("entries[].", "external", ["timestamp", "hostname", "unit", "message"]),
+  "entries[].pid": "number",
+  ...FALLBACK,
+};
+
+const DIR: OriginTable = {
+  "directory":             "external",
+  "entries[].name":        "external",
+  "entries[].type":        ["file", "directory"],
+  "entries[].size_bytes":  "number",
+  "entries[].modified_at": "external",
+  ...fields("", "number", ["total_files", "total_dirs", "free_bytes"]),
+};
+
+const TASKLIST: OriginTable = {
+  ...fields("processes[].", "external", ["name", "session_name"]),
+  ...fields("processes[].", "number", ["pid", "session_number", "mem_usage_kb"]),
+};
+
+const IPCONFIG: OriginTable = {
+  ...fields("", "external", ["hostname", "dns_suffix"]),
+  ...fields("adapters[].", "external", [
+    "name", "description", "ipv4", "ipv6", "subnet_mask", "gateway", "dns_servers[]", "mac_address", "dhcp_server", "media_state",
+  ]),
+  "adapters[].dhcp_enabled": "boolean",
+};
+
+const SYSTEMINFO: OriginTable = {
+  ...fields("", "external", [
+    "hostname", "os_name", "os_version", "os_build", "os_manufacturer", "system_type", "processor", "domain", "logon_server",
+    "hotfixes[]", "network_cards[]", "boot_device", "system_locale", "time_zone", "bios_version",
+  ]),
+  ...fields("", "number", ["total_memory_mb", "available_memory_mb"]),
+};
+
+const KUBECTL: OriginTable = {
+  "resource": ["pods", "events"],
+  ...fields("pods[].", "external", ["name", "status", "lastRestart", "age", "ip", "node"]),
+  ...fields("pods[].", "number", ["ready.current", "ready.total", "restarts"]),
+  ...fields("events[].", "external", ["last_seen", "type", "reason", "object", "message"]),
+};
+
+const DOCKER: OriginTable = {
+  "resource": ["ps", "stats", "images"],
+  ...fields("containers[].", "external", ["container_id", "image", "command", "created", "status", "ports", "names"]),
+  ...fields("stats[].", "external", ["container_id", "name", "cpu_perc", "mem_usage", "mem_limit", "mem_perc", "net_io", "block_io"]),
+  "stats[].pids": "number",
+  ...fields("images[].", "external", ["repository", "tag", "image_id", "digest", "created", "size", "content_size"]),
+};
+
+const GH: OriginTable = {
+  "resource": ["pr_list"],
+  ...fields("pull_requests[].", "external", ["title", "branch", "state", "age", "author", "labels[]", "updated_at"]),
+  "pull_requests[].number": "number",
+  "pull_requests[].draft":  "boolean",
+};
+
+const HELM: OriginTable = {
+  ...fields("releases[].", "external", ["name", "namespace", "updated", "status", "chart", "app_version"]),
+  "releases[].revision": "number",
+  ...FALLBACK,
+};
+
+const TERRAFORM: OriginTable = { ...fields("summary.", "number", ["to_add", "to_change", "to_destroy"]), ...FALLBACK };
+
+const APT: OriginTable = { ...fields("packages[].", "external", ["name", "suite", "version", "arch", "status", "description"]), ...FALLBACK };
+
+const BREW: OriginTable = { ...fields("packages[].", "external", ["name", "version"]), ...FALLBACK };
+
+const NPM: OriginTable = {
+  ...fields("dependencies[].", "external", ["name", "version", "problem"]),
+  "dependencies[].depth":   "number",
+  "dependencies[].deduped": "boolean",
+  ...FALLBACK,
+};
+
+const CARGO_TREE: OriginTable = {
+  ...fields("crates[].", "external", ["name", "version", "path", "source"]),
+  "crates[].depth": "number",
+  ...fields("crates[].", "boolean", ["deduped", "proc_macro"]),
+  ...FALLBACK,
+};
+
+const GIT_DIFF: OriginTable = {
+  "raw":              "external",
+  "files_changed[]":  "external",
+  "files[].path":     "external",
+  "files[].old_path": "external",
+  "files[].status":   ["modified", "added", "deleted", "renamed", "copied"],
+  "files[].binary":   "boolean",
+  ...fields("files[].hunks[].", "number", ["start_a", "count_a", "start_b", "count_b"]),
+  "files[].hunks[].lines[]": "external",
+  "_truncated":       "boolean",
+  "_summary":         ["too large to parse"],
+};
+
+/** 스키마에서 분류표를 만들 때 읽는 Zod 정의의 일부 */
+interface SchemaNode {
+  _zod: { def: {
+    type:       string;
+    shape?:     Record<string, SchemaNode>;
+    element?:   SchemaNode;
+    innerType?: SchemaNode;
+    entries?:   Record<string, unknown>;
+    values?:    unknown[];
+  } };
+}
+
+/**
+ * ParserPack의 Zod 스키마에서 분류표를 만든다. 수와 불리언, 열거형과 문자열 리터럴은 fixed이고
+ * 그 밖의 형(문자열, 문자열 합집합)은 external이다. 스키마가 이미 검사하는 형과 같은 기준이다.
+ */
+function tableFromSchema(node: SchemaNode, path = "", out: Record<string, FieldOrigin> = {}): Record<string, FieldOrigin> {
+  const def = node._zod.def;
+  if ((def.type === "optional" || def.type === "nullable") && def.innerType) return tableFromSchema(def.innerType, path, out);
+  if (def.type === "object" && def.shape) {
+    for (const [key, child] of Object.entries(def.shape)) tableFromSchema(child, path === "" ? key : `${path}.${key}`, out);
+    return out;
+  }
+  if (def.type === "array" && def.element) return tableFromSchema(def.element, `${path}[]`, out);
+  const literals = def.type === "enum" ? Object.values(def.entries ?? {}) : def.type === "literal" ? def.values ?? [] : undefined;
+  if (def.type === "number" || def.type === "boolean") out[path] = def.type;
+  else if (literals && literals.length > 0 && literals.every(v => typeof v === "string")) out[path] = literals as string[];
+  else out[path] = "external";
+  return out;
+}
+
+const PACK_TABLES: Readonly<Record<string, OriginTable>> = Object.fromEntries(
+  [ipPack, vmstatPack, lsmodPack, lsusbPack, lsblkPack, swaponPack, lscpuPack, ipcsPack]
+    .map(pack => [pack.name, tableFromSchema(pack.schema as unknown as SchemaNode)]),
+);
+
 const BY_COMMAND: Readonly<Record<string, OriginTable>> = {
+  ...PACK_TABLES,
   ls: LS, ps: PS, grep: GREP, stat: STAT, wc: WC, df: DF, du: DU,
   cat: LINES, head: LINES, tail: LINES, find: PATHS, which: PATHS,
   pwd: { path: "external" },
+  env: { "vars.*": "external" },
+  kill: { raw: "external" },
+  tree: TREE, ping: PING, curl: CURL, netstat: NETSTAT, lsof: LSOF, ss: SS, dig: DIG,
+  free: FREE, uname: UNAME, systemctl: SYSTEMCTL, journalctl: JOURNALCTL,
+  dir: DIR, tasklist: TASKLIST, ipconfig: IPCONFIG, systeminfo: SYSTEMINFO,
+  kubectl: KUBECTL, docker: DOCKER, gh: GH, helm: HELM, terraform: TERRAFORM,
+  apt: APT, brew: BREW, npm: NPM, pnpm: NPM, yarn: NPM, cargo: CARGO_TREE,
 };
 
 /** git 서브커맨드별 분류표. status는 출력 형식에 따라 둘로 나뉜다. */
@@ -203,6 +433,7 @@ function gitTable(args: readonly string[]): OriginTable | undefined {
   if (sub[0] === "status") return isPorcelainArgs(sub) ? GIT_STATUS_PORCELAIN : GIT_STATUS;
   if (sub[0] === "log")    return GIT_LOG;
   if (sub[0] === "branch") return GIT_BRANCH;
+  if (sub[0] === "diff")   return GIT_DIFF;
   return undefined;
 }
 
@@ -211,8 +442,22 @@ export function originTableFor(cmd: string, args: readonly string[]): OriginTabl
   const runner = resolveRunner(cmd, args);
   if (runner) return runner.spec.rowsKey === "failures" ? TEST_REPORT : DIAGNOSTIC_REPORT;
   if (cmd === "git") return gitTable(args);
-  if (cmd === "cargo" || cmd === "npx" || cmd === "go" || cmd === "ruff") return undefined;
+  if (cmd === "id")  return singleValueFlag([...args]) === "G" ? ID_GROUP_NUMBERS : ID;
   return Object.hasOwn(BY_COMMAND, cmd) ? BY_COMMAND[cmd] : undefined;
+}
+
+/**
+ * 분류표에서 이 결과에 해당하는 필드만 남긴다. 최상위 키가 결과에 없는 경로를 뺀다.
+ * 한 파서가 형식에 따라 다른 모양을 내므로(`packages` 또는 `lines`), 표에는 모든 모양의 필드가 들어 있다.
+ * 빈 배열 아래의 필드는 남는다. 호출자가 다음 실행에서 고를 필드를 미리 알 수 있어야 하기 때문이다.
+ */
+export function tableForResult(table: OriginTable, parsed: unknown): OriginTable {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return table;
+  const present = parsed as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(table).filter(([field]) => {
+    const top = field.split(".")[0]!.replace(/\[\]$/, "");
+    return top === "*" || present[top] !== undefined;
+  }));
 }
 
 /** 분류표에서 external 필드의 경로 목록 */
@@ -225,7 +470,7 @@ export function fixedFields(table: OriginTable): string[] {
   return Object.entries(table).filter(([, origin]) => origin !== "external").map(([field]) => field);
 }
 
-/** 경로가 가리키는 값을 모두 모은다. `[]` 조각은 배열의 모든 원소로 펼친다. 없는 필드는 건너뛴다. */
+/** 경로가 가리키는 값을 모두 모은다. `[]` 조각은 배열의 모든 원소로, `*` 조각은 객체의 모든 값으로 펼친다. 없는 필드는 건너뛴다. */
 function valuesAt(root: unknown, fieldPath: string): unknown[] {
   let current: unknown[] = [root];
   for (const segment of fieldPath.split(".")) {
@@ -234,12 +479,14 @@ function valuesAt(root: unknown, fieldPath: string): unknown[] {
     const next: unknown[] = [];
     for (const value of current) {
       if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
-      const child = (value as Record<string, unknown>)[key];
-      if (child === undefined) continue;
-      if (each) {
-        if (Array.isArray(child)) next.push(...child);
-      } else {
-        next.push(child);
+      const children = key === "*" ? Object.values(value) : [(value as Record<string, unknown>)[key]];
+      for (const child of children) {
+        if (child === undefined) continue;
+        if (each) {
+          if (Array.isArray(child)) next.push(...child);
+        } else {
+          next.push(child);
+        }
       }
     }
     current = next;

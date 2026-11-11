@@ -21,6 +21,12 @@ export interface SysteminfoResult {
 /**
  * Parses Windows `systeminfo` command output.
  */
+/** "16,384 MB"에서 수를 읽는다. 숫자가 없으면 null이다. */
+function megabytes(value: string | null): number | null {
+  const digits = (value ?? "").replace(/[^0-9]/g, "");
+  return digits === "" ? null : parseInt(digits, 10);
+}
+
 export function parseSysteminfo(_cmd: string, _args: string[], raw: string): SysteminfoResult {
   const lines = raw.split(/\r?\n/);
 
@@ -77,10 +83,10 @@ export function parseSysteminfo(_cmd: string, _args: string[], raw: string): Sys
       case /Domain/i.test(key):                 result.domain              = val; break;
       case /Logon Server/i.test(key):           result.logon_server        = val; break;
       case /Total Physical Memory/i.test(key):
-        result.total_memory_mb = val ? parseInt(val.replace(/[^0-9]/g, ""), 10) : null;
+        result.total_memory_mb = megabytes(val);
         break;
       case /Available Physical Memory/i.test(key):
-        result.available_memory_mb = val ? parseInt(val.replace(/[^0-9]/g, ""), 10) : null;
+        result.available_memory_mb = megabytes(val);
         break;
       case /Hotfix\(s\)/i.test(key):
         mode = "hotfix";

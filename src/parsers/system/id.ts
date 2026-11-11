@@ -9,7 +9,7 @@ export interface IdResult {
 }
 
 /** 단일 값 모드(-u, -g, -G)의 플래그를 찾는다. 이름 출력(-n)은 지원하지 않는다. */
-function singleValueFlag(args: string[]): "u" | "g" | "G" | null {
+export function singleValueFlag(args: string[]): "u" | "g" | "G" | null {
   const shorts = args.filter(a => /^-[a-zA-Z]+$/.test(a)).join("").replace(/-/g, "");
   if (shorts.includes("n")) return null;
   if (shorts.includes("G")) return "G";

@@ -6,7 +6,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { deriveOrigin, externalFields, fixedFields, fixedViolations, originTableFor } from "../../src/parsers/origin.js";
+import { deriveOrigin, externalFields, fixedFields, fixedViolations, originTableFor, tableForResult } from "../../src/parsers/origin.js";
+import { createRegistry } from "../../src/parsers/index.js";
+import { DEVLOOP_COMMANDS } from "../../src/parsers/devloop/index.js";
 
 describe("originTableFor()", () => {
   it("시험 러너와 진단 도구에 분류표가 있다", () => {
@@ -15,17 +17,48 @@ describe("originTableFor()", () => {
     expect(originTableFor("npx", ["cowsay"])).toBeUndefined();
   });
 
-  it("자주 쓰는 내장 파서에 분류표가 있고, git은 서브커맨드와 출력 형식으로 고른다", () => {
-    for (const cmd of ["ls", "find", "ps", "grep", "stat", "wc", "df", "du", "cat", "head", "tail", "which", "pwd"]) {
-      expect(originTableFor(cmd, []), cmd).toBeDefined();
-    }
+  it("내장 파서에 모두 분류표가 있고, git은 서브커맨드와 출력 형식으로 고른다", () => {
+    const registry = createRegistry();
+    const builtin  = [...registry.listCommands(), ...registry.listPacks()].filter(cmd => cmd !== "git" && !DEVLOOP_COMMANDS.includes(cmd));
+    expect(builtin.filter(cmd => originTableFor(cmd, []) === undefined)).toEqual([]);
+
     expect(originTableFor("git", ["status"])).toHaveProperty("staged[]", "external");
     expect(originTableFor("git", ["status", "--porcelain"])).toHaveProperty("entries[].path", "external");
     expect(originTableFor("git", ["--no-pager", "log", "--oneline"])).toHaveProperty("commits[].message", "external");
     expect(originTableFor("git", ["branch", "-vv"])).toHaveProperty("branches[].ahead", "number");
-    expect(originTableFor("git", ["diff"])).toBeUndefined();
-    expect(originTableFor("env", [])).toBeUndefined();
-    expect(originTableFor("cargo", ["tree"])).toBeUndefined();
+    expect(originTableFor("git", ["diff"])).toHaveProperty("files[].hunks[].lines[]", "external");
+    expect(originTableFor("cargo", ["tree"])).toHaveProperty("crates[].name", "external");
+    expect(originTableFor("id", ["-G"])).toEqual({ "groups[]": "number" });
+  });
+
+  it("스키마가 있는 파서는 스키마에서 분류표를 만들고, 예시 결과가 그 표의 형식에 맞는다", () => {
+    const registry = createRegistry();
+    expect(originTableFor("ip", ["-br", "link"])).toMatchObject({
+      "interfaces[].name": "external", "interfaces[].flags[]": "external",
+      "interfaces[].state": ["UNKNOWN", "NOTPRESENT", "DOWN", "LOWERLAYERDOWN", "TESTING", "DORMANT", "UP"],
+    });
+    expect(originTableFor("vmstat", [])).toHaveProperty("unit", ["KiB"]);
+    for (const name of registry.listPacks()) {
+      const pack = registry.getPack(name);
+      for (const fixture of pack?.fixtures ?? []) {
+        if (fixture.expected == null) continue;
+        expect(fixedViolations(fixture.expected, originTableFor(name, fixture.args ?? [])!), name).toEqual([]);
+      }
+    }
+  });
+
+  it("키 이름이 출력에서 오는 객체는 `*`로 모든 키를 가리킨다", () => {
+    const table = originTableFor("curl", ["-I"])!;
+    expect(table).toMatchObject({ "headers.*": "external", "status_code": "number" });
+    expect(fixedViolations({ status_code: "200", headers: { server: "x" } }, table)).toEqual(["status_code is not a number"]);
+    expect(fixedViolations({ a: { n: 1 }, b: { n: "one" } }, { "*.n": "number" })).toEqual(["*.n is not a number"]);
+  });
+
+  it("결과에 없는 모양의 필드는 뺀다. 빈 배열 아래의 필드는 남긴다", () => {
+    const table = originTableFor("apt", ["list"])!;
+    expect(Object.keys(tableForResult(table, { lines: ["x"] }))).toEqual(["lines[]"]);
+    expect(Object.keys(tableForResult(table, { packages: [] }))).toContain("packages[].name");
+    expect(Object.keys(tableForResult(table, { packages: [] }))).not.toContain("lines[]");
   });
 
   it("출력의 문자열 그대로인 권한, 시각, 해시는 external이다", () => {
