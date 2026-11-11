@@ -952,6 +952,19 @@ describe("태스크, 영수증, 검증 묶음, 보관함 설정", () => {
     expect(narrower.tasks).toEqual({ max_concurrency: 1, timeout_ms: 60_000 });
   });
 
+  it("MCP 태스크 확장은 호스트 설정에서만 켤 수 있다", async () => {
+    const off = await loadConfig("/tmp/prism-does-not-exist.json");
+    expect(off.tasks?.mcp_extension).toBeUndefined();
+
+    const globalOn = await write("g", { tasks: { mcp_extension: true } });
+    const host = await loadConfigMultiLayer({ globalPath: globalOn, projectPath: "/tmp/prism-none.json", envPrefix: "PARISM_TEST_NONE_" });
+    expect(host.tasks).toEqual({ max_concurrency: 2, timeout_ms: 600_000, mcp_extension: true });
+
+    const globalOff = await write("g", { trust_project_config: true });
+    const project   = await loadConfigMultiLayer({ globalPath: globalOff, projectPath: await write("p", { tasks: { mcp_extension: true } }), envPrefix: "PARISM_TEST_NONE_" });
+    expect(project.tasks?.mcp_extension).toBeUndefined();
+  });
+
   it("형식이 틀린 값은 버리고 기본값을 유지한다", async () => {
     const globalPath = await write("g", { verify: { commands: [["ok"], []] }, tasks: { max_concurrency: 0 }, receipts: { enabled: "yes" } });
     const cfg = await loadConfigMultiLayer({ globalPath, projectPath: "/tmp/prism-none.json", envPrefix: "PARISM_TEST_NONE_" });

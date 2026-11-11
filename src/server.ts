@@ -119,24 +119,44 @@ export async function buildPagedResult(
   return JSON.stringify(result, null, 2);
 }
 
+/** MCP 태스크 확장 어댑터 모듈(src/mcp/task-extension.ts)의 모양 */
+export type TaskExtensionModule = typeof import("./mcp/task-extension.js");
+
+/**
+ * 설정에서 태스크 확장을 켰을 때만 어댑터 모듈을 불러온다.
+ * 꺼져 있으면 MCP SDK의 experimental 코드를 불러오지 않는다.
+ */
+export async function loadTaskExtension(config: PrismConfig): Promise<TaskExtensionModule | undefined> {
+  return config.tasks?.mcp_extension === true ? import("./mcp/task-extension.js") : undefined;
+}
+
 /**
  * MCP 서버를 생성하고 `run` 도구를 등록한다.
  */
-export function createServer(config: PrismConfig, registry: ParserRegistry): McpServer {
+export function createServer(config: PrismConfig, registry: ParserRegistry, taskExtension?: TaskExtensionModule): McpServer {
+  const engine    = new ParismEngine(config, registry);
+  /**
+   * 태스크 확장은 tasks.mcp_extension이 켜져 있고 호출자가 어댑터 모듈을 넘겼을 때만 붙는다.
+   * 어댑터는 MCP SDK의 experimental API를 쓰므로 필요할 때만 불러오게 호출자가 넘긴다(loadTaskExtension).
+   */
+  const extension = config.tasks?.mcp_extension === true && taskExtension
+    ? { module: taskExtension, parts: taskExtension.createTaskExtensionParts(engine) }
+    : undefined;
+
   const server = new McpServer(
     { name: "parism", version: PACKAGE_VERSION },
-    { instructions: MCP_INSTRUCTIONS },
+    {
+      instructions: MCP_INSTRUCTIONS,
+      ...(extension && {
+        capabilities:     extension.module.TASK_CAPABILITIES,
+        taskStore:        extension.parts.taskStore,
+        taskMessageQueue: extension.parts.taskMessageQueue,
+      }),
+    },
   );
 
-  const engine = new ParismEngine(config, registry);
-
-  server.tool(
-    "run",
-    "Execute a shell command and receive structured output. " +
-    "All commands are filtered through an execution guard (whitelist + injection prevention). " +
-    "Use format='compact' for token-efficient columnar output. " +
-    "select/where/sort_by/limit filter the parsed row array on the server (applied in that order: where, sort_by, limit, select).",
-    {
+  /** run 도구의 입력. run_task(MCP 태스크 확장)도 mode와 contract_version을 뺀 같은 입력을 받는다. */
+  const runInput = {
       cmd:         z.string().describe("Command name (e.g. 'ls', 'git')"),
       args:        z.array(z.string()).default([]).describe("Command arguments"),
       cwd:         z.string().default(process.cwd()).describe("Working directory"),
@@ -168,7 +188,23 @@ export function createServer(config: PrismConfig, registry: ParserRegistry): Mcp
                    .describe("contract_version 'next' only. For test runners, compilers and linters, add the tool's machine-readable output flags before running. The response args are the arguments actually run."),
       mode:       z.enum(["wait", "task"]).default("wait")
                    .describe("contract_version 'next' only. 'task' starts the command, returns a task_id at once and keeps it running under the task time limit; read it with the task tool."),
-    },
+    };
+
+  /** MCP 태스크 확장. 켜져 있으면 프로토콜의 태스크 요청으로 run_task를 쓸 수 있다. */
+  if (extension) {
+    const taskInput: Record<string, z.ZodTypeAny> = { ...runInput };
+    delete taskInput.mode;
+    delete taskInput.contract_version;
+    extension.module.registerRunTask(server, engine, extension.parts.taskStore, taskInput, envelope => withCwdBanner(envelope.cwd, envelope, true));
+  }
+
+  server.tool(
+    "run",
+    "Execute a shell command and receive structured output. " +
+    "All commands are filtered through an execution guard (whitelist + injection prevention). " +
+    "Use format='compact' for token-efficient columnar output. " +
+    "select/where/sort_by/limit filter the parsed row array on the server (applied in that order: where, sort_by, limit, select).",
+    runInput,
     async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget, machine_format, mode, aggregate }) => {
       const opts = {
         args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain,

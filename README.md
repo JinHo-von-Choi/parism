@@ -560,6 +560,30 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 - 끝난 태스크의 결과는 10분, 최대 16개까지 보관합니다. 보관이 끝난 태스크는 `task_expired`로 알려 주고 다시 실행하지 않습니다.
 - 프로젝트 설정은 `tasks`의 두 값을 줄일 수만 있습니다.
 
+#### MCP 태스크 요청으로 쓰기
+
+MCP의 태스크 요청을 지원하는 클라이언트는 `task` 도구 대신 프로토콜 요청으로 같은 태스크를 다룰 수 있습니다. 호스트 설정에서 켭니다.
+
+```json
+{ "tasks": { "mcp_extension": true } }
+```
+
+켜면 서버가 태스크 기능을 선언하고 `run_task` 도구를 하나 더 노출합니다.
+
+```
+ tools/call run_task (task 인자 포함) ─▶ 태스크(working)
+ tasks/get     ─▶ 상태. 실행 중이면 statusMessage에 진행 상태
+ tasks/result  ─▶ run과 같은 결과
+ tasks/cancel  ─▶ 그 명령의 프로세스만 종료
+```
+
+- `run_task`의 입력은 `run`과 같고(`mode`, `contract_version` 제외) 결과는 `contract_version: "next"`의 `run`과 같습니다.
+- 태스크 요청 없이 `run_task`를 부르면 거절합니다. 일반 호출은 `run`을 쓰십시오.
+- 가드가 막았거나 슬롯이 없으면 `failed` 상태의 태스크를 돌려주고, `tasks/result`에 사유가 담긴 결과가 옵니다.
+- 슬롯, 시간 제한, 취소는 `run(mode: "task")`와 같은 태스크 관리자가 맡습니다.
+- 이 기능은 MCP SDK의 experimental 태스크 API를 씁니다. SDK가 바뀌면 동작이 달라질 수 있어 기본값은 꺼짐이고, SDK 버전을 `~1.32.1`로 고정했습니다.
+- 프로젝트 설정으로는 켤 수 없습니다.
+
 ### 보관 결과 재질의
 
 `query_result`는 `run(contract_version: "next", retain: true)`로 보관한 결과에 `select`, `where`, `sort_by`, `limit`, `aggregate`를 다시 겁니다. 명령은 다시 실행하지 않습니다.
@@ -733,7 +757,7 @@ Claude Code의 Stop 훅에 연결하는 방법은 [docs/mcp-clients/claude-code.
 | `guard.secrets.output_patterns` | 생략하면 기본 패턴(GitHub, GitLab, AWS, Slack 토큰 등)을 씁니다. 끄려면 `[]` |
 | `parsers.strict_schemas` | `true`면 파싱 결과를 Zod 스키마로 검증합니다 |
 | `telemetry.enabled` | `true`면 응답에 단계별 소요 시간을 붙이고 `describe`에 명령별 통계를 보여 줍니다. 외부로 전송하지 않습니다 |
-| `tasks` | 태스크의 동시 실행 수와 최대 실행 시간. 프로젝트 설정은 줄일 수만 있습니다 |
+| `tasks` | 태스크의 동시 실행 수(`max_concurrency`)와 최대 실행 시간(`timeout_ms`). 프로젝트 설정은 줄일 수만 있습니다. `mcp_extension`은 [MCP 태스크 요청](#mcp-태스크-요청으로-쓰기)을 켭니다 |
 | `results` | 결과 보관함의 최대 개수와 보관 시간. 호스트 설정에서만 읽습니다 |
 | `receipts` | 실행 영수증. `enabled`, `max_entries`, `max_age_days`, `untracked_max_files`, `untracked_max_bytes`, `key_file`. 호스트 설정에서만 읽습니다 |
 | `verify.commands` | `parism receipts check`가 기준으로 삼는 명령 목록. 각 항목은 `[명령, 인자...]`입니다. 호스트 설정에서만 읽습니다 |

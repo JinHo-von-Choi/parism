@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createServer }         from "./server.js";
+import { createServer, loadTaskExtension } from "./server.js";
 import { loadConfigMultiLayer } from "./config/loader.js";
 import { createRegistry }       from "./parsers/index.js";
 import { createCli }            from "./cli.js";
@@ -26,7 +26,7 @@ async function startMcpServer(): Promise<void> {
     process.stderr.write(`[parism] output redaction enabled (${validatedCount} patterns, raw/stderr only)\n`);
   }
 
-  const server    = createServer(config, registry);
+  const server    = createServer(config, registry, await loadTaskExtension(config));
   const transport = new StdioServerTransport();
 
   await server.connect(transport);

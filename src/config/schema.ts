@@ -112,6 +112,7 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
     fields: {
       max_concurrency: POSITIVE_LIMIT_SCHEMA,
       timeout_ms:      LIMIT_SCHEMA,
+      mcp_extension:   z.boolean(),
     },
   },
   receipts:             {

@@ -82,6 +82,11 @@ export interface PrismTasksConfig {
   max_concurrency: number;
   /** 태스크 하나의 최대 실행 시간(ms). 0은 무제한. */
   timeout_ms:      number;
+  /**
+   * true면 MCP 프로토콜의 태스크 요청으로 쓰는 `run_task` 도구를 함께 노출한다.
+   * MCP SDK의 태스크 API가 experimental이라 기본값은 false다. 호스트 설정에서만 켤 수 있다.
+   */
+  mcp_extension?:  boolean;
 }
 
 /**
@@ -438,6 +443,7 @@ function narrowTasks(base: PrismTasksConfig, project: Partial<PrismTasksConfig> 
   if (!project) return base;
   const concurrency = project.max_concurrency;
   return {
+    ...base,
     max_concurrency: typeof concurrency === "number" && concurrency >= 1 ? Math.min(base.max_concurrency, concurrency) : base.max_concurrency,
     timeout_ms:      narrowTimeout(base.timeout_ms, project.timeout_ms),
   };

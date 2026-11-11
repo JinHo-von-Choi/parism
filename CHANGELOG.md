@@ -14,6 +14,7 @@
 - **시험·빌드·린트 파서.** `vitest`, `jest`, `tsc`, `eslint`(직접 실행 또는 `npx`), `pytest`, `go test`, `ruff check`, `mypy`, `cargo test`, `cargo build`, `cargo check`의 결과를 구조화한다. 실패한 시험과 진단은 모두 싣고 통과한 항목은 개수만 싣는다. 러너가 보고한 실패 수와 파싱한 항목 수가 다르면 결과를 만들지 않고 원문을 돌려준다.
 - **`run`의 `machine_format`.** 러너의 기계용 출력 형식 인자를 실행 전에 덧붙인다. 덧붙인 인자도 가드 검사를 받고 응답의 `args`에 실린다. vitest와 pytest의 보고서는 임시 파일로 받아 읽고 지운다. 결정 기록: `docs/adr/2026-11-11-devloop-runner-guard.md`.
 - **장기 실행 태스크.** `run`의 `mode: "task"`는 명령을 시작하고 식별자를 바로 돌려준다. `task` 도구로 상태를 조회하고 그 태스크만 취소한다. 태스크는 `tasks.timeout_ms`(기본 10분)와 전용 슬롯 `tasks.max_concurrency`(기본 2)를 쓰고, 슬롯이 차면 대기 없이 거절한다. `cargo test`와 `go test` 태스크는 실행 중에 통과·실패 수와 실패한 시험 이름을 돌려준다.
+- **MCP 태스크 요청.** 호스트 설정에서 `tasks.mcp_extension`을 켜면 서버가 태스크 기능을 선언하고 `run_task` 도구를 노출한다. MCP 태스크를 지원하는 클라이언트는 `tasks/get`, `tasks/result`, `tasks/cancel`로 같은 태스크를 다룬다. MCP SDK의 experimental API를 쓰므로 기본값은 꺼짐이다.
 - **`query_result` 도구.** 보관한 결과에 `select`, `where`, `sort_by`, `limit`, `aggregate`를 다시 건다. 처음 실행의 프로젝션과 무관하게 파싱한 전체 결과에 적용하고, 명령은 다시 실행하지 않는다. `row_pointers`로 돌려준 행의 원래 위치를 알려 주어 `explain_result`로 이어 갈 수 있다.
 - **집계 `aggregate`.** `{ group_by?, sum?, distinct? }`로 행을 묶어 묶음마다 `count`, `sum_<필드>`, `distinct_<필드>`를 가진 행 하나를 낸다. `run`과 `query_result`에서 쓴다.
 - **시험·진단 결과의 근거.** `tsc`, `mypy`, `cargo build`의 진단 필드와 `cargo test`, `go test`의 실패한 시험 이름이 원문 어느 구간에서 왔는지 `explain_result`로 조회한다.
@@ -24,6 +25,8 @@
 - **`describe`의 `next_contract`.** 새 계약에서만 동작하는 옵션, 도구, 필드의 안내를 돌려준다.
 
 ### Changed
+
+- `@modelcontextprotocol/sdk` 의존성 범위를 `~1.32.1`로 좁혔다. 태스크 요청 기능이 SDK의 experimental API에 기대므로 마이너 버전이 올라가도 자동으로 따라가지 않게 한다.
 
 - `contract_version: "next"`의 `run` 응답은 들여쓰기 없이 직렬화한다.
 - 결과 보관함은 프로젝션을 적용하기 전의 파싱 결과도 함께 보관한다. 보관 크기 한도(결과당 2MiB, 합계 32MiB)는 그 크기까지 포함해 적용한다.

@@ -499,6 +499,8 @@ Commands longer than `guard.timeout_ms` (10 seconds by default) run as tasks.
 - A `cargo test` task reports `progress: { passed, failed, skipped, failed_names }` while running. Other runners report elapsed time and output bytes only.
 - A finished task's result is kept for 10 minutes, 16 at most. It is never re-run.
 
+Clients that speak MCP tasks can use protocol requests instead of the `task` tool. Set `{ "tasks": { "mcp_extension": true } }` in the host config. The server then declares the tasks capability and exposes `run_task`: call it with task augmentation, poll `tasks/get` (`statusMessage` carries progress), read the run result with `tasks/result`, stop it with `tasks/cancel`. Its inputs are those of `run` without `mode` and `contract_version`. A guard denial or a full slot comes back as a `failed` task whose result holds the reason. This uses the MCP SDK's experimental tasks API, so it is off by default, cannot be enabled from a project config, and the SDK is pinned to `~1.32.1`.
+
 ### Querying a retained result
 
 `query_result` applies `select`, `where`, `sort_by`, `limit` and `aggregate` again to a result kept with `run(contract_version: "next", retain: true)`. It works on the whole parsed result, independent of the projection of the first run, and never re-runs the command. `source_complete: false` means the first run had no projection argument and may have been cut at `max_items`. `row_pointers` gives each returned row's position in the retained result (`/processes/41`); append a field name and pass it to `explain_result`.
