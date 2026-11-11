@@ -23,6 +23,7 @@ import { ipPack }            from "./network/ip.js";
 import { vmstatPack }        from "./system/vmstat.js";
 import { lsmodPack }         from "./system/lsmod.js";
 import { lsusbPack }         from "./system/lsusb.js";
+import { lspciPack }         from "./system/lspci.js";
 import { lsblkPack }         from "./system/lsblk.js";
 import { swaponPack }        from "./system/swapon.js";
 import { lscpuPack }         from "./system/lscpu.js";
@@ -409,7 +410,7 @@ function tableFromSchema(node: SchemaNode, path = "", out: Record<string, FieldO
 }
 
 const PACK_TABLES: Readonly<Record<string, OriginTable>> = Object.fromEntries(
-  [ipPack, vmstatPack, lsmodPack, lsusbPack, lsblkPack, swaponPack, lscpuPack, ipcsPack]
+  [ipPack, vmstatPack, lsmodPack, lsusbPack, lspciPack, lsblkPack, swaponPack, lscpuPack, ipcsPack]
     .map(pack => [pack.name, tableFromSchema(pack.schema as unknown as SchemaNode)]),
 );
 
