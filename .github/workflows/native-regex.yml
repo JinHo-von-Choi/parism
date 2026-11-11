@@ -37,10 +37,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -75,7 +75,7 @@ jobs:
         run: node experiments/regex-byte-identity.mjs --out experiments/regex-byte-identity/results-${{ github.run_number }}.json
 
       - name: Upload byte identity record
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: byte-identity-${{ github.run_number }}
           path: experiments/regex-byte-identity/results-*.json
@@ -132,10 +132,10 @@ jobs:
             cross: "false"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -166,7 +166,7 @@ jobs:
           ls -l "$BIN"
 
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.package }}
           path: packages/${{ matrix.package }}
@@ -182,17 +182,17 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
           cache: npm
 
       - name: Download all platform packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: packages
           pattern: parism-regex-*
