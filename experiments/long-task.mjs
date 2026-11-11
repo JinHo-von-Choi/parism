@@ -161,7 +161,7 @@ function summarize({ events, total_ms }, kind) {
   const namesOther   = SLOW_TESTS.some(([name]) => new RegExp(`${name}\\W[^.\\n]*fail`, "i").test(answer));
   const success = kind === "failing"
     ? namesFailure && !namesOther
-    : /all (?:\d+ )?tests? pass|no tests? fail|none fail|0 failed|no failures/i.test(answer);
+    : /all (?:\d+ )?tests? pass|no tests? fail|none fail|0 failed|no failures/i.test(answer) && !/not all (?:\d+ )?tests? pass/i.test(answer);
   return {
     success, finished, calls, cancelled,
     total_s: Math.round(total_ms / 100) / 10,
