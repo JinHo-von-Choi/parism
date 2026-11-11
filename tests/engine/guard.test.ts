@@ -1,3 +1,6 @@
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { GuardError, checkGuard } from "../../src/engine/guard.js";
 import { DEFAULT_CONFIG } from "../../src/config/loader.js";
@@ -17,6 +20,39 @@ describe("checkGuard()", () => {
     try { checkGuard("rm", ["-rf", "/"], cwdOk, cfg); } catch (e) {
       expect(e).toBeInstanceOf(GuardError);
       expect((e as GuardError).reason).toBe("command_not_allowed");
+    }
+  });
+
+  it("cmd에 명령줄 전체가 오면 인자를 args로 옮기라고 안내한다", () => {
+    expect(() => checkGuard("ls -la src", [], cwdOk, cfg))
+      .toThrow(/cmd: "ls", args: \["-la","src"\]/);
+    expect(() => checkGuard("rm -rf /", [], cwdOk, cfg)).not.toThrow(/args/);
+  });
+
+  it("검색어와 출력 형식 값의 |, <, >는 차단 패턴으로 보지 않는다", () => {
+    expect(() => checkGuard("grep", ["-n", "-E", "BEGIN|END", "package.json"], cwdOk, cfg)).not.toThrow();
+    expect(() => checkGuard("grep", ["-e", "a|b", "package.json"], cwdOk, cfg)).not.toThrow();
+    expect(() => checkGuard("git", ["log", "-n", "1", "--format=%an <%ae>"], cwdOk, cfg)).not.toThrow();
+    expect(() => checkGuard("grep", ["x", "--include", "a|b"], cwdOk, cfg)).toThrow(/Blocked pattern/);
+    expect(() => checkGuard("git", ["log", "a|b"], cwdOk, cfg)).toThrow(/Blocked pattern/);
+  });
+
+  it("경로로 지정한 실행 파일은 설정을 켠 build 프로필에서 허용 경로 안일 때만 통과한다", () => {
+    const dir    = mkdtempSync(path.join(realpathSync(tmpdir()), "parism-guard-exec-"));
+    const script = path.join(dir, "configure");
+    writeFileSync(script, "#!/bin/sh\n", { mode: 0o755 });
+    symlinkSync("/bin/sh", path.join(dir, "outside"));
+    const withExec = (guard: object) => ({ ...cfg, guard: { ...cfg.guard, allowed_paths: [dir], ...guard } });
+    const on = withExec({ profile: "build", workspace_executables: true });
+    try {
+      expect(() => checkGuard("./configure", ["--prefix", dir], dir, on)).not.toThrow();
+      expect(() => checkGuard(script, [], dir, on)).not.toThrow();
+      expect(() => checkGuard("./outside", [], dir, on)).toThrow(/not in the allowed list/);
+      expect(() => checkGuard("/bin/sh", [], dir, on)).toThrow(/not in the allowed list/);
+      expect(() => checkGuard("./configure", [], dir, withExec({ profile: "build" }))).toThrow(/not in the allowed list/);
+      expect(() => checkGuard("./configure", [], dir, withExec({ workspace_executables: true }))).toThrow(/not in the allowed list/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

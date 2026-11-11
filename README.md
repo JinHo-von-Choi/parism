@@ -320,7 +320,7 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 1. **명령 허용 목록**: `allowed_commands`에 없는 명령은 프로세스를 만들지 않고 거절합니다.
 2. **경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로로 보이는 인자(`/`가 들어 있거나 `.`, `~`로 시작하거나 실제로 존재하는 항목, 심볼릭 링크 포함)를 검사합니다. 비워 두면 경로 제한이 없습니다.
-3. **인젝션 패턴**: 인자 하나하나에 셸 메타문자가 있으면 거절합니다.
+3. **인젝션 패턴**: 인자 하나하나에 셸 메타문자가 있으면 거절합니다. 검색어와 출력 형식 값은 검사하지 않습니다: `grep`의 검색어(첫 위치 인자, `-e`), `find`의 `-regex`, `git`의 `--format`과 `--pretty`. 그래서 `grep -E "BEGIN|END"`가 통과합니다.
 4. **명령별 인자 제한**: `node -e`, `node --eval`, `node --input-type`, `npx --yes`는 기본으로 막힙니다.
 
 가드는 프로세스 수준의 방어선이며 커널 샌드박스가 아닙니다. 신뢰할 수 없는 환경에서 쓸 때의 격리 방법은 [SECURITY.md](SECURITY.md)에 있습니다.
@@ -776,6 +776,7 @@ Claude Code의 Stop 훅에 연결하는 방법은 [docs/mcp-clients/claude-code.
 |---|---|
 | `guard.allowed_paths` | 비어 있으면 경로 제한이 없습니다 |
 | `guard.profile` | `"readonly"`(기본)는 조회 서브커맨드만 허용합니다. `"build"`는 `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 같은 빌드·시험 명령을 추가합니다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 켜십시오 |
+| `guard.workspace_executables` | `true`이면 경로로 지정한 실행 파일(`./configure`, `/work/build/app`)을 `allowed_commands`에 없어도 실행합니다. build 프로필에서만 동작하고, 심볼릭 링크를 따라간 실제 파일이 `allowed_paths` 안에 있어야 합니다. 기본값은 `false`이고, 신뢰하지 않는 프로젝트 설정으로는 켤 수 없습니다 |
 | `guard.command_arg_restrictions` | 기본값과 병합됩니다. 일부 명령만 바꿔도 나머지 기본 제한은 남습니다 |
 | `guard.command_policies` | 명령별 서브커맨드·플래그 규칙을 덮어씁니다 |
 | `guard.secrets.env_patterns` | 이름이 일치하는 환경 변수를 자식 프로세스에서 제거합니다 |
@@ -1062,7 +1063,7 @@ MCP로 `run`만 호출한다면 바꿀 것이 없습니다. 도구 이름은 그
 
 ## 범위
 
-- Parism은 셸을 대체하지 않습니다. 기존 명령을 실행하고 그 출력을 구조로 바꿉니다.
+- Parism은 셸을 대체하지 않습니다. 기존 명령을 실행하고 그 출력을 구조로 바꿉니다. Terminal-Bench 2.0 과제 20개에서 Bash만 가진 에이전트는 18개를, Bash 없이 Parism만 가진 에이전트는 13개를 통과했습니다(모델 `haiku`, 과제마다 1회). 실패한 과제는 `git` 쓰기 명령이 필요하거나 세션이 끝난 뒤에도 서버가 떠 있어야 했습니다. 재현과 한계: [experiments/README.md](experiments/README.md) 부록 T.
 - 보관된 결과를 조회, 이어 읽기, 비교할 때 명령을 다시 실행하지 않습니다. 만료된 결과는 다시 실행해야 합니다.
 - 비교는 호출자가 준 두 결과 사이에서만 이뤄집니다. 주기적으로 감시하지 않습니다.
 - 영수증은 명령이 어떤 작업 공간 상태에서 어떤 결과로 끝났는지만 기록합니다. 시험이 요구를 제대로 검사하는지는 판단하지 않습니다.

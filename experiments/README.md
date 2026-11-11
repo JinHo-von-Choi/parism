@@ -950,4 +950,60 @@ node experiments/long-task.mjs
 
 시도별 기록: `experiments/long-task/results-haiku.json`. 다른 모델은 `PARISM_LONGTASK_MODEL`로 지정한다.
 
-한계: 크레이트 하나, 모델 하나, 조건마다 5회다. Terminal-Bench 2.0의 과제로는 재지 않았다.
+한계: 크레이트 하나, 모델 하나, 조건마다 5회다. Terminal-Bench 2.0 과제의 결과는 부록 T에 있다.
+
+## 부록 T. Terminal-Bench 2.0 — 셸 없이 Parism만으로 푸는 과제
+
+```
+npm run build
+CLAUDE_CODE_OAUTH_TOKEN=... node experiments/terminal-bench.mjs run shell
+CLAUDE_CODE_OAUTH_TOKEN=... node experiments/terminal-bench.mjs run parism
+```
+
+Harbor로 Terminal-Bench 2.0 과제 20개를 도커 컨테이너에서 돌린다. 에이전트는 Claude Code이고, 두 조건은 명령 실행 도구만 다르다.
+
+| 조건 | 명령 실행 도구 |
+|-|-|
+| shell | Bash |
+| parism | Bash 없음. Parism의 `run`, `task` |
+
+parism 조건의 서버는 build 프로필이다. 허용 명령을 빌드·시험·파일 작업 도구까지 넓히고(`experiments/terminal-bench/prism.config.json`), `allowed_paths`는 `/`, `workspace_executables`는 켠다. `git`은 기본 정책 그대로라서 조회 서브커맨드만 된다.
+
+모델 `haiku`, 과제마다 1회. 호출 수와 시간은 과제 20개의 중앙값이다.
+
+| 조건 | 통과 | 도구 호출 | 세션 시간 |
+|-|-|-|-|
+| shell | 18/20 | 5회 | 47.5초 |
+| parism | 13/20 | 24회 | 73.5초 |
+
+parism 조건에서 실패한 7개는 세 종류다.
+
+| 과제 | 원인 |
+|-|-|
+| build-cython-ext, sanitize-git-repo, git-multibranch | `git clone`, `commit`, `init`, `push`가 기본 정책에 없다 |
+| kv-store-grpc, pypi-server, configure-git-webserver | 검증할 때 서버가 응답하지 않았다. Parism이 띄운 프로세스는 서버가 끝나면 함께 종료한다 |
+| polyglot-c-py | shell 조건에서도 실패했다 |
+
+shell 조건의 나머지 실패 하나는 build-pmars다. parism 조건은 이 과제를 통과했다.
+
+parism 조건의 `run` 호출 357건은 이렇게 끝났다.
+
+| 결과 | 건수 |
+|-|-|
+| 실행됨 | 249 |
+| 태스크로 시작됨 | 24 |
+| 명령이 0이 아닌 코드로 종료 | 18 |
+| 허용 목록에 없는 명령 | 26 |
+| 입력 형식 오류(`cmd` 누락 등) | 13 |
+| 허용되지 않은 인자 | 11 |
+| 차단 패턴 | 11 |
+| `mode: "task"`에 `contract_version: "next"` 누락 | 5 |
+
+- 차단 패턴 11건은 대부분 `python3 -c "a; b"`의 `;`와 `pip install "pkg>=1.0"`의 `>`다.
+- 허용되지 않은 인자는 `git -C <경로>`, `git --git-dir`, `git clone`, `curl -o` 등이다.
+- 과제 20개 가운데 8개에서 에이전트가 `task` 도구를 썼다.
+- 같은 과제 8개로 비교하면, 명령줄 전체를 `cmd`에 넣은 호출은 거절 메시지에 `args` 안내가 없을 때 13건, 있을 때 7건이었다(각 1회 실행).
+
+과제별 기록: `experiments/terminal-bench/results-haiku.json`. 과제 목록은 `PARISM_TB_TASKS`, 모델은 `PARISM_TB_MODEL`로 바꾼다.
+
+한계: 89개 가운데 20개, 모델 하나, 과제마다 1회다. 과제는 git, 빌드, 서버 설정, 로그 처리에서 골랐다. Bash와 Parism을 함께 준 조건은 재지 않았다.

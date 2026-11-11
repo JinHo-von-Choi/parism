@@ -1,5 +1,5 @@
 import path from "path";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import {
   BUILD_PROFILE_POLICIES, DEFAULT_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
   tokenizePolicyless, type CommandPolicy, type ParsedArg, type PolicySource,
@@ -90,6 +90,58 @@ function isAllowedPath(targetPath: string, allowedPaths: string[]): boolean {
  *    기본 정책이나 build 프로필 정책을 쓰는 기본 명령은 인자가 `--version` 하나뿐이면 정책 검사를 생략한다.
  * 5. 경로 제한: allowed_paths가 설정된 경우 cwd와 경로 후보(collectPathCandidates)가 허용 경로 하위인지 확인(심볼릭 링크 해석)
  */
+/**
+ * cmd에 명령줄 전체("git status")가 들어온 경우의 안내문.
+ * 첫 낱말이 허용된 명령일 때만 안내한다. 그 밖에는 빈 문자열을 돌려준다.
+ */
+function commandLineHint(cmd: string, allowed: string[]): string {
+  const [name, ...rest] = cmd.trim().split(/\s+/);
+  if (!name || name === cmd || !allowed.includes(name)) return "";
+  /** 따옴표가 있으면 공백으로 나눈 결과가 실제 인자와 달라서 예시를 붙이지 않는다. */
+  const splittable = rest.length > 0 && rest.length <= 8 && !/["'\\]/.test(cmd);
+  const example    = splittable ? `, args: ${JSON.stringify(rest)}` : "";
+  return `. cmd takes the executable name only. Pass arguments in args, one per element (cmd: "${name}"${example})`;
+}
+
+/**
+ * block_patterns 검사에서 빼는 인자의 위치를 고른다.
+ * 정책이 검색어나 출력 형식이라고 표시한 값만 뺀다: textFlags의 값(`-e 값`, `--format=값`)과
+ * patternPositional 명령의 첫 위치 인자(grep의 검색어). 명령은 셸 없이 실행하므로 이 값 안의 `|`, `;`, `>`는 문자 그대로 전달된다.
+ */
+function textArguments(args: string[], policy: CommandPolicy | undefined): Set<number> {
+  const text = new Set<number>();
+  if (!policy) return text;
+  const textFlags = policy.textFlags ?? [];
+  for (const [index, arg] of args.entries()) {
+    if (textFlags.includes(arg) && index + 1 < args.length) text.add(index + 1);
+    if (textFlags.some(flag => arg.startsWith(`${flag}=`)))  text.add(index);
+  }
+  const explicitPattern = args.some(arg => /^(-[ef]|--regexp|--file)(=|$)/.test(arg));
+  if (policy.patternPositional && !explicitPattern) {
+    const first = tokenizeArgs(args, policy.flags, policy.singleDashLong, { numericFlag: policy.numericFlag })
+      .find(token => token.kind === "positional");
+    if (first) text.add(args.indexOf(first.name));
+  }
+  return text;
+}
+
+/**
+ * 경로로 지정한 실행 파일을 허용할지 판단한다.
+ * guard.workspace_executables가 켜져 있고 build 프로필이며, cmd가 경로이고(`/` 포함),
+ * 심볼릭 링크를 따라간 실제 파일이 allowed_paths 안에 있을 때만 허용한다.
+ * build 프로필은 이미 저장소의 빌드 스크립트를 실행하므로, 같은 범위의 실행 파일을 실행 대상으로 받는다.
+ */
+function isWorkspaceExecutable(cmd: string, cwd: string, guard: PrismConfig["guard"]): boolean {
+  if (guard.workspace_executables !== true || guard.profile !== "build") return false;
+  if (!cmd.includes("/") || /\s/.test(cmd) || guard.allowed_paths.length === 0) return false;
+  try {
+    const real = realpathSync(path.resolve(cwd, cmd));
+    return statSync(real).isFile() && isAllowedPath(real, guard.allowed_paths);
+  } catch {
+    return false;
+  }
+}
+
 export function checkGuard(
   cmd:    string,
   args:   string[],
@@ -98,15 +150,17 @@ export function checkGuard(
 ): void {
   const { guard } = config;
 
-  if (!guard.allowed_commands.includes(cmd)) {
+  if (!guard.allowed_commands.includes(cmd) && !isWorkspaceExecutable(cmd, cwd, guard)) {
     throw new GuardError(
-      `Command '${cmd}' is not in the allowed list`,
+      `Command '${cmd}' is not in the allowed list${commandLineHint(cmd, guard.allowed_commands)}`,
       "command_not_allowed",
     );
   }
 
+  const text = textArguments(args, resolvePolicies(guard)[cmd]);
   for (const pattern of guard.block_patterns) {
-    for (const arg of args) {
+    for (const [index, arg] of args.entries()) {
+      if (text.has(index)) continue;
       if (arg.includes(pattern)) {
         throw new GuardError(
           `Blocked pattern '${pattern}' detected in argument '${arg}'`,

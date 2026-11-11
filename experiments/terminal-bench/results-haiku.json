@@ -1,0 +1,581 @@
+{
+  "model": "haiku",
+  "arms": {
+    "shell": {
+      "summary": {
+        "tasks": 20,
+        "scored": 20,
+        "passed": 18,
+        "parism_calls": {}
+      },
+      "trials": [
+        {
+          "task": "build-cython-ext",
+          "reward": 1,
+          "tools": {
+            "Bash": 38,
+            "Edit": 5
+          },
+          "parism": {},
+          "seconds": 391
+        },
+        {
+          "task": "build-pmars",
+          "reward": 0,
+          "tools": {
+            "Bash": 11
+          },
+          "parism": {},
+          "seconds": 61
+        },
+        {
+          "task": "cobol-modernization",
+          "reward": 1,
+          "tools": {
+            "Bash": 6,
+            "Write": 1
+          },
+          "parism": {},
+          "seconds": 74
+        },
+        {
+          "task": "configure-git-webserver",
+          "reward": 1,
+          "tools": {
+            "Bash": 6
+          },
+          "parism": {},
+          "seconds": 80
+        },
+        {
+          "task": "fix-code-vulnerability",
+          "reward": 1,
+          "tools": {
+            "Bash": 4,
+            "Write": 1
+          },
+          "parism": {},
+          "seconds": 43
+        },
+        {
+          "task": "fix-git",
+          "reward": 1,
+          "tools": {
+            "Bash": 5
+          },
+          "parism": {},
+          "seconds": 25
+        },
+        {
+          "task": "git-leak-recovery",
+          "reward": 1,
+          "tools": {
+            "Bash": 5
+          },
+          "parism": {},
+          "seconds": 37
+        },
+        {
+          "task": "git-multibranch",
+          "reward": 1,
+          "tools": {
+            "Bash": 12,
+            "Edit": 1
+          },
+          "parism": {},
+          "seconds": 174
+        },
+        {
+          "task": "kv-store-grpc",
+          "reward": 1,
+          "tools": {
+            "Bash": 5
+          },
+          "parism": {},
+          "seconds": 52
+        },
+        {
+          "task": "log-summary-date-ranges",
+          "reward": 1,
+          "tools": {
+            "Bash": 3
+          },
+          "parism": {},
+          "seconds": 20
+        },
+        {
+          "task": "modernize-scientific-stack",
+          "reward": 1,
+          "tools": {
+            "Bash": 2,
+            "Write": 2
+          },
+          "parism": {},
+          "seconds": 50
+        },
+        {
+          "task": "multi-source-data-merger",
+          "reward": 1,
+          "tools": {
+            "Bash": 3,
+            "Write": 1
+          },
+          "parism": {},
+          "seconds": 33
+        },
+        {
+          "task": "nginx-request-logging",
+          "reward": 1,
+          "tools": {
+            "Bash": 3
+          },
+          "parism": {},
+          "seconds": 42
+        },
+        {
+          "task": "openssl-selfsigned-cert",
+          "reward": 1,
+          "tools": {
+            "Bash": 3,
+            "Edit": 1
+          },
+          "parism": {},
+          "seconds": 15
+        },
+        {
+          "task": "polyglot-c-py",
+          "reward": 0,
+          "tools": {
+            "Bash": 4,
+            "Write": 1,
+            "Read": 1,
+            "Edit": 3
+          },
+          "parism": {},
+          "seconds": 78
+        },
+        {
+          "task": "prove-plus-comm",
+          "reward": 1,
+          "tools": {
+            "Bash": 3,
+            "Read": 1,
+            "Write": 1,
+            "Edit": 1
+          },
+          "parism": {},
+          "seconds": 20
+        },
+        {
+          "task": "pypi-server",
+          "reward": 1,
+          "tools": {
+            "Bash": 5
+          },
+          "parism": {},
+          "seconds": 45
+        },
+        {
+          "task": "regex-log",
+          "reward": 1,
+          "tools": {
+            "Write": 1,
+            "Bash": 1
+          },
+          "parism": {},
+          "seconds": 26
+        },
+        {
+          "task": "sanitize-git-repo",
+          "reward": 1,
+          "tools": {
+            "Bash": 10
+          },
+          "parism": {},
+          "seconds": 53
+        },
+        {
+          "task": "sqlite-with-gcov",
+          "reward": 1,
+          "tools": {
+            "Bash": 7
+          },
+          "parism": {},
+          "seconds": 64
+        }
+      ]
+    },
+    "parism": {
+      "summary": {
+        "tasks": 20,
+        "scored": 20,
+        "passed": 13,
+        "parism_calls": {
+          "guard/command_not_allowed": 26,
+          "guard/arg_not_allowed": 11,
+          "guard/injection_pattern": 11,
+          "ran": 249,
+          "config/requires_contract_next": 5,
+          "task_started": 24,
+          "exec/non_zero_exit": 18,
+          "invalid_input": 13
+        }
+      },
+      "trials": [
+        {
+          "task": "build-cython-ext",
+          "reward": 0,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 34,
+            "Write": 5,
+            "Glob": 6,
+            "Read": 15,
+            "Grep": 10,
+            "Edit": 16,
+            "parism:task": 13
+          },
+          "parism": {
+            "guard/command_not_allowed": 2,
+            "guard/arg_not_allowed": 1,
+            "guard/injection_pattern": 4,
+            "ran": 14,
+            "config/requires_contract_next": 1,
+            "task_started": 9,
+            "exec/non_zero_exit": 3
+          },
+          "seconds": 417
+        },
+        {
+          "task": "build-pmars",
+          "reward": 1,
+          "tools": {
+            "ToolSearch": 1,
+            "Glob": 1,
+            "parism:describe": 1,
+            "parism:run": 27,
+            "Write": 1,
+            "parism:task": 3
+          },
+          "parism": {
+            "ran": 18,
+            "guard/command_not_allowed": 3,
+            "exec/non_zero_exit": 3,
+            "task_started": 3
+          },
+          "seconds": 68
+        },
+        {
+          "task": "cobol-modernization",
+          "reward": 1,
+          "tools": {
+            "Read": 5,
+            "Glob": 1,
+            "parism:describe": 1,
+            "parism:run": 39,
+            "Write": 5
+          },
+          "parism": {
+            "invalid_input": 3,
+            "ran": 34,
+            "exec/non_zero_exit": 1,
+            "guard/injection_pattern": 1
+          },
+          "seconds": 172
+        },
+        {
+          "task": "configure-git-webserver",
+          "reward": 0,
+          "tools": {
+            "parism:describe": 1,
+            "Glob": 2,
+            "parism:run": 27,
+            "parism:task": 2,
+            "parism:dry_run": 1,
+            "Write": 5
+          },
+          "parism": {
+            "ran": 19,
+            "guard/command_not_allowed": 2,
+            "exec/non_zero_exit": 3,
+            "config/requires_contract_next": 1,
+            "task_started": 1,
+            "guard/arg_not_allowed": 1
+          },
+          "seconds": 142
+        },
+        {
+          "task": "fix-code-vulnerability",
+          "reward": 1,
+          "tools": {
+            "parism:run": 3,
+            "Grep": 2,
+            "Read": 2,
+            "Edit": 1,
+            "parism:task": 2,
+            "Write": 1
+          },
+          "parism": {
+            "invalid_input": 1,
+            "ran": 1,
+            "task_started": 1
+          },
+          "seconds": 33
+        },
+        {
+          "task": "fix-git",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 23,
+            "parism:dry_run": 1,
+            "Read": 2,
+            "Edit": 8
+          },
+          "parism": {
+            "guard/command_not_allowed": 5,
+            "guard/arg_not_allowed": 3,
+            "ran": 15
+          },
+          "seconds": 90
+        },
+        {
+          "task": "git-leak-recovery",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "Grep": 1,
+            "parism:run": 19,
+            "ToolSearch": 1,
+            "Write": 1
+          },
+          "parism": {
+            "guard/command_not_allowed": 3,
+            "guard/arg_not_allowed": 5,
+            "ran": 11
+          },
+          "seconds": 53
+        },
+        {
+          "task": "git-multibranch",
+          "reward": 0,
+          "tools": {
+            "ToolSearch": 1,
+            "Glob": 1,
+            "parism:describe": 1,
+            "parism:run": 24,
+            "Write": 5
+          },
+          "parism": {
+            "ran": 19,
+            "exec/non_zero_exit": 5
+          },
+          "seconds": 86
+        },
+        {
+          "task": "kv-store-grpc",
+          "reward": 0,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 14,
+            "parism:task": 3,
+            "Write": 3,
+            "Read": 1,
+            "Edit": 3
+          },
+          "parism": {
+            "guard/command_not_allowed": 2,
+            "ran": 8,
+            "config/requires_contract_next": 1,
+            "task_started": 2,
+            "guard/injection_pattern": 1
+          },
+          "seconds": 79
+        },
+        {
+          "task": "log-summary-date-ranges",
+          "reward": 1,
+          "tools": {
+            "ToolSearch": 1,
+            "Glob": 2,
+            "Grep": 2,
+            "parism:describe": 1,
+            "parism:run": 49,
+            "Write": 1
+          },
+          "parism": {
+            "ran": 49
+          },
+          "seconds": 142
+        },
+        {
+          "task": "modernize-scientific-stack",
+          "reward": 1,
+          "tools": {
+            "Read": 3,
+            "parism:describe": 1,
+            "parism:run": 6,
+            "Grep": 2,
+            "Write": 2
+          },
+          "parism": {
+            "invalid_input": 3,
+            "ran": 3
+          },
+          "seconds": 60
+        },
+        {
+          "task": "multi-source-data-merger",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 8,
+            "Read": 3,
+            "Write": 2
+          },
+          "parism": {
+            "guard/command_not_allowed": 1,
+            "ran": 5,
+            "guard/injection_pattern": 2
+          },
+          "seconds": 48
+        },
+        {
+          "task": "nginx-request-logging",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 14,
+            "parism:task": 2,
+            "Read": 1,
+            "Edit": 1,
+            "Write": 3
+          },
+          "parism": {
+            "invalid_input": 2,
+            "exec/non_zero_exit": 2,
+            "ran": 9,
+            "task_started": 1
+          },
+          "seconds": 43
+        },
+        {
+          "task": "openssl-selfsigned-cert",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 13,
+            "Write": 2,
+            "Edit": 1
+          },
+          "parism": {
+            "invalid_input": 2,
+            "ran": 10,
+            "guard/injection_pattern": 1
+          },
+          "seconds": 39
+        },
+        {
+          "task": "polyglot-c-py",
+          "reward": 0,
+          "tools": {
+            "parism:describe": 1,
+            "Write": 1,
+            "parism:run": 13,
+            "Edit": 2
+          },
+          "parism": {
+            "guard/command_not_allowed": 3,
+            "ran": 10
+          },
+          "seconds": 85
+        },
+        {
+          "task": "prove-plus-comm",
+          "reward": 1,
+          "tools": {
+            "Glob": 2,
+            "Read": 1,
+            "parism:describe": 1,
+            "Edit": 1,
+            "parism:run": 2
+          },
+          "parism": {
+            "invalid_input": 1,
+            "ran": 1
+          },
+          "seconds": 31
+        },
+        {
+          "task": "pypi-server",
+          "reward": 0,
+          "tools": {
+            "parism:describe": 1,
+            "Glob": 1,
+            "parism:run": 15,
+            "Write": 4,
+            "parism:task": 5
+          },
+          "parism": {
+            "guard/command_not_allowed": 2,
+            "ran": 7,
+            "config/requires_contract_next": 1,
+            "task_started": 4,
+            "guard/injection_pattern": 1
+          },
+          "seconds": 234
+        },
+        {
+          "task": "regex-log",
+          "reward": 1,
+          "tools": {
+            "Write": 1,
+            "parism:run": 2
+          },
+          "parism": {
+            "guard/command_not_allowed": 1,
+            "ran": 1
+          },
+          "seconds": 33
+        },
+        {
+          "task": "sanitize-git-repo",
+          "reward": 0,
+          "tools": {
+            "ToolSearch": 1,
+            "Grep": 8,
+            "Read": 3,
+            "parism:run": 3,
+            "Glob": 1,
+            "Edit": 4
+          },
+          "parism": {
+            "ran": 2,
+            "guard/arg_not_allowed": 1
+          },
+          "seconds": 54
+        },
+        {
+          "task": "sqlite-with-gcov",
+          "reward": 1,
+          "tools": {
+            "parism:describe": 1,
+            "parism:run": 22,
+            "Read": 2,
+            "parism:task": 4
+          },
+          "parism": {
+            "guard/command_not_allowed": 2,
+            "exec/non_zero_exit": 1,
+            "invalid_input": 1,
+            "ran": 13,
+            "config/requires_contract_next": 1,
+            "task_started": 3,
+            "guard/injection_pattern": 1
+          },
+          "seconds": 105
+        }
+      ]
+    }
+  }
+}

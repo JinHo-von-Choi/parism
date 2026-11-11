@@ -284,7 +284,7 @@ Four checks run in order so that a bad command from an agent does not run as is.
 
 1. **Command allowlist**: commands missing from `allowed_commands` are rejected before any process is created.
 2. **Path restriction**: when `allowed_paths` is set, `cwd` and path-like arguments are checked (anything containing `/`, starting with `.` or `~`, or existing on disk, symlinks included). An empty list means no path restriction.
-3. **Injection patterns**: any argument containing a shell metacharacter is rejected.
+3. **Injection patterns**: any argument containing a shell metacharacter is rejected. Search patterns and output formats are not checked: the `grep` pattern (first positional, `-e`), `find -regex`, and `git --format` / `--pretty`. So `grep -E "BEGIN|END"` passes.
 4. **Per-command argument limits**: `node -e`, `node --eval`, `node --input-type`, and `npx --yes` are blocked by default.
 
 The guard is a process-level defense, not a kernel sandbox. See [SECURITY.md](SECURITY.md) for isolating Parism in untrusted environments.
@@ -642,6 +642,7 @@ A receipt does not say whether the tests check the right thing, and it does not 
 |---|---|
 | `guard.allowed_paths` | Empty means no path restriction |
 | `guard.profile` | `"readonly"` (default) allows read-only subcommands. `"build"` adds build and test commands such as `npm run`, `npm test`, `cargo build`, `terraform plan`, and `docker compose ps`. It runs project code, so enable it only for repositories you trust |
+| `guard.workspace_executables` | When `true`, an executable given by path (`./configure`, `/work/build/app`) runs even if it is not in `allowed_commands`. It works only under the build profile, and the real file behind any symlink must be inside `allowed_paths`. Default `false`; an untrusted project config cannot enable it |
 | `guard.command_arg_restrictions` | Merged with the defaults. Overriding some commands keeps the default limits for the rest |
 | `guard.command_policies` | Override per-command subcommand and flag rules |
 | `guard.secrets.env_patterns` | Environment variables with matching names are removed from the child process |
@@ -837,7 +838,7 @@ The `output_patterns` default change is a security fix. Previously, omitting the
 
 ## Scope
 
-- Parism does not replace the shell. It runs existing commands and turns their output into structure.
+- Parism does not replace the shell. It runs existing commands and turns their output into structure. On 20 Terminal-Bench 2.0 tasks, an agent with only Bash passed 18 and an agent with Parism and no Bash passed 13 (model `haiku`, one run per task). The failed tasks needed `git` write commands or a server that keeps running after the session ends. Method and limits: [experiments/README.md](experiments/README.md), appendix T.
 - Reading, continuing, or comparing retained results never re-runs a command. Expired results must be run again.
 - Comparison happens only between two results the caller provides. Parism does not watch anything on a schedule.
 - Token budgets are measured on the JSON Parism produces. They do not guarantee a model's actual token count.

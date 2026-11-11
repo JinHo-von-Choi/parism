@@ -29,6 +29,11 @@ export interface PrismGuardConfig {
   command_policies?:        Record<string, CommandPolicy>;
   secrets?:                 PrismGuardSecretsConfig;
   profile?:                 "readonly" | "build";
+  /**
+   * 경로로 지정한 실행 파일(`./configure`, `/work/build/app`)을 allowed_commands에 없어도 실행한다.
+   * build 프로필에서만 동작하고, 파일의 실제 경로가 allowed_paths 안에 있어야 한다. 기본값은 false다.
+   */
+  workspace_executables?:   boolean;
 }
 
 /**

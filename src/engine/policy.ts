@@ -54,6 +54,10 @@ export interface CommandPolicy {
   plusFlags?: boolean;
   /** 위치 인자가 검색어나 출력 문자열이다(grep, echo). `key=값` 위치 인자의 `=` 뒤 값을 따로 경로 검사하지 않는다. */
   textPositionals?: boolean;
+  /** 값이 검색어나 출력 형식인 플래그(grep -e, git --format). 값에는 block_patterns 검사를 하지 않는다. */
+  textFlags?: string[];
+  /** 검색어를 -e나 -f로 주지 않았을 때 첫 위치 인자가 검색어다(grep). 그 인자에는 block_patterns 검사를 하지 않는다. */
+  patternPositional?: boolean;
 }
 
 export type PolicySource = "default" | "build" | "config";
@@ -357,6 +361,8 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
     positionals:     "any",
     numericFlag:     true,
     textPositionals: true,
+    textFlags:       ["-e", "--regexp"],
+    patternPositional: true,
   },
   wc: {
     flags: {
@@ -458,6 +464,7 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
     },
     leadingFlags: ["--no-pager"],
     numericFlag: true,
+    textFlags: ["--format", "--pretty"],
   },
   find: {
     flags: {
@@ -469,6 +476,7 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
     },
     positionals: "path",
     singleDashLong: true,
+    textFlags: ["-regex", "-iregex"],
   },
   curl: {
     flags: {

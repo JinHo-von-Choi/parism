@@ -40,6 +40,8 @@ const COMMAND_POLICY_SCHEMA = z.object({
   maxPositionals:   LIMIT_SCHEMA.optional(),
   plusFlags:        z.boolean().optional(),
   textPositionals:  z.boolean().optional(),
+  textFlags:        z.array(z.string()).optional(),
+  patternPositional: z.boolean().optional(),
 }).strict();
 
 const ARG_RESTRICTION_SCHEMA = z.object({ blocked_flags: STRING_LIST }).strict();
@@ -68,6 +70,7 @@ const GUARD_FIELDS: Record<string, FieldSpec> = {
   command_arg_restrictions: { entries: ARG_RESTRICTION_SCHEMA },
   command_policies:         { entries: COMMAND_POLICY_SCHEMA },
   profile:                  z.enum(["readonly", "build"]),
+  workspace_executables:    z.boolean(),
   secrets:                  {
     fields: {
       env_patterns:             STRING_LIST,

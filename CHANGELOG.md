@@ -11,6 +11,7 @@
 
 ### Added
 
+- **`guard.workspace_executables`.** 켜면 build 프로필에서 경로로 지정한 실행 파일(`./configure`, 빌드한 바이너리)을 `allowed_commands`에 없어도 실행한다. 실제 파일이 `allowed_paths` 안에 있어야 하고, 기본값은 꺼짐이며 신뢰하지 않는 프로젝트 설정으로는 켤 수 없다.
 - **시험·빌드·린트 파서.** `vitest`, `jest`, `tsc`, `eslint`(직접 실행 또는 `npx`), `pytest`, `go test`, `ruff check`, `mypy`, `cargo test`, `cargo build`, `cargo check`의 결과를 구조화한다. 실패한 시험과 진단은 모두 싣고 통과한 항목은 개수만 싣는다. 러너가 보고한 실패 수와 파싱한 항목 수가 다르면 결과를 만들지 않고 원문을 돌려준다.
 - **`run`의 `machine_format`.** 러너의 기계용 출력 형식 인자를 실행 전에 덧붙인다. 덧붙인 인자도 가드 검사를 받고 응답의 `args`에 실린다. vitest와 pytest의 보고서는 임시 파일로 받아 읽고 지운다. 결정 기록: `docs/adr/2026-11-11-devloop-runner-guard.md`.
 - **장기 실행 태스크.** `run`의 `mode: "task"`는 명령을 시작하고 식별자를 바로 돌려준다. `task` 도구로 상태를 조회하고 그 태스크만 취소한다. 상태 조회에 `wait_ms`를 주면 태스크가 끝나거나 새 실패가 나올 때까지(최대 30초) 기다렸다가 답한다. 태스크는 `tasks.timeout_ms`(기본 10분)와 전용 슬롯 `tasks.max_concurrency`(기본 2)를 쓰고, 슬롯이 차면 대기 없이 거절한다. `cargo test`와 `go test` 태스크는 실행 중에 통과·실패 수와 실패한 시험 이름을 돌려준다.
@@ -36,6 +37,8 @@
 
 ### Fixed
 
+- **검색어와 출력 형식 값의 차단 패턴 오탐.** `grep`의 검색어(첫 위치 인자, `-e`), `find`의 `-regex`, `git`의 `--format`과 `--pretty` 값에는 `block_patterns` 검사를 하지 않는다. `grep -E "BEGIN|END"`와 `git show --format="%an <%ae>"`가 `injection_pattern`으로 막히지 않는다. 정책의 `textFlags`와 `patternPositional`로 지정한다.
+- **`cmd`에 명령줄 전체를 넣은 호출의 거절 안내.** `cmd: "git status"`처럼 인자를 붙여 호출하면 `command_not_allowed` 메시지가 실행 파일 이름만 `cmd`에 두고 인자는 `args`로 넘기라고 알려 준다. 첫 낱말이 허용된 명령일 때만 안내한다.
 - `ss`: 출력이 크기 상한에서 잘렸을 때 잘렸다는 표시 줄을 연결 행으로 읽던 문제. 큐 길이가 숫자가 아닌 줄은 행으로 세지 않는다.
 - `systeminfo`: 메모리 값에 숫자가 없으면(`N/A`) `total_memory_mb`, `available_memory_mb`가 `null`이다.
 
