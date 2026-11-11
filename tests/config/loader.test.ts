@@ -901,7 +901,7 @@ describe("외부 파서 격리 설정", () => {
 
 describe("태스크, 영수증, 검증 묶음, 보관함 설정", () => {
   const write = async (name: string, body: unknown): Promise<string> => {
-    const file = `/tmp/prism-next-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "parism-next-")), `${name}.json`);
     await writeFile(file, JSON.stringify(body), "utf-8");
     return file;
   };

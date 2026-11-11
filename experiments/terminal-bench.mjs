@@ -166,7 +166,8 @@ function tally(arm, jobDirs) {
   for (const trial of trials) for (const [key, count] of Object.entries(trial.parism)) parism[key] = (parism[key] ?? 0) + count;
   const summary = { tasks: trials.length, scored: scored.length, passed: scored.filter(trial => trial.reward === 1).length, parism_calls: parism };
 
-  const all = existsSync(RESULTS_FILE) ? JSON.parse(readFileSync(RESULTS_FILE, "utf8")) : { model: MODEL, arms: {} };
+  let all = { model: MODEL, arms: {} };
+  try { all = JSON.parse(readFileSync(RESULTS_FILE, "utf8")); } catch { /* 결과 파일이 아직 없다 */ }
   all.arms[arm] = { summary, trials };
   writeFileSync(RESULTS_FILE, `${JSON.stringify(all, null, 2)}\n`);
 

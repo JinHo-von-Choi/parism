@@ -6,7 +6,7 @@
  * 작성일: 2026-04-15
  */
 
-import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync }               from "node:fs";
+import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir }                                                                   from "node:os";
 import path                                                                         from "node:path";
 import { loadConfig, loadConfigMultiLayer }                                         from "../config/loader.js";
@@ -1073,10 +1073,14 @@ const REPORT_MAX_BYTES = 10 * 1024 * 1024;
 
 /** 러너가 쓴 보고서 파일을 읽는다. 파일이 없거나 상한을 넘으면 빈 문자열이다. */
 function readReport(file: string): string {
+  let fd: number | undefined;
   try {
-    return statSync(file).size > REPORT_MAX_BYTES ? "" : readFileSync(file, "utf8");
+    fd = openSync(file, "r");
+    return fstatSync(fd).size > REPORT_MAX_BYTES ? "" : readFileSync(fd, "utf8");
   } catch {
     return "";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
