@@ -40,7 +40,7 @@
     "@typescript-eslint/parser": "^8.56.1",
     "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^10.0.3",
-    "gpt-tokenizer": "^3.4.0",
+    "gpt-tokenizer": "^4.1.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vitest": "^5.0.5"
