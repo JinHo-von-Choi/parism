@@ -15,6 +15,9 @@ import { Client }                          from "@modelcontextprotocol/sdk/clien
 import { InMemoryTransport }               from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema }            from "@modelcontextprotocol/sdk/types.js";
 import { createServer, loadTaskExtension } from "../../src/server.js";
+import { McpServer }                       from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z }                               from "zod";
+import { BridgedTaskStore, createTaskExtensionParts, registerRunTask, TASK_CAPABILITIES } from "../../src/mcp/task-extension.js";
 import { DEFAULT_CONFIG, type PrismConfig } from "../../src/config/loader.js";
 import { createRegistry }                  from "../../src/parsers/index.js";
 
@@ -150,5 +153,44 @@ describe("MCP 태스크 확장", () => {
     const listed = await client.experimental.tasks.listTasks();
     expect(listed.tasks.length).toBeGreaterThan(0);
     expect(listed.tasks.every(t => typeof t.taskId === "string")).toBe(true);
+  });
+});
+
+describe("태스크 저장소와 엔진 연결", () => {
+  /** 엔진 대신 상태를 정해 주는 최소 구현. 실행 중 태스크가 시험 러너 진행 상태를 낸다. */
+  const runningEngine = (progress?: unknown) => ({
+    taskStatus: () => ({ found: true as const, task: { task_id: "t1", state: "running", elapsed_ms: 2000, stdout_bytes: 10, progress } }),
+    taskCancel: () => ({ found: true as const }),
+  });
+
+  it("시험 러너 태스크의 진행 상태는 통과·실패 수로 보여 주고, cleanup은 짝을 지운다", async () => {
+    const store = new BridgedTaskStore(runningEngine({ passed: 3, failed: 1 }) as never);
+    const task  = await store.createTask({ ttl: 60_000 }, 1, { method: "tools/call", params: {} });
+    store.bind(task.taskId, "t1");
+    expect((await store.getTask(task.taskId))?.statusMessage).toBe("running 2s: 3 passed, 1 failed, 0 skipped so far");
+    store.cleanup();
+    expect((await store.getTask(task.taskId).catch(() => null))?.statusMessage).toBeUndefined();
+  });
+
+  it("엔진이 결과를 더 갖고 있지 않으면 태스크를 실패로 끝내고 사유를 남긴다", async () => {
+    let calls = 0;
+    const engine = {
+      startTask:  () => ({ started: true as const, task: { task_id: "gone", state: "running" } }),
+      taskStatus: () => (calls++ === 0 ? { found: true as const, task: { task_id: "gone", state: "running", elapsed_ms: 0, stdout_bytes: 0 } } : { found: false as const }),
+      taskCancel: () => ({ found: false as const }),
+    };
+    const parts  = createTaskExtensionParts(engine as never);
+    const server = new McpServer({ name: "t", version: "1" }, { capabilities: TASK_CAPABILITIES, taskStore: parts.taskStore, taskMessageQueue: parts.taskMessageQueue });
+    registerRunTask(server, engine as never, parts.taskStore, { cmd: z.string() }, () => "", { settleIntervalMs: 20 });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const c = new Client({ name: "test", version: "1" }, { capabilities: { tasks: { list: {}, cancel: {}, requests: {} } } });
+    await Promise.all([server.connect(b), c.connect(a)]);
+    const task = await startTask(c, { cmd: "ls" });
+    let state = await c.experimental.tasks.getTask(task.taskId);
+    for (let i = 0; i < 50 && state.status === "working"; i++) { await wait(20); state = await c.experimental.tasks.getTask(task.taskId); }
+    expect(state).toMatchObject({ status: "failed", statusMessage: "the task result is no longer kept" });
+    await expect(c.experimental.tasks.getTask("no-such-task")).rejects.toThrow();
+    await c.close();
+    parts.taskStore.cleanup();
   });
 });
