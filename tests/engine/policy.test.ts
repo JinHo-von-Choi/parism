@@ -149,7 +149,7 @@ describe("정책 가드: 보강", () => {
   });
 
   it("BUILD_PROFILE_POLICIES는 목록에 있는 명령만 정의한다", () => {
-    expect(Object.keys(BUILD_PROFILE_POLICIES).sort()).toEqual(["cargo", "docker", "node", "npm", "npx", "pnpm", "terraform", "yarn"]);
+    expect(Object.keys(BUILD_PROFILE_POLICIES).sort()).toEqual(["cargo", "curl", "docker", "node", "npm", "npx", "pnpm", "terraform", "yarn"]);
   });
 });
 

@@ -148,7 +148,7 @@ Checked in order before running:
 | Profile | git | Other |
 |-|-|-|
 | `readonly` (default) | Reads (`status`, `log`, `diff`, `show`, `branch`, `grep`, `reflog`, …) | Read commands |
-| `build`, `ci` | Plus local writes (`init`, `add`, `commit`, `checkout`, `merge`, `rebase`, `reset`, `clone`, `fetch`, `pull`, …) | `npm run`·`test`, `cargo`, `npx`, executables inside the workspace |
+| `build`, `ci` | Plus local writes (`init`, `add`, `commit`, `checkout`, `merge`, `rebase`, `reset`, `clone`, `fetch`, `pull`, …) | `npm run`·`test`, `cargo`, `npx`, `curl -o` (inside allowed paths), executables inside the workspace |
 
 - `git push` is allowed only with `guard.allow_git_remote_write: true`.
 - Every git run gets `core.hooksPath=/dev/null` and `core.editor=true`.

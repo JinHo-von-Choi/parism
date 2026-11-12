@@ -696,6 +696,15 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
   }),
   node:      { flags: { "--version": "bool", "-v": "bool" }, positionals: "path", stopAtPositional: true },
   npx:       { flags: { "--version": "bool" }, positionals: "any", stopAtPositional: true },
+  /**
+   * build 프로필은 작업 공간에 파일을 쓰는 실행(git, npm, pip)을 이미 허용한다. curl도 내려받은 파일을 쓸 수 있게 하되
+   * 출력 파일은 경로 인자로 보고 allowed_paths 검사를 받게 한다.
+   */
+  curl:      {
+    ...DEFAULT_POLICIES.curl!,
+    flags: { ...DEFAULT_POLICIES.curl!.flags, "-o": "path", "--output": "path", "-O": "bool", "--remote-name": "bool", "--create-dirs": "bool" },
+    allowedValues: {},
+  },
   docker:    extendSubcommands(DEFAULT_POLICIES.docker!, ["compose"], {
     subVerbs: { compose: ["ps", "logs"] },
     subFlags: { ...DEFAULT_POLICIES.docker!.subFlags, compose: { "-f": "path" } },

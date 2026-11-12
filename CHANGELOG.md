@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-12
+
+### Changed
+
+- build·ci 프로필에서 `curl -o`, `--output`, `-O`로 내려받은 파일을 쓴다. 출력 경로는 `allowed_paths` 검사를 받는다. readonly 프로필은 계속 `/dev/null`만 받는다.
+- `nginx -g`의 값(`daemon off;`)은 nginx 설정 지시어라 `block_patterns` 검사에서 뺀다.
+
 ## [3.0.0] - 2026-11-12
 
 ### Added

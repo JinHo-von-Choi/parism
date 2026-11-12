@@ -191,6 +191,19 @@ describe("checkGuard()", () => {
     expect(() => checkGuard("curl", ["-o", "page.html", "https://example.com"], cwdOk, cfg)).toThrow(GuardError);
   });
 
+  it("build 프로필의 curl -o는 허용 경로 안의 파일에만 쓴다", () => {
+    const build = { ...cfg, guard: { ...cfg.guard, profile: "build" as const, allowed_paths: [cwdOk] } };
+    expect(() => checkGuard("curl", ["-sS", "-o", "out.tar.xz", "https://example.com/a"], cwdOk, build)).not.toThrow();
+    try { checkGuard("curl", ["-o", "/etc/x", "https://example.com/a"], cwdOk, build); expect.fail("not blocked"); } catch (e) {
+      expect((e as GuardError).reason).toBe("path_not_allowed");
+    }
+  });
+
+  it("nginx -g의 설정 지시어는 막지 않는다", () => {
+    const withNginx = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, "nginx"] } };
+    expect(() => checkGuard("nginx", ["-g", "daemon off;"], cwdOk, withNginx)).not.toThrow();
+  });
+
   it("curl -I는 통과한다", () => {
     expect(() => checkGuard("curl", ["-I", "https://example.com"], cwdOk, cfg)).not.toThrow();
   });

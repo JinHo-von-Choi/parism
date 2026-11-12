@@ -98,6 +98,8 @@ const INLINE_CODE_FLAGS: Readonly<Record<string, readonly string[]>> = {
   node:    ["-e", "--eval", "-p", "--print"],
   ruby:    ["-e"],
   perl:    ["-e", "-E"],
+  /** nginx -g의 값은 nginx 설정 지시어다(`daemon off;`) */
+  nginx:   ["-g"],
 };
 
 /**
@@ -200,11 +202,12 @@ function isWorkspaceExecutable(cmd: string, cwd: string, guard: PrismConfig["gua
 }
 
 /**
- * 출력 파일 플래그가 /dev/null을 가리키면 아무 파일도 쓰지 않는다(`curl -o /dev/null -w '%{http_code}'`).
- * 출력 파일을 막는 인자 제한에서 이 경우만 뺀다.
+ * 출력 파일을 막는 인자 제한에서 뺄 경우. /dev/null은 아무 파일도 쓰지 않는다(`curl -o /dev/null -w '%{http_code}'`).
+ * build 프로필은 출력 파일을 허용하고, 그 경로는 정책의 경로 인자로 allowed_paths 검사를 받는다.
  */
-function discardsOutput(flag: string, arg: string, next: string | undefined): boolean {
-  if (flag !== "-o" && flag !== "--output") return false;
+function allowsOutputFile(flag: string, arg: string, next: string | undefined, build: boolean): boolean {
+  if (flag !== "-o" && flag !== "--output" && flag !== "-O" && flag !== "--remote-name") return false;
+  if (build) return true;
   return arg === "--output=/dev/null" || ((arg === "-o" || arg === "--output") && next === "/dev/null");
 }
 
@@ -242,7 +245,7 @@ export function checkGuard(
     for (const [index, arg] of args.entries()) {
       // --flag=value 형태에서 플래그 이름만 추출
       const normalized = arg.startsWith("--") ? arg.split("=")[0]! : arg;
-      if (discardsOutput(normalized, arg, args[index + 1])) continue;
+      if (cmd === "curl" && allowsOutputFile(normalized, arg, args[index + 1], isBuildProfile(guard))) continue;
       if (restriction.blocked_flags.includes(normalized)) {
         throw new GuardError(
           `Argument '${arg}' is not allowed for command '${cmd}'`,

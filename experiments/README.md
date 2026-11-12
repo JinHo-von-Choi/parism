@@ -1008,35 +1008,31 @@ parism 조건의 `run` 호출 357건은 이렇게 끝났다.
 
 한계: 89개 가운데 20개, 모델 하나, 과제마다 1회다. 과제는 git, 빌드, 서버 설정, 로그 처리에서 골랐다. Bash와 Parism을 함께 준 조건은 재지 않았다.
 
-### 3.0.0
+### 3.0
 
 같은 과제 20개, 모델 `haiku`, 과제마다 1회다. shell 조건도 같은 날 다시 쟀다. parism 조건 서버 설정(`experiments/terminal-bench/prism.config.json`)은 `allow_git_remote_write`와 `tasks.allow_persistent_services`를 켜고, 허용 명령에 `od`, `whoami`, `usermod`, `apt-cache`, `ldd`를 더했다.
 
 | 조건 | 통과 | 도구 호출 | 세션 시간 | Parism 호출 | 거절 |
 |-|-|-|-|-|-|
 | shell | 17/20 | 6회 | 52.5초 | - | - |
-| parism, 실행 1 | 17/20 | 18회 | 47초 | 340건 | 10건(2.9%) |
-| parism, 실행 2 | 15/20 | 15.5회 | 53초 | 283건 | 11건(3.9%) |
+| parism, 배포 전 빌드 1 | 17/20 | 18회 | 47초 | 340건 | 10건(2.9%) |
+| parism, 배포 전 빌드 2 | 15/20 | 15.5회 | 53초 | 283건 | 11건(3.9%) |
+| parism, 3.0.0 | 19/20 | 16회 | 47.5초 | 297건 | 6건(2.0%) |
+| parism, 3.0.1 | 17/20 | 17회 | 42.5초 | 313건 | 13건(4.2%) |
 
-2.3.0과 비교하면 다음과 같다.
+2.3.0(통과 13/20, 거절 17.1%, 도구 호출 24회)과 비교하면 통과는 15~19/20, 거절은 2.0~4.2%, 도구 호출은 15.5~18회다.
 
-- 통과: 13/20에서 15~17/20이 됐다.
-- 거절률: 17.1%에서 2.9~3.9%로 줄었다.
-- 과제당 도구 호출: 24회에서 15.5~18회로 줄었다.
+3.0.0과 3.0.1 실행의 거절 19건은 다음과 같다.
 
-거절은 다음 넷으로 나뉜다.
-
-| 원인 | 실행 1 | 실행 2 |
+| 원인 | 건수 | 예 |
 |-|-|-|
-| 벤치마크 허용 목록에 없는 명령(`cmp`, `sshd`, `ssh`, `runuser`, `printenv`, `dpkg-source`, 에이전트가 설치한 `pmars`) | 4 | 5 |
-| 셸에서도 의도와 다르게 동작할 입력(따옴표 없는 `$`, 따옴표 없는 `\|`가 든 검색어, `;`로 이은 명령, 데이터베이스 파일 자리의 SQL) | 3 | 3 |
-| 실행하지 않는 형식(`env VAR=값 명령`, `git -c 설정`) | 1 | 2 |
-| 이 실행 뒤에 고친 것(`pip install "pkg>=1"`, 응답 크기 상한, `git branch --contains`) | 2 | 1 |
+| 벤치마크 허용 목록에 없는 명령 | 7 | `cmp`, `getent`, `printenv`, `pypi-server`, 에이전트가 설치한 `pmars` |
+| 셸에서도 의도와 다르게 동작할 입력 | 4 | 따옴표 없는 `$`, 데이터베이스 파일 자리의 SQL |
+| 실행하지 않는 형식 | 3 | `env VAR=값 명령`, `bash 스크립트` |
+| 정책에 없는 인자 | 2 | `git config core.sharedRepository`, `find -printf` |
+| 3.0.1에서 고친 것 | 3 | `curl -o 파일`, `nginx -g "daemon off;"` |
 
 - 두 조건이 모두 실패한 과제는 build-pmars, modernize-scientific-stack, polyglot-c-py다.
-- parism 조건만 실패한 과제는 configure-git-webserver와 sanitize-git-repo다.
-  - configure-git-webserver: 검증 스크립트는 `git` 사용자와 비밀번호 `password`로 접속하는데, 과제 설명은 `user@server`다. parism 조건의 에이전트는 설명대로 `user` 계정을 만들었다.
-  - sanitize-git-repo: 남긴 파일 내용이 기대값과 달랐다.
-- kv-store-grpc는 실행 1에서만 실패했다. 에이전트가 gRPC 메시지 필드 이름을 `value`로 지었고, 검증 코드는 `val`을 쓴다.
+- configure-git-webserver는 parism 조건에서 자주 실패한다. 검증 스크립트는 `git` 사용자와 비밀번호 `password`로 접속하는데, 과제 설명은 `user@server`다. parism 조건의 에이전트는 설명대로 `user` 계정을 만들었다.
 
-한계: 조건마다 1회라서 실행 사이의 차이(parism 15~17/20)가 조건 사이의 차이만큼 크다.
+한계: 조건마다 1회라서 거의 같은 빌드를 다시 돌려도 통과가 15~19/20 사이에서 움직인다. 거절도 그 실행에서 에이전트가 고른 명령에 따라 달라진다.

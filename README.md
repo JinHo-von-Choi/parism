@@ -148,7 +148,7 @@ Node.js 20 이상이 필요합니다.
 | 프로필 | git | 그 밖 |
 |-|-|-|
 | `readonly`(기본) | 조회(`status`, `log`, `diff`, `show`, `branch`, `grep`, `reflog`, …) | 조회 명령 |
-| `build`, `ci` | 로컬 쓰기 추가(`init`, `add`, `commit`, `checkout`, `merge`, `rebase`, `reset`, `clone`, `fetch`, `pull`, …) | `npm run`·`test`, `cargo`, `npx`, 작업 공간 안의 실행 파일 |
+| `build`, `ci` | 로컬 쓰기 추가(`init`, `add`, `commit`, `checkout`, `merge`, `rebase`, `reset`, `clone`, `fetch`, `pull`, …) | `npm run`·`test`, `cargo`, `npx`, `curl -o`(허용 경로 안), 작업 공간 안의 실행 파일 |
 
 - `git push`는 `guard.allow_git_remote_write: true`일 때만 허용합니다.
 - 모든 git 실행에 `core.hooksPath=/dev/null`과 `core.editor=true`를 붙입니다.
