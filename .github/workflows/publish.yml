@@ -40,7 +40,7 @@ jobs:
         env:
           PARISM_REGEX_BIN: ${{ github.workspace }}/crates/parism-regex/target/release/parism-regex
           PARISM_REQUIRE_NATIVE: "1"
-        run: npx vitest run tests/engine/regex-byte-identity.test.ts
+        run: npx vitest run tests/fixtures/regex-byte-identity.test.ts
 
   publish:
     needs: test

@@ -66,7 +66,7 @@ jobs:
         env:
           PARISM_REGEX_BIN: ${{ github.workspace }}/crates/parism-regex/target/release/parism-regex
           PARISM_REQUIRE_NATIVE: "1"
-        run: npx vitest run tests/engine/regex-byte-identity.test.ts tests/engine/regex-engine.test.ts tests/engine/regex-protocol.test.ts
+        run: npx vitest run tests/fixtures/regex-byte-identity.test.ts tests/engine/regex-engine.test.ts tests/engine/regex-protocol.test.ts
 
       - name: Byte identity record
         env:
