@@ -42,7 +42,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname }                from "node:path";
 
-import { verifyByteIdentity } from "../dist/engine/regex-byte-identity.js";
+import { verifyByteIdentity } from "../dist/fixtures/regex-byte-identity.js";
 
 const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out");

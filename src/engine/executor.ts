@@ -9,7 +9,7 @@ const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10 MB
  * process.env에서 시크릿 패턴과 일치하는 변수를 제거한 환경 객체를 반환한다.
  * patterns의 각 항목을 환경 변수명의 대문자 substring으로 검사한다.
  */
-function buildSanitizedEnv(secretPatterns: string[]): NodeJS.ProcessEnv {
+export function buildSanitizedEnv(secretPatterns: string[]): NodeJS.ProcessEnv {
   if (secretPatterns.length === 0) return process.env;
 
   const sanitized: NodeJS.ProcessEnv = {};
@@ -77,6 +77,18 @@ let shutdownHooksInstalled = false;
 export function trackedProcessGroups(): ReadonlySet<number> {
   return liveGroups;
 }
+
+/** 서버가 끝날 때 함께 정리할 프로세스 그룹을 등록한다. 서비스처럼 executor 밖에서 띄운 그룹이 쓴다. */
+export function trackProcessGroup(pgid: number): void {
+  installShutdownHooks();
+  liveGroups.add(pgid);
+}
+
+/** 정리 대상에서 뺀다 */
+export function untrackProcessGroup(pgid: number): void {
+  liveGroups.delete(pgid);
+}
+
 
 /**
  * 추적 중인 프로세스 그룹 전체에 SIGKILL을 보낸다. 실패는 무시한다.
@@ -155,7 +167,11 @@ function runProcess(
 
     let child: ChildProcess;
     try {
-      child = spawn(cmd, args, { cwd, env, detached: useGroup, windowsHide: true });
+      /**
+       * 표준 입력은 주지 않는다(/dev/null). 열린 파이프로 두면 입력을 읽는 명령(파일 이름 자리에 SQL을 받은 sqlite3,
+       * 비밀번호를 묻는 명령)이 아무것도 오지 않는 입력을 시간 제한까지 기다린다.
+       */
+      child = spawn(cmd, args, { cwd, env, detached: useGroup, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     } catch (err) {
       resolve({ stdout: "", stderr: (err as Error).message, code: null, timedOut: false, overflow: false, error: err as NodeJS.ErrnoException });
       return;
@@ -305,7 +321,8 @@ export async function execute(
 ): Promise<ResponseEnvelope> {
   const start   = Date.now();
   const before  = includeDiff ? await takeSnapshot(cwd) : null;
-  const env     = { ...buildSanitizedEnv(secretPatterns), LC_ALL: "C", LANG: "C" };
+  /** git이 자격 증명을 물으며 멈추지 않게 한다. 표준 입력은 터미널이 아니라 대답할 수 없다. */
+  const env     = { ...buildSanitizedEnv(secretPatterns), LC_ALL: "C", LANG: "C", GIT_TERMINAL_PROMPT: "0" };
   const result  = await runProcess(cmd, args, cwd, env, timeoutMs, control);
   const after   = includeDiff ? await takeSnapshot(cwd) : null;
   const failure = classifyFailure(cmd, args, result, timeoutMs);

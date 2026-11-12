@@ -65,6 +65,29 @@ describe("checkGuard()", () => {
     }
   });
 
+  it("인터프리터 인라인 코드의 세미콜론은 셸 연산자가 아니므로 막지 않고, 스크립트 인자는 계속 검사한다", () => {
+    const withPython = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, "python3"] } };
+    expect(() => checkGuard("python3", ["-c", "import sys; print(1)"], cwdOk, withPython)).not.toThrow();
+    expect(() => checkGuard("python3", ["script.py", "-c", "a; b"], cwdOk, withPython)).toThrow(GuardError);
+    expect(() => checkGuard("python3", ["-c", "print(1)", "x; y"], cwdOk, withPython)).toThrow(GuardError);
+  });
+
+  it("데이터베이스 클라이언트의 SQL 인자는 막지 않고, sqlite3 데이터베이스 파일 인자는 계속 검사한다", () => {
+    const withDb = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, "sqlite3", "psql"] } };
+    expect(() => checkGuard("sqlite3", ["app.db", "select 1; select 2;"], cwdOk, withDb)).not.toThrow();
+    expect(() => checkGuard("sqlite3", ["-separator", "|", "app.db", "select 1;"], cwdOk, withDb)).toThrow(GuardError);
+    expect(() => checkGuard("sqlite3", ["a;b.db"], cwdOk, withDb)).toThrow(GuardError);
+    expect(() => checkGuard("psql", ["-U", "app", "-c", "select 1; select 2;"], cwdOk, withDb)).not.toThrow();
+  });
+
+  it("pip 버전 조건의 >, <는 막지 않고, 조건 형식이 아닌 인자는 계속 검사한다", () => {
+    const withPip = { ...cfg, guard: { ...cfg.guard, allowed_commands: [...cfg.guard.allowed_commands, "pip", "python3"] } };
+    expect(() => checkGuard("pip", ["install", "cython>=3.1", "numpy<2,!=1.5", "pkg[extra]>=1"], cwdOk, withPip)).not.toThrow();
+    expect(() => checkGuard("python3", ["-m", "pip", "install", "requests>=2"], cwdOk, withPip)).not.toThrow();
+    expect(() => checkGuard("pip", ["install", "x>out.txt;rm"], cwdOk, withPip)).toThrow(GuardError);
+    expect(() => checkGuard("pip", ["list", "a>b"], cwdOk, withPip)).toThrow(GuardError);
+  });
+
   it("백틱이 포함된 인자는 차단된다", () => {
     expect(() => checkGuard("echo", ["`id`"], cwdOk, cfg))
       .toThrow(GuardError);
@@ -160,6 +183,12 @@ describe("checkGuard()", () => {
   it("curl -d는 arg_not_allowed로 차단된다", () => {
     expect(() => checkGuard("curl", ["-d", "foo=bar", "https://example.com"], cwdOk, cfg))
       .toThrow(GuardError);
+  });
+
+  it("curl -o는 /dev/null로 버릴 때만 통과한다", () => {
+    expect(() => checkGuard("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com"], cwdOk, cfg)).not.toThrow();
+    expect(() => checkGuard("curl", ["--output=/dev/null", "https://example.com"], cwdOk, cfg)).not.toThrow();
+    expect(() => checkGuard("curl", ["-o", "page.html", "https://example.com"], cwdOk, cfg)).toThrow(GuardError);
   });
 
   it("curl -I는 통과한다", () => {

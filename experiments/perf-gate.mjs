@@ -21,7 +21,7 @@
  */
 
 import { ParismEngine } from "../dist/facade/engine.js";
-import { DEFAULT_CONFIG } from "../dist/config/loader.js";
+import { DEFAULT_CONFIG, DEFAULT_OUTPUT } from "../dist/config/loader.js";
 import { createRegistry } from "../dist/parsers/index.js";
 import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir, cpus } from "node:os";
@@ -131,6 +131,13 @@ function engineFor(dir, maxConcurrency) {
   config.guard.max_output_bytes = 8 * 1024 * 1024;
   /** 가산정 하한(500)은 'max_items 절단'이 '크기' 측정과 섞이게 하므로 올린다. 상한에 걸린 숫자는 버린다. */
   config.guard.max_items = 200_000;
+  /**
+   * 원문 처리 비용을 같은 축에 두려고 파싱에 성공해도 원문을 싣는다(output.include_raw).
+   * 행이 많을 때 앞부분만 싣는 자동 보관은 기본값 그대로 둔다. off 경로는 사용자가 아무 인자 없이 부를 때의 비용이다.
+   */
+  config.output = { ...DEFAULT_OUTPUT, include_raw: true };
+  /** 사용 통계 기록은 측정 대상이 아니다. 디스크 쓰기가 섞이지 않게 끈다. */
+  config.stats = { enabled: false, max_entries: 1 };
   /**
    * 적응형 포맷은 행 수를 보고 raw 를 떼어 낸다. 성능 비교에서 원문 처리 비용이 축이므로 끈다.
    * `src/facade/engine.ts` 의 판정이 `threshold.json_no_raw > 0 && ...` 이므로 **0 은 비활성화**다.
@@ -263,7 +270,7 @@ try {
       const outBytes = Buffer.byteLength(one.stdout.raw, "utf8");
       const ratio    = outBytes / size;
       const scored   = ratio >= 0.5 && ratio <= 2;
-      const rows     = one.stdout.parsed?.entries?.length ?? 0;
+      const rows     = one.stdout.parsed?._summary?.total ?? one.stdout.parsed?.entries?.length ?? 0;
 
       console.log(`  ${sizeLabel(size)} — 파일 ${files.toLocaleString()}개 · 한 줄 ${perLine.toFixed(1)}B`);
       console.log(`    실제 stdout ${outBytes.toLocaleString()}B = 목표의 ${(ratio * 100).toFixed(0)}% · ${approx(one.stdout.raw).toLocaleString()}토큰 근사 · 파싱 행 ${rows.toLocaleString()}`);

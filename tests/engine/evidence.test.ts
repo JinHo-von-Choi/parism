@@ -66,7 +66,7 @@ describe("근거 조회", () => {
   it("보관하지 않은 결과는 조회할 수 없고 그 사실을 알린다", async () => {
     const f = fixture();
     try {
-      const res = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows" });
+      const res = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", limit: 50 });
       expect(res.review?.retained).toBe(false);
       const ex = f.engine.explainResult(res.review!.result_id, "/processes/0/pid");
       expect(ex.ok).toBe(false);
@@ -102,7 +102,7 @@ describe("정밀 근거 계산", () => {
   it("바이트 구간이 원문에서 그 값을 정확히 가리킨다", async () => {
     const f = fixture();
     try {
-      const res = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true });
+      const res = await f.engine.run("ps", { args: ["aux"], cwd: f.dir, contract_version: "next", evidence: "rows", retain: true, include_raw: true });
       expect(res.review?.retained).toBe(true);
       const raw = res.stdout.raw;
       const buf = Buffer.from(raw, "utf8");

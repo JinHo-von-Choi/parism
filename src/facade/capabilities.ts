@@ -14,6 +14,7 @@ import type { CommandOutcomeCounts }              from "../engine/telemetry.js";
 import { checkGuard, GuardError }                 from "../engine/guard.js";
 import { probeCommand }                          from "../engine/availability.js";
 import { effectiveFlags, policySource, resolvePolicies, type CommandPolicy } from "../engine/policy.js";
+import { sideEffectOf, type SideEffect }          from "../engine/side-effects.js";
 
 /**
  * 명령별 예시 인자. 응답에는 현재 설정의 guard를 통과하는 것만 싣는다(build 프로필 전용 예시는 readonly에서 빠진다).
@@ -97,6 +98,11 @@ export interface PolicyDescription {
   sub_positionals?:   Record<string, string>;
   sub_verbs?:         Record<string, string>;
   sub_flags?:         Record<string, string>;
+  /**
+   * 서브커맨드별 플래그가 많아 응답 예산(2KB)을 넘을 때 sub_flags 대신 싣는다. 값은 describe에 다시 줄 cmd 형태다.
+   * describe("git commit")처럼 서브커맨드를 붙여 부르면 그 서브커맨드의 플래그, 하위 동사, 위치 인자 규칙만 받는다.
+   */
+  sub_flags_on_request?: string;
   leading_flags?:     string;
   allowed_values?:    Record<string, string[]>;
   max_positionals?:   number;
@@ -137,7 +143,9 @@ export interface AlternativeDescription {
 
 export interface CommandDescription {
   cmd:          string;
-  profile:      "readonly" | "build";
+  profile:      "readonly" | "build" | "ci";
+  /** 정책이 허용하는 범위의 최대 부작용 등급. 서브커맨드를 붙여 부르면 그 서브커맨드의 등급이다. */
+  side_effect:  SideEffect;
   policy:       PolicyDescription;
   parser:       ParserDescription | null;
   alternatives: AlternativeDescription[];
@@ -179,7 +187,10 @@ function policy(config: PrismConfig, cmd: string): CommandPolicy | undefined {
   return policySource(config.guard, cmd) === undefined ? undefined : resolvePolicies(config.guard)[cmd];
 }
 
-function describePolicy(config: PrismConfig, cmd: string): PolicyDescription {
+/** describe(cmd) 응답에서 sub_flags가 차지해도 되는 바이트 */
+const SUB_FLAGS_BUDGET = 700;
+
+function describePolicy(config: PrismConfig, cmd: string, onlySub?: string): PolicyDescription {
   const guard   = config.guard;
   const origin  = policySource(guard, cmd) ?? "none";
   const blocked = Object.hasOwn(guard.command_arg_restrictions, cmd) ? guard.command_arg_restrictions[cmd]!.blocked_flags : undefined;
@@ -189,12 +200,21 @@ function describePolicy(config: PrismConfig, cmd: string): PolicyDescription {
     if (p.subcommands)      out.subcommands       = nameList(p.subcommands);
     out.flags       = nameList(keysOf(p.flags));
     out.positionals = p.positionals;
-    if (p.subPositionals)   out.sub_positionals   = { ...p.subPositionals };
-    if (p.subVerbs)         out.sub_verbs         = mapValues(p.subVerbs, nameList);
+    const only = <T,>(table: Record<string, T>): Record<string, T> =>
+      onlySub === undefined ? { ...table } : Object.fromEntries(Object.entries(table).filter(([sub]) => sub === onlySub));
+    if (p.subPositionals && Object.keys(only(p.subPositionals)).length > 0) out.sub_positionals = only(p.subPositionals);
+    if (p.subVerbs && Object.keys(only(p.subVerbs)).length > 0)             out.sub_verbs       = mapValues(only(p.subVerbs), nameList);
     if (p.subFlags) {
       /** 이름만 싣으므로 기본 플래그 표에 없는 이름만 서브커맨드별로 남긴다. */
-      const extra = Object.entries(p.subFlags).map(([sub, t]) => [sub, keysOf(t).filter(n => !Object.hasOwn(p.flags, n))] as const).filter(([, n]) => n.length > 0);
-      if (extra.length > 0) out.sub_flags = Object.fromEntries(extra.map(([sub, n]) => [sub, nameList(n)]));
+      const extra = Object.entries(p.subFlags)
+        .filter(([sub]) => onlySub === undefined || sub === onlySub)
+        .map(([sub, t]) => [sub, keysOf(t).filter(n => !Object.hasOwn(p.flags, n))] as const).filter(([, n]) => n.length > 0);
+      const subFlags = Object.fromEntries(extra.map(([sub, n]) => [sub, nameList(n)]));
+      if (onlySub === undefined && JSON.stringify(subFlags).length > SUB_FLAGS_BUDGET) {
+        out.sub_flags_on_request = `${cmd} <subcommand>`;
+      } else if (extra.length > 0) {
+        out.sub_flags = subFlags;
+      }
     }
     if (p.leadingFlags)     out.leading_flags     = nameList(p.leadingFlags);
     if (p.allowedValues)    out.allowed_values    = mapValues(p.allowedValues, v => [...v]);
@@ -286,8 +306,11 @@ function describeExamples(config: PrismConfig, cmd: string): string[][] {
 export function describeCommand(
   config:   PrismConfig,
   registry: ParserRegistry,
-  cmd:      string,
+  cmdIn:    string,
 ): CommandDescription | CommandDescriptionFailure {
+  /** "git commit"처럼 서브커맨드를 붙이면 그 서브커맨드의 플래그만 싣는다. */
+  const [name = cmdIn, sub] = cmdIn.trim().split(/\s+/);
+  const cmd = name;
   if (!config.guard.allowed_commands.includes(cmd)) {
     return {
       cmd,
@@ -299,13 +322,50 @@ export function describeCommand(
     };
   }
   const status = probeCommand(cmd).status;
-  return {
+  return fitBudget({
     cmd,
     profile:      config.guard.profile ?? "readonly",
-    policy:       describePolicy(config, cmd),
-    parser:       describeParser(registry, cmd, policy(config, cmd)),
+    side_effect:  sideEffectOf(cmd, sub === undefined ? undefined : [sub], resolvePolicies(config.guard)[cmd]?.subcommands),
+    policy:       describePolicy(config, cmd, sub),
+    parser:       onlySubcommand(describeParser(registry, cmd, policy(config, cmd)), sub),
     alternatives: describeAlternatives(registry, cmd),
     examples:     describeExamples(config, cmd),
     ...(status !== "installed" && { availability: { status } }),
-  };
+  });
+}
+
+/** 서브커맨드를 붙여 불렀으면 파서 설명도 그 서브커맨드 것만 남긴다 */
+function onlySubcommand(parser: ParserDescription | null, sub: string | undefined): ParserDescription | null {
+  if (!parser?.subcommands || sub === undefined) return parser;
+  const kept = Object.fromEntries(Object.entries(parser.subcommands).filter(([key]) => key.split(" ")[0] === sub));
+  return { ...parser, subcommands: kept };
+}
+
+/** describe(cmd) 응답 한 건의 크기 상한(바이트) */
+export const DESCRIBE_BUDGET_BYTES = 2048;
+
+/**
+ * 응답이 상한을 넘으면 다시 물어 얻을 수 있는 항목부터 뺀다.
+ * 서브커맨드별 플래그, 위치 인자 규칙, 하위 동사, 서브커맨드 명령의 플래그 합집합은 describe("<cmd> <subcommand>")로,
+ * 대체 형식 안내는 실행 실패의 hint로도 받는다.
+ */
+function fitBudget(result: CommandDescription): CommandDescription {
+  const size = (r: CommandDescription) => Buffer.byteLength(JSON.stringify(r), "utf8");
+  if (size(result) <= DESCRIBE_BUDGET_BYTES) return result;
+  const policy = { ...result.policy };
+  delete policy.sub_positionals;
+  delete policy.sub_verbs;
+  delete policy.sub_flags;
+  policy.sub_flags_on_request ??= `${result.cmd} <subcommand>`;
+  let trimmed: CommandDescription = { ...result, policy };
+  /** 서브커맨드가 있는 명령의 flags는 모든 서브커맨드 플래그를 합친 목록이라, 서브커맨드별 describe가 더 정확하게 준다 */
+  if (size(trimmed) > DESCRIBE_BUDGET_BYTES && policy.subcommands !== undefined) {
+    const rest = { ...policy };
+    delete rest.flags;
+    trimmed = { ...trimmed, policy: rest };
+  }
+  if (size(trimmed) > DESCRIBE_BUDGET_BYTES) trimmed = { ...trimmed, examples: trimmed.examples.slice(0, 1) };
+  if (size(trimmed) > DESCRIBE_BUDGET_BYTES) trimmed = { ...trimmed, examples: [] };
+  if (size(trimmed) > DESCRIBE_BUDGET_BYTES) trimmed = { ...trimmed, alternatives: [] };
+  return trimmed;
 }

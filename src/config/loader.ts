@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { CommandPolicy } from "../engine/policy.js";
-import { realPathOf } from "../engine/guard.js";
+import { realPathOf } from "../utils/fs-path.js";
 import { LIMIT_SCHEMA, validateConfigLayer } from "./schema.js";
 
 export interface CommandArgRestriction {
@@ -28,7 +28,16 @@ export interface PrismGuardConfig {
   command_arg_restrictions: Record<string, CommandArgRestriction>;
   command_policies?:        Record<string, CommandPolicy>;
   secrets?:                 PrismGuardSecretsConfig;
-  profile?:                 "readonly" | "build";
+  /**
+   * readonly는 조회 명령만, build는 빌드·시험 실행과 로컬 git 쓰기를, ci는 build와 같은 범위를 허용한다.
+   * ci는 CI 러너처럼 사람 없이 도는 환경을 위한 이름이다. 두 프로필의 정책 차이는 없다.
+   */
+  profile?:                 "readonly" | "build" | "ci";
+  /**
+   * build·ci 프로필에서 원격 저장소를 바꾸는 git 서브커맨드(push, remote add, remote set-url)를 허용한다.
+   * 기본값은 false다. 프로젝트 설정으로는 켤 수 없다.
+   */
+  allow_git_remote_write?:  boolean;
   /**
    * 경로로 지정한 실행 파일(`./configure`, `/work/build/app`)을 allowed_commands에 없어도 실행한다.
    * build 프로필에서만 동작하고, 파일의 실제 경로가 allowed_paths 안에 있어야 한다. 기본값은 false다.
@@ -92,6 +101,11 @@ export interface PrismTasksConfig {
    * MCP SDK의 태스크 API가 experimental이라 기본값은 false다. 호스트 설정에서만 켤 수 있다.
    */
   mcp_extension?:  boolean;
+  /**
+   * true면 run(mode: "service")의 persist 옵션을 받는다. persist로 띄운 서비스는 서버가 끝나도
+   * lease_ms까지 남았다가 감시 프로세스가 종료한다. 호스트 설정에서만 켤 수 있다.
+   */
+  allow_persistent_services?: boolean;
 }
 
 /**
@@ -126,6 +140,47 @@ export interface PrismResultsConfig {
   ttl_ms:      number;
 }
 
+/** 응답 모양 기본값 */
+export interface PrismOutputConfig {
+  /** true면 파싱에 성공해도 stdout.raw를 싣는다. 기본값 false: 파싱 결과가 손실 없이 있으면 raw를 뺀다. */
+  include_raw:      boolean;
+  /**
+   * 결과 행이 이 수를 넘고 limit와 budget이 없으면 앞의 preview_rows행만 싣고
+   * 전체를 결과 보관함에 넣어 result_id를 돌려준다. 0이면 끈다.
+   */
+  auto_retain_rows: number;
+  /** auto_retain_rows를 넘었을 때 응답에 싣는 행 수 */
+  preview_rows:     number;
+}
+
+/** MCP 도구 표면 */
+export interface PrismMcpConfig {
+  /** core는 run, query_result, describe 세 도구, full은 이전 판의 아홉 도구 전체다. */
+  surface: "core" | "full";
+  /**
+   * run 응답 JSON 한 건의 상한(바이트). 넘으면 stdout.raw·stderr.raw를 줄 경계에서 잘라 맞추고 options.page로 읽게 안내한다.
+   * MCP 클라이언트는 이보다 큰 도구 결과를 받지 않는다(Claude Code 기본 25,000토큰).
+   */
+  max_response_bytes?: number;
+}
+
+/** 사용 통계 기록. 호스트 설정에서만 읽는다. */
+export interface PrismStatsConfig {
+  /** true면 run마다 명령 이름, 결과 분류, 바이트 수를 ~/.parism/stats/events.jsonl에 남긴다. 출력 본문은 남기지 않는다. */
+  enabled:     boolean;
+  /** 보관할 최대 기록 수. 넘으면 오래된 것부터 지운다. */
+  max_entries: number;
+}
+
+/** `parism hook`의 동작 */
+export interface PrismHookConfig {
+  /**
+   * Parism으로 바꾼 Bash 호출에 줄 권한 판정. allow는 묻지 않고 실행하고, ask는 사용자에게 묻는다.
+   * 지정하지 않으면 모든 조각이 읽기 전용일 때만 allow를 주고, 그 밖에는 판정을 비워 Claude Code의 권한 규칙과 모드를 따른다.
+   */
+  permission?: "allow" | "ask";
+}
+
 export interface PrismConfig {
   guard:      PrismGuardConfig;
   /** 전역 설정 파일에서만 유효. true면 프로젝트 설정이 가드를 넓힐 수 있다. */
@@ -136,6 +191,10 @@ export interface PrismConfig {
   receipts?:  PrismReceiptsConfig;
   verify?:    PrismVerifyConfig;
   results?:   PrismResultsConfig;
+  output?:    PrismOutputConfig;
+  mcp?:       PrismMcpConfig;
+  stats?:     PrismStatsConfig;
+  hook?:      PrismHookConfig;
 }
 
 export interface PrismTelemetryConfig {
@@ -167,13 +226,22 @@ export const DEFAULT_RECEIPTS: PrismReceiptsConfig = {
   untracked_max_bytes: 64 * 1024 * 1024,
 };
 
-export const DEFAULT_RESULTS: PrismResultsConfig = { max_entries: 16, ttl_ms: 60_000 };
+export const DEFAULT_RESULTS: PrismResultsConfig = { max_entries: 16, ttl_ms: 300_000 };
+
+export const DEFAULT_OUTPUT: PrismOutputConfig = { include_raw: false, auto_retain_rows: 100, preview_rows: 50 };
+
+export const DEFAULT_MCP: PrismMcpConfig = { surface: "core", max_response_bytes: 40_000 };
+
+export const DEFAULT_STATS: PrismStatsConfig = { enabled: true, max_entries: 20_000 };
 
 export const DEFAULT_CONFIG: PrismConfig = {
   tasks:    DEFAULT_TASKS,
   receipts: DEFAULT_RECEIPTS,
   verify:   { commands: [] },
   results:  DEFAULT_RESULTS,
+  output:   DEFAULT_OUTPUT,
+  mcp:      DEFAULT_MCP,
+  stats:    DEFAULT_STATS,
   parsers: {
     strict_schemas: false,
     ...EXTERNAL_PARSER_DEFAULTS,
@@ -436,7 +504,7 @@ function narrowParsers(base: PrismParsersConfig | undefined, project: PrismParse
   return out;
 }
 
-const HOST_ONLY_KEYS = ["receipts", "verify", "results"] as const;
+const HOST_ONLY_KEYS = ["receipts", "verify", "results", "stats", "hook"] as const;
 
 /** 레이어에 들어 있는 호스트 전용 키 이름 */
 function hostOnlyKeysIn(layer: Partial<PrismConfig>): string[] {
@@ -451,6 +519,8 @@ function narrowTasks(base: PrismTasksConfig, project: Partial<PrismTasksConfig> 
     ...base,
     max_concurrency: typeof concurrency === "number" && concurrency >= 1 ? Math.min(base.max_concurrency, concurrency) : base.max_concurrency,
     timeout_ms:      narrowTimeout(base.timeout_ms, project.timeout_ms),
+    /** 서버보다 오래 남는 서비스는 호스트만 허용할 수 있다. 프로젝트는 끄는 것만 된다. */
+    ...(base.allow_persistent_services === true && { allow_persistent_services: project.allow_persistent_services !== false }),
   };
 }
 
@@ -511,7 +581,7 @@ export async function loadConfigMultiLayer(opts?: {
       process.stderr.write(`[parism] WARNING: ${hostOnly.join(", ")} in ${projectPath} ignored; these are read from the host config only.\n`);
     }
     const projectLayer: Partial<PrismConfig> = {
-      ...layer, receipts: undefined, verify: undefined, results: undefined,
+      ...layer, receipts: undefined, verify: undefined, results: undefined, stats: undefined, hook: undefined,
       tasks: narrowTasks(config.tasks ?? DEFAULT_TASKS, layer.tasks),
     };
     if (trustProject) {
@@ -630,5 +700,9 @@ function mergeConfig(base: PrismConfig, override: Partial<PrismConfig>): PrismCo
     receipts: { ...DEFAULT_RECEIPTS, ...(base.receipts ?? {}), ...(override.receipts ?? {}) },
     verify:   { commands: override.verify?.commands ?? base.verify?.commands ?? [] },
     results:  { ...DEFAULT_RESULTS,  ...(base.results ?? {}),  ...(override.results ?? {}) },
+    output:   { ...DEFAULT_OUTPUT,   ...(base.output ?? {}),   ...(override.output ?? {}) },
+    mcp:      { ...DEFAULT_MCP,      ...(base.mcp ?? {}),      ...(override.mcp ?? {}) },
+    stats:    { ...DEFAULT_STATS,    ...(base.stats ?? {}),    ...(override.stats ?? {}) },
+    ...((base.hook ?? override.hook) && { hook: { ...(base.hook ?? {}), ...(override.hook ?? {}) } }),
   };
 }

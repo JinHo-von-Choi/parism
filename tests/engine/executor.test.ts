@@ -76,6 +76,15 @@ describe("execute()", () => {
   }, 10000);
 });
 
+describe("표준 입력", () => {
+  it("입력을 읽는 명령은 기다리지 않고 빈 입력을 받는다", async () => {
+    const started = Date.now();
+    const result  = await execute("node", ["-e", "process.stdin.on('data', () => {}); process.stdin.on('end', () => console.log('eof'))"], process.cwd());
+    expect(result.stdout.raw.trim()).toBe("eof");
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
 describe("출력 상한", () => {
   it("stderr도 max_output_bytes로 자른다", async () => {
     const r = await execute("node", ["-e", "process.stderr.write('x'.repeat(5000))"], process.cwd(), [], 10000, 100, false);

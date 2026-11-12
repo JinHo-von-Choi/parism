@@ -911,7 +911,7 @@ describe("태스크, 영수증, 검증 묶음, 보관함 설정", () => {
     expect(cfg.receipts).toMatchObject({ enabled: false, max_entries: 500 });
     expect(cfg.tasks).toEqual({ max_concurrency: 2, timeout_ms: 600_000 });
     expect(cfg.verify).toEqual({ commands: [] });
-    expect(cfg.results).toEqual({ max_entries: 16, ttl_ms: 60_000 });
+    expect(cfg.results).toEqual({ max_entries: 16, ttl_ms: 300_000 });
   });
 
   it("호스트 설정에서 읽는다", async () => {

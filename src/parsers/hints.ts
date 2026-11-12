@@ -186,7 +186,7 @@ export function gitDiffHint(rest: string[]): HintDraft | null {
   if (!hasFlag(rest, "--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "--compact-summary", "--dirstat")) return null;
   return {
     args:   dropFlags(rest, GIT_DIFF_SUMMARY),
-    reason: "the git diff patch is parsed into files with path, change status, old path and hunks; the changed lines give the per-file counts",
+    reason: "git diff is parsed into files with hunks; count changed lines per file",
   };
 }
 

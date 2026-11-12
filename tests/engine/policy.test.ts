@@ -253,6 +253,7 @@ describe("인자 분류 규칙", () => {
 const GIT_PREFIX = [
   "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "core.hooksPath=/dev/null",
   "-c", "log.showSignature=false", "-c", "gpg.program=false", "-c", "gpg.ssh.program=false", "-c", "gpg.x509.program=false",
+  "-c", "core.editor=true", "-c", "sequence.editor=true",
 ];
 
 describe("buildExecArgs", () => {
@@ -482,7 +483,7 @@ describe("조회 정책 범위", () => {
 describe("npx 실행 인자", () => {
   it("npx에는 설치된 실행 파일만 쓰도록 --no를 앞에 붙인다", () => {
     const args = ["vitest", "run"];
-    expect(buildExecArgs("npx", args)).toEqual(["--no", "vitest", "run"]);
+    expect(buildExecArgs("npx", args)).toEqual(["--no", "--", "vitest", "run"]);
     expect(args).toEqual(["vitest", "run"]);
   });
 });

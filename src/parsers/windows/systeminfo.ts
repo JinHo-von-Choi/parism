@@ -27,6 +27,17 @@ function megabytes(value: string | null): number | null {
   return digits === "" ? null : parseInt(digits, 10);
 }
 
+type TextField = "hostname" | "os_name" | "os_version" | "os_build" | "os_manufacturer" | "system_type" | "processor"
+  | "bios_version" | "boot_device" | "system_locale" | "time_zone" | "domain" | "logon_server";
+
+/** 글자 그대로 담는 키 → 필드 */
+const TEXT_FIELDS: Record<string, TextField> = {
+  "Host Name": "hostname", "OS Name": "os_name", "OS Version": "os_version", "OS Build": "os_build",
+  "OS Manufacturer": "os_manufacturer", "System Type": "system_type", "Processor(s)": "processor",
+  "BIOS Version": "bios_version", "Boot Device": "boot_device", "System Locale": "system_locale",
+  "Time Zone": "time_zone", "Domain": "domain", "Logon Server": "logon_server",
+};
+
 export function parseSysteminfo(_cmd: string, _args: string[], raw: string): SysteminfoResult {
   const lines = raw.split(/\r?\n/);
 
@@ -68,33 +79,22 @@ export function parseSysteminfo(_cmd: string, _args: string[], raw: string): Sys
 
     mode = null; // reset list mode on new key
 
-    switch (true) {
-      case /Host Name/i.test(key):              result.hostname            = val; break;
-      case /OS Name/i.test(key):                result.os_name             = val; break;
-      case /OS Version/i.test(key):             result.os_version          = val; break;
-      case /OS Build/i.test(key):               result.os_build            = val; break;
-      case /OS Manufacturer/i.test(key):        result.os_manufacturer     = val; break;
-      case /System Type/i.test(key):            result.system_type         = val; break;
-      case /Processor\(s\)/i.test(key):         result.processor           = val; break;
-      case /BIOS Version/i.test(key):           result.bios_version        = val; break;
-      case /Boot Device/i.test(key):            result.boot_device         = val; break;
-      case /System Locale/i.test(key):          result.system_locale       = val; break;
-      case /Time Zone/i.test(key):              result.time_zone           = val; break;
-      case /Domain/i.test(key):                 result.domain              = val; break;
-      case /Logon Server/i.test(key):           result.logon_server        = val; break;
-      case /Total Physical Memory/i.test(key):
-        result.total_memory_mb = megabytes(val);
-        break;
-      case /Available Physical Memory/i.test(key):
-        result.available_memory_mb = megabytes(val);
-        break;
-      case /Hotfix\(s\)/i.test(key):
-        mode = "hotfix";
-        break;
-      case /Network Card\(s\)/i.test(key):
-        mode = "nic";
-        break;
-    }
+    /**
+     * 키는 정확히 같은 이름으로 고른다. 부분 일치로 고르면 "BIOS Version"이 "OS Version"에,
+     * "OS Build Type"이 "OS Build"에 맞아 값이 엉뚱한 필드에 들어간다.
+     */
+    const field = Object.hasOwn(TEXT_FIELDS, key) ? TEXT_FIELDS[key] : undefined;
+    if (field) { result[field] = val; continue; }
+    if (key === "Total Physical Memory")     { result.total_memory_mb     = megabytes(val); continue; }
+    if (key === "Available Physical Memory") { result.available_memory_mb = megabytes(val); continue; }
+    if (key === "Hotfix(s)")                 { mode = "hotfix"; continue; }
+    if (key === "Network Card(s)")           { mode = "nic"; continue; }
+  }
+
+  /** 빌드 번호는 "OS Version: 10.0.22631 N/A Build 22631"의 끝에 있다. 따로 된 키가 없으면 거기서 읽는다. */
+  if (result.os_build === null && result.os_version !== null) {
+    const m = /Build ([0-9]+)/.exec(result.os_version);
+    if (m) result.os_build = m[1]!;
   }
 
   return result;

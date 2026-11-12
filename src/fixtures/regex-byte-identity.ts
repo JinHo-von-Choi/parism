@@ -45,15 +45,15 @@ import { join }                                    from "node:path";
 
 import { createRegistry }                           from "../parsers/index.js";
 import { defaultFixturesDir }                       from "../cli/paths.js";
-import { sanitizeText }                             from "../fixtures/sanitize.js";
-import { DEFAULT_OUTPUT_REDACT_PATTERNS, redact }  from "./redactor.js";
-import { maskWithRanges }                           from "./mask-map.js";
+import { sanitizeText }                             from "./sanitize.js";
+import { DEFAULT_OUTPUT_REDACT_PATTERNS, redact }  from "../engine/redactor.js";
+import { maskWithRanges }                           from "../engine/mask-map.js";
 import {
   findAllRanges,
   replaceAllText,
   type RegexFallback,
-} from "./regex-engine.js";
-import { resolveNativeBinary }                      from "./regex-native.js";
+} from "../engine/regex-engine.js";
+import { resolveNativeBinary }                      from "../engine/regex-native.js";
 
 /** 비교에서 어긋난 항목 하나. */
 export interface ByteIdentityMismatch {

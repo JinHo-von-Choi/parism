@@ -83,6 +83,24 @@ jobs:
       - name: Audit development dependencies
         run: npm audit --audit-level=critical
 
+  # Rust 크레이트 시험. 네이티브 정규식 엔진과 외부 파서 샌드박스는 Node 시험과 따로 돈다.
+  rust:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [parism-regex, parism-sandbox]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test ${{ matrix.crate }}
+        run: cargo test --manifest-path crates/${{ matrix.crate }}/Cargo.toml
+
   platform:
     runs-on: ${{ matrix.os }}
 

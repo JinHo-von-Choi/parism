@@ -68,12 +68,17 @@ describe("originTableFor()", () => {
 
   it("이름, 경로, 메시지는 external이고 개수와 열거형은 fixed다", () => {
     const table = originTableFor("vitest", [])!;
-    expect(externalFields(table)).toEqual(["failures[].id", "failures[].file", "failures[].name", "failures[].message"]);
+    expect(externalFields(table)).toEqual([
+      "failures[].id", "failures[].file", "failures[].name", "failures[].message", "failures[].diff_hunk_preview", "failures[].attribution_frame", "failures[].imports_changed[]",
+    ]);
+    expect(fixedFields(table)).toContain("failures[].attribution");
     expect(fixedFields(table)).toContain("failed");
     expect(fixedFields(table)).not.toContain("failures[].file");
 
     const diagnostics = originTableFor("eslint", [])!;
-    expect(externalFields(diagnostics)).toEqual(["by_code[].code", "diagnostics[].file", "diagnostics[].code", "diagnostics[].message"]);
+    expect(externalFields(diagnostics)).toEqual([
+      "by_code[].code", "diagnostics[].file", "diagnostics[].code", "diagnostics[].message", "diagnostics[].diff_hunk_preview", "diagnostics[].attribution_frame", "diagnostics[].imports_changed[]",
+    ]);
     expect(fixedFields(diagnostics)).toContain("diagnostics[].severity");
   });
 });

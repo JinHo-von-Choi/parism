@@ -28,7 +28,7 @@
  * MCP 서버로 가면 표준 입력이 JSON-RPC 줄이 되기를 기다리며 멈춘다.
  */
 export const CLI_COMMANDS: readonly string[] = [
-  "capture", "init-parser", "test", "add", "inspect", "eval", "receipts",
+  "capture", "init-parser", "test", "add", "inspect", "eval", "receipts", "exec", "hook", "skill", "stats", "doctor",
   "help", "--help", "-h", "--version", "-V",
 ];
 

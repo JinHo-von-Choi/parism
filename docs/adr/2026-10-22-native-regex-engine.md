@@ -150,7 +150,7 @@ CI 는 `PARISM_REQUIRE_NATIVE=1` 로 이 게이트를 건다 — Rust 바이너�
 - `crates/parism-regex/` — edition 2024, MSRV 1.89, `regex` 크레이트만 의존. lib + bin. release 바이너리 1.5MB.
 - `src/engine/regex-native.ts` — 지속 프로세스, 길이 프레이밍, 요청 제한 시간, 실패 분류.
 - `src/engine/regex-engine.ts` — 패턴 번역, 엔진 선택, 폴백 기록, 바이트↔UTF-16 좌표 변환.
-- `src/engine/regex-byte-identity.ts` — 바이트 동일성 검증 하네스. **무의미한 통과를 막는 지표**를 함께 낸다.
+- `src/fixtures/regex-byte-identity.ts` — 바이트 동일성 검증 하네스. **무의미한 통과를 막는 지표**를 함께 낸다.
 - `packages/parism-regex-*/` — 8종 플랫폼 패키지. `scripts/native-platforms.mjs` 가 만든다.
 - `.github/workflows/native-regex.yml` — Rust 엔진 활성 상태의 바이트 동일성 게이트 + 8종 크로스 빌드 + 플랫폼 패키지 게시.
 

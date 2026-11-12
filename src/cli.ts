@@ -3,33 +3,21 @@ import { existsSync }    from "node:fs";
 import { join }          from "node:path";
 import { PACKAGE_VERSION } from "./server.js";
 import { parismHome, expandTilde, defaultFixturesDir } from "./cli/paths.js";
+import { lexCommand }    from "./engine/command-lexer.js";
 
-/**
- * CLI 프로그램을 생성한다. 명령어 핸들러는 각 모듈에서 등록.
- */
 /**
  * 명령 문자열을 argv 로 바꾼다.
  *
- * ## 두 모드가 있고, 차이가 있다
+ *   `parism inspect ls -l /path`      → argv 를 그대로 쓴다.
+ *   `parism inspect "ls -l /path"`    → 셸 없이 렉서(engine/command-lexer.ts)로 나눈다. 따옴표와 백슬래시를 지킨다.
  *
- *   `parism inspect ls -l /path`      → argv 를 **그대로** 쓴다. 공백·따옴표를 따로따로 지킨다.
- *   `parism inspect "ls -l /path"`    → 공백으로 **나눈다.** 따옴표를 지킨다는 보장이 없다.
- *
- * 두 번째 모드에서 `parism inspect 'echo "hello   world"'` 를 주면 따옴표가
- * **문자 그대로** 자식 프로세스에 전달된다(실측: 출력이 `"hello world"` 로 quotes 를 달고 나온다).
- * 사용자 의도는 `hello   world` 한 개의 인자였지만 되지 않는다.
- *
- * 그래서 **인자를 여러 개로 주면 argv 모드로 판단하고 안내를 낸다.**
- * 조용히 잘못된 인자를 실행하는 것보다 "지금 이렇게 호출했다"고 말하는 편이 낫다.
+ * 렉서가 받지 않는 셸 문법(파이프, 리다이렉션, 치환)이 있으면 실행하지 않고 그 사실을 알린다.
  */
-function splitCommand(parts: string[]): { args: string[]; stringMode: boolean } {
-  return { args: parts, stringMode: false };
-}
-
-/** 한 토큰 안에 공백이 있으면 문자열 모드이고, 그 한계를 먼저 말한다. */
-function splitSingleCommand(token: string): { args: string[]; stringMode: boolean } {
-  if (!/\s/.test(token)) return { args: [token], stringMode: false };
-  return { args: token.split(/\s+/), stringMode: true };
+function splitSingleCommand(token: string): { args: string[] } | { error: string } {
+  const lexed = lexCommand(token);
+  if (!lexed.ok) return { error: `${lexed.message}. ${lexed.hint}` };
+  if (lexed.pipeline.length > 0 || lexed.cwd !== undefined) return { error: "pipes and 'cd dir &&' are not run here; use parism exec" };
+  return { args: [lexed.cmd, ...lexed.args] };
 }
 
 export function createCli(): Command {
@@ -46,9 +34,14 @@ export function createCli(): Command {
     .option("-o, --output <dir>", "Output directory (default: ~/.parism/fixtures)")
     .action(async (command: string, options: { output?: string }) => {
       const { captureCommand } = await import("./cli/capture.js");
-      const parts  = command.split(/\s+/);
-      const cmd    = parts[0];
-      const args   = parts.slice(1);
+      const parts  = splitSingleCommand(command);
+      if ("error" in parts) {
+        console.error(`[parism] capture: ${parts.error}`);
+        process.exitCode = 2;
+        return;
+      }
+      const cmd    = parts.args[0]!;
+      const args   = parts.args.slice(1);
       /**
        * 기본값을 `~` **문자열**로 두면 셸이 아니라 Node 라서 전개되지 않는다.
        * 그 결과 fixture 가 작업 디렉터리 안의 `~` 폴더에 쓰이고, 사용자는
@@ -148,19 +141,15 @@ export function createCli(): Command {
       const { promisify }      = await import("node:util");
       const execFileAsync = promisify(execFile);
 
-      /**
-       * 한 토큰이면 공백으로 나눈다(문자열 모드), 여러 개면 argv 그대로 쓴다.
-       * 어느 쪽인지 사용자에게 밝힌다 — 조용히 다른 인자를 실행하지 않는다.
-       */
-      const parts = commandParts.length === 1
-        ? splitSingleCommand(commandParts[0]!)
-        : splitCommand(commandParts);
+      /** 한 토큰이면 렉서로 나누고, 여러 개면 argv 그대로 쓴다. */
+      const parts = commandParts.length === 1 ? splitSingleCommand(commandParts[0]!) : { args: commandParts };
+      if ("error" in parts) {
+        console.error(`[parism] inspect: ${parts.error}`);
+        process.exitCode = 2;
+        return;
+      }
       const cmd  = parts.args[0]!;
       const args = parts.args.slice(1);
-      if (parts.stringMode) {
-        console.error("[parism] 문자열 모드: 공백으로 나눴습니다. 따옴표로 묶은 인자는 보존되지 않습니다.");
-        console.error("[parism] 정확히 넘기려면 인자를 따로 주십시오: parism inspect <cmd> [args...]");
-      }
       const registry = createRegistry();
 
       let raw: string;
@@ -292,6 +281,169 @@ export function createCli(): Command {
           : r.summary?.kind === "diagnostics" ? `errors ${r.summary.errors} warnings ${r.summary.warnings}` : "";
         console.log(`${r.started_at}  exit ${r.exit_code}  ${[r.cmd, ...(r.args_requested ?? r.args)].join(" ")}  ${summary}`);
       }
+    });
+
+  receipts
+    .command("verify")
+    .description("Check the receipt file: hash chain (no edited, removed or inserted lines) and signatures. Never runs a command")
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .option("--json", "Print as JSON")
+    .action(async (options: { config?: string; json?: boolean }) => {
+      const { receiptsVerify } = await import("./cli/receipts.js");
+      const report = await receiptsVerify({ ...(options.config && { config: options.config }) });
+      if (options.json) console.log(JSON.stringify(report));
+      else {
+        for (const p of report.problems) console.log(`FAIL line ${p.line} ${p.id ?? ""} [${p.reason}] ${p.detail}`);
+        console.log(`${report.entries} receipt(s) in ${report.file}; ${report.signed ? `signed with ${report.key_file ?? "the configured key"}` : "no signing key"}; ${report.ok ? "chain and signatures intact" : `${report.problems.length} problem(s)`}`);
+      }
+      if (!report.ok) process.exitCode = 1;
+    });
+
+  receipts
+    .command("export")
+    .description("Summarize receipts and usage for a pull request or CI: markdown, sarif, github (writes $GITHUB_STEP_SUMMARY) or json")
+    .option("--format <format>", "markdown | sarif | github | json", "markdown")
+    .option("--cwd <dir>", "Workspace (default: current directory)")
+    .option("--since <when>", "Only receipts after this, e.g. 7d, 24h or a date")
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .action(async (options: { format: string; cwd?: string; since?: string; config?: string }) => {
+      const { receiptsExport, formatExportMarkdown, formatExportSarif } = await import("./cli/receipts.js");
+      const summary = await receiptsExport({ ...(options.cwd && { cwd: options.cwd }), ...(options.since && { since: options.since }), ...(options.config && { config: options.config }) });
+      if (options.format === "json") console.log(JSON.stringify(summary));
+      else if (options.format === "sarif") console.log(formatExportSarif(summary, PACKAGE_VERSION));
+      else if (options.format === "markdown") console.log(formatExportMarkdown(summary));
+      else if (options.format === "github") {
+        const markdown = formatExportMarkdown(summary);
+        const target   = process.env.GITHUB_STEP_SUMMARY;
+        if (target) {
+          const { appendFileSync } = await import("node:fs");
+          appendFileSync(target, markdown + "\n");
+          console.log(`written to ${target}`);
+        } else {
+          console.log(markdown);
+        }
+        for (const f of summary.failed_runs.slice(-20)) console.log(`::error title=parism::${f.command} failed: ${f.detail}`);
+        if (!summary.chain.ok) console.log("::error title=parism::receipt file failed the chain or signature check");
+      } else {
+        console.error(`[parism receipts] unknown format '${options.format}'`);
+        process.exitCode = 2;
+        return;
+      }
+      if (summary.failed_runs.length > 0 || !summary.chain.ok) process.exitCode = 1;
+    });
+
+  program
+    .command("exec [command...]")
+    .description("Run one command line through the Parism engine (guard, parsing, redaction, receipts) and print it like a shell would")
+    .option("--cwd <dir>", "Working directory (default: current directory)")
+    .option("--config <file>", "Config file (default: ~/.parism/hook.config.json when it exists, else the global and project config)")
+    .allowUnknownOption(true)
+    .action(async (parts: string[], options: { cwd?: string; config?: string }) => {
+      const { execCommand } = await import("./cli/exec.js");
+      const { hookConfigFile } = await import("./cli/hook.js");
+      if (parts.length === 0) {
+        console.error("[parism exec] give a command, e.g. parism exec -- \"git status\"");
+        process.exitCode = 2;
+        return;
+      }
+      /** 인자 하나면 명령 문자열, 여럿이면 셸이 이미 나눈 argv다. argv는 따옴표로 다시 감싸 이어 붙인다. */
+      const { quoteArg } = await import("./engine/command-lexer.js");
+      const command = parts.length === 1 ? parts[0]! : parts.map(quoteArg).join(" ");
+      const { existsSync: exists } = await import("node:fs");
+      const config  = options.config ?? (exists(hookConfigFile()) ? hookConfigFile() : undefined);
+      const result  = await execCommand(command, { ...(options.cwd && { cwd: options.cwd }), ...(config && { config }) });
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      process.exitCode = result.exitCode;
+    });
+
+  const hook = program
+    .command("hook")
+    .description("Connect an agent CLI to Parism through hooks: rewrite Bash calls, record the session start, block unverified finishes");
+
+  for (const event of ["pre-tool-use", "session-start", "stop"] as const) {
+    hook
+      .command(event)
+      .description(`Handle the ${event} hook: read the hook JSON from stdin and answer on stdout`)
+      .option("--config <file>", "Config file (default: ~/.parism/hook.config.json)")
+      .option("--client <client>", "claude (default) or gemini")
+      .action(async (options: { config?: string; client?: string }) => {
+        const { runHook } = await import("./cli/hook.js");
+        try {
+          const out = await runHook(event, { ...(options.config && { config: options.config }), ...(options.client === "gemini" && { client: "gemini" as const }) });
+          if (out !== undefined) process.stdout.write(out + "\n");
+        } catch (err) {
+          /** 훅이 실패해도 에이전트 작업을 막지 않는다. 종료 코드 1은 비차단 오류다. */
+          process.stderr.write(`[parism hook ${event}] ${(err as Error).message}\n`);
+          process.exitCode = 1;
+        }
+      });
+  }
+
+  hook
+    .command("install")
+    .description("Add the PreToolUse, Stop and SessionStart hooks to the client settings and create ~/.parism/hook.config.json")
+    .option("--client <client>", "claude (default) or gemini", "claude")
+    .option("--scope <scope>", "project (.claude/settings.json, default) or user (~/.claude/settings.json)", "project")
+    .action(async (options: { client: string; scope: string }) => {
+      const { installHooks } = await import("./cli/hook.js");
+      if (!["claude", "gemini"].includes(options.client) || !["project", "user"].includes(options.scope)) {
+        console.error("[parism hook install] --client claude|gemini, --scope project|user");
+        process.exitCode = 2;
+        return;
+      }
+      const result = installHooks({ client: options.client as "claude" | "gemini", scope: options.scope as "project" | "user" });
+      console.log(`hooks written to ${result.settings}`);
+      console.log(result.created_hook_config
+        ? `hook config created at ${result.hook_config} (profile build, receipts on, redaction on, allowed_paths: this directory)`
+        : `hook config kept at ${result.hook_config}`);
+    });
+
+  program
+    .command("skill")
+    .description("Install the Parism agent skill")
+    .command("install")
+    .description("Copy the Parism skill to .claude/skills/parism (project, default) or ~/.claude/skills/parism (user)")
+    .option("--scope <scope>", "project or user", "project")
+    .action(async (options: { scope: string }) => {
+      if (!["project", "user"].includes(options.scope)) {
+        console.error("[parism skill install] --scope project|user");
+        process.exitCode = 2;
+        return;
+      }
+      const { installSkill } = await import("./cli/skill.js");
+      const result = installSkill({ scope: options.scope as "project" | "user" });
+      console.log(`${result.replaced ? "updated" : "installed"} skill ${result.version ?? ""} at ${result.target}`.replace("  ", " "));
+    });
+
+  program
+    .command("stats")
+    .description("Show what Parism saved and blocked: tokens, re-queries, redactions, guard blocks, stop gate")
+    .option("--since <when>", "e.g. 7d, 24h, 30m or a date")
+    .option("--price <usd>", "Input price per million tokens for the cost estimate", "3")
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .option("--json", "Print as JSON")
+    .action(async (options: { since?: string; price: string; config?: string; json?: boolean }) => {
+      const { readStats, formatStats } = await import("./cli/stats.js");
+      try {
+        const report = await readStats({ ...(options.since && { since: options.since }), price: Number(options.price), ...(options.config && { config: options.config }) });
+        console.log(options.json ? JSON.stringify(report) : formatStats(report));
+      } catch (err) {
+        console.error(`[parism stats] ${(err as Error).message}`);
+        process.exitCode = 2;
+      }
+    });
+
+  program
+    .command("doctor")
+    .description("Check the configuration and installation and say what to fix")
+    .option("--config <file>", "Config file to read instead of the global and project config")
+    .option("--json", "Print as JSON")
+    .action(async (options: { config?: string; json?: boolean }) => {
+      const { runDoctor, formatDoctor } = await import("./cli/doctor.js");
+      const report = await runDoctor({ ...(options.config && { config: options.config }) });
+      console.log(options.json ? JSON.stringify(report) : formatDoctor(report));
+      if (!report.ok) process.exitCode = 1;
     });
 
   return program;

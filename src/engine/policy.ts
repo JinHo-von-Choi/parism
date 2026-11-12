@@ -58,6 +58,14 @@ export interface CommandPolicy {
   textFlags?: string[];
   /** 검색어를 -e나 -f로 주지 않았을 때 첫 위치 인자가 검색어다(grep). 그 인자에는 block_patterns 검사를 하지 않는다. */
   patternPositional?: boolean;
+  /** 모르는 대시 낱말을 플래그가 아니라 글자로 본다(echo ---, echo -x는 그대로 출력된다). */
+  unknownFlagsAreText?: boolean;
+  /** subVerbs가 있는 서브커맨드 가운데 하위 동사 없이도 쓸 수 있는 것(git remote, git stash) */
+  optionalVerbs?: string[];
+  /** 서브커맨드별로 첫 위치 인자가 시작해야 하는 접두사 목록(git config의 설정 키) */
+  subPositionalPrefixes?: Record<string, string[]>;
+  /** 서브커맨드별로 첫 위치 인자로 올 수 없는 하위 동사(readonly의 git reflog delete, git stash drop) */
+  subDeniedVerbs?: Record<string, string[]>;
 }
 
 export type PolicySource = "default" | "build" | "config";
@@ -197,7 +205,43 @@ export const GH_READ_VERBS = ["list", "view", "status", "checks", "diff"];
 /** kubectl -o 허용 형식. 로컬 템플릿 파일을 읽는 *-file 형식은 넣지 않는다. */
 const KUBECTL_OUTPUT_FORMATS = ["json", "yaml", "wide", "name", "jsonpath=", "jsonpath-as-json=", "custom-columns=", "go-template=", "template="];
 
-const COMMON_GIT_READ = ["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "describe", "shortlog", "tag", "remote"];
+const COMMON_GIT_READ = [
+  "status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "describe", "shortlog", "tag", "remote",
+  "reflog", "worktree", "fsck", "cat-file", "rev-list", "ls-tree", "for-each-ref", "show-ref", "merge-base", "name-rev", "count-objects", "stash", "grep",
+];
+
+/** 조회 서브커맨드 가운데 저장소를 바꾸는 하위 동사. readonly 프로필에서 막는다. */
+const GIT_READ_DENIED_VERBS: Record<string, string[]> = {
+  reflog:   ["expire", "delete"],
+};
+
+/** 조회 서브커맨드 가운데 하위 동사를 골라야 읽기만 하는 것. `git stash` 하나만 쓰면 stash push다. */
+const GIT_READ_VERBS: Record<string, string[]> = {
+  stash:    ["list", "show"],
+  worktree: ["list"],
+};
+
+/** 조회 서브커맨드의 플래그 */
+const GIT_READ_SUB_FLAGS: Record<string, Record<string, FlagKind>> = {
+  branch:   { "--format": "value", "--contains": "value", "--no-contains": "value", "--points-at": "value", "--sort": "value" },
+  tag:      { "--format": "value", "-n": "attached" },
+  blame:    { "-n": "bool" },
+  shortlog: { "-n": "bool" },
+  log:      { "-S": "value", "-G": "value", "--pickaxe-regex": "bool", "--pickaxe-all": "bool", "--grep": "value", "-i": "bool", "--regexp-ignore-case": "bool" },
+  grep:     { ...bools("-n", "--line-number", "-i", "--ignore-case", "-l", "--files-with-matches", "-L", "-c", "--count", "-w", "--word-regexp", "-E", "--extended-regexp", "-F", "--fixed-strings", "-h", "-H", "--cached", "--untracked", "-I", "--full-name", "--break", "--heading"), "-e": "value", "-A": "value", "-B": "value", "-C": "value", "--max-depth": "value" },
+  reflog:   { "--date": "value" },
+  worktree: { "--porcelain": "bool" },
+  fsck:     { "--unreachable": "bool", "--dangling": "bool", "--no-dangling": "bool", "--no-reflogs": "bool", "--full": "bool", "--connectivity-only": "bool", "--root": "bool", "--tags": "bool", "--cache": "bool", "--name-objects": "bool" },
+  "cat-file": { "-t": "bool", "-s": "bool", "-e": "bool", "-p": "bool" },
+  "rev-list": { "--count": "bool", "--objects": "bool", "--max-parents": "value", "--min-parents": "value", "--left-right": "bool", "--topo-order": "bool", "--date-order": "bool", "--parents": "bool", "--children": "bool", "--ancestry-path": "bool", "--branches": "bool", "--remotes": "bool" },
+  "ls-tree": { "-r": "bool", "-d": "bool", "-t": "bool", "-l": "bool", "--long": "bool", "--name-only": "bool", "--name-status": "bool", "--full-tree": "bool", "--full-name": "bool", "--abbrev": "attached" },
+  "for-each-ref": { "--format": "value", "--sort": "value", "--count": "value", "--contains": "value", "--no-contains": "value", "--points-at": "value", "--shell": "bool" },
+  "show-ref": { "--heads": "bool", "--tags": "bool", "--hash": "bool", "--verify": "bool", "--head": "bool", "--abbrev": "attached", "-d": "bool", "--dereference": "bool" },
+  "merge-base": { "--is-ancestor": "bool", "--octopus": "bool", "--fork-point": "bool", "--independent": "bool" },
+  "name-rev": { "--name-only": "bool", "--no-undefined": "bool", "--always": "bool", "--refs": "value" },
+  "count-objects": { "-v": "bool", "-H": "bool", "--human-readable": "bool" },
+  stash:    { "--stat": "bool", "-p": "bool", "--patch": "bool", "--include-untracked": "bool", "-u": "bool", "--only-untracked": "bool" },
+};
 
 /** 이름 목록을 bool 플래그 표로 만든다. */
 function bools(...names: string[]): Record<string, FlagKind> {
@@ -382,7 +426,7 @@ const READ_COMMAND_POLICIES: Record<string, CommandPolicy> = {
   },
   pwd:   { flags: bools("-L", "-P"), positionals: "none" },
   which: { flags: bools("-a", "--all", "-s"), positionals: "any" },
-  echo:  { flags: bools("-n", "-e", "-E"), positionals: "any", textPositionals: true },
+  echo:  { flags: bools("-n", "-e", "-E"), positionals: "any", textPositionals: true, unknownFlagsAreText: true },
   date: {
     flags: {
       ...bools("-u", "--utc", "--universal", "-R", "--rfc-email", "--debug"),
@@ -456,15 +500,13 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
     positionals: "any",
     subPositionals: { branch: "none", tag: "none", remote: "none" },
     /** git이 실제로 다음 인자를 값으로 받는지는 서브커맨드마다 다르다. */
-    subFlags: {
-      branch:   { "--format": "value" },
-      tag:      { "--format": "value", "-n": "attached" },
-      blame:    { "-n": "bool" },
-      shortlog: { "-n": "bool" },
-    },
+    subFlags: GIT_READ_SUB_FLAGS,
+    subDeniedVerbs: GIT_READ_DENIED_VERBS,
+    subVerbs: GIT_READ_VERBS,
     leadingFlags: ["--no-pager"],
     numericFlag: true,
-    textFlags: ["--format", "--pretty"],
+    /** 검색어(-S, -G, --grep, git grep -e)는 셸 없이 그대로 넘기므로 block_patterns를 적용하지 않는다 */
+    textFlags: ["--format", "--pretty", "-S", "-G", "--grep", "-e"],
   },
   find: {
     flags: {
@@ -485,8 +527,11 @@ export const DEFAULT_POLICIES: Record<string, CommandPolicy> = {
       "-v": "bool", "-H": "value", "--header": "value", "-m": "value", "--max-time": "value",
       "--connect-timeout": "value", "-w": "value", "--write-out": "value", "-f": "bool",
       "--fail": "bool", "-k": "bool", "--compressed": "bool", "-A": "value", "--user-agent": "value",
+      "-o": "value", "--output": "value",
     },
     positionals:  "url",
+    /** 출력 파일은 버리는 경우(/dev/null)만 쓴다. 상태 코드만 볼 때(`-o /dev/null -w '%{http_code}'`) 쓴다. */
+    allowedValues: { "-o": ["/dev/null"], "--output": ["/dev/null"] },
     fileRefFlags: ["-H", "--header", "-w", "--write-out"],
     deniedValues: { "-w": ["%output{"], "--write-out": ["%output{"] },
   },
@@ -537,6 +582,99 @@ const YARN_POLICY: CommandPolicy = {
 };
 
 /**
+ * build·ci 프로필의 git 정책. 기본 정책의 조회 서브커맨드에 로컬 저장소를 바꾸는 서브커맨드를 더한다.
+ *
+ * 넣지 않는 것:
+ * - 대화형 실행(add -p, rebase -i, commit --interactive). 입력을 기다리며 멈춘다.
+ * - 외부 프로그램을 지정하는 옵션(--upload-pack, --receive-pack, --exec, clone -u, clone -c/--config, --template).
+ * - 원격을 바꾸는 서브커맨드(push, remote add·set-url·remove·rename). guard.allow_git_remote_write일 때만 더한다.
+ * git config는 아래 GIT_CONFIG_KEYS로 시작하는 키만 받는다. 실행 프로그램을 가리키는 키(core.fsmonitor,
+ * core.sshCommand, core.pager, core.editor, alias.* 등)는 바꾸지 못한다.
+ */
+const GIT_CONFIG_KEYS = [
+  "user.name", "user.email", "init.defaultBranch", "core.autocrlf", "core.eol", "core.filemode", "core.ignorecase",
+  "pull.rebase", "pull.ff", "merge.ff", "push.default", "push.autoSetupRemote", "branch.", "advice.", "color.",
+  "safe.directory", "commit.gpgsign", "tag.gpgsign", "http.sslVerify", "receive.denyCurrentBranch",
+];
+
+const GIT_WRITE_SUBCOMMANDS = [
+  "init", "add", "commit", "checkout", "switch", "restore", "stash", "merge", "rebase", "reset", "clean",
+  "rm", "mv", "cherry-pick", "revert", "config", "clone", "fetch", "pull", "apply", "update-ref", "symbolic-ref", "gc",
+];
+
+const GIT_WRITE_FLAGS: Record<string, Record<string, FlagKind>> = {
+  init:     { ...bools("-q", "--quiet", "--bare"), "-b": "value", "--initial-branch": "attached" },
+  add:      { ...bools("-A", "--all", "-u", "--update", "-f", "--force", "-N", "--intent-to-add", "-v", "--verbose", "-n", "--dry-run", "--ignore-errors", "--renormalize") },
+  commit:   {
+    ...bools("-a", "--all", "--amend", "--no-edit", "--allow-empty", "--allow-empty-message", "-q", "--quiet", "-s", "--signoff",
+      "--no-verify", "-n", "-v", "--verbose", "--no-gpg-sign", "--reset-author"),
+    "-m": "value", "--message": "value", "--author": "value", "--date": "value", "-F": "path", "--file": "path", "-C": "value", "--fixup": "value",
+  },
+  checkout: { ...bools("-f", "--force", "-q", "--quiet", "--detach", "-t", "--track", "--no-track", "-m", "--merge", "--ours", "--theirs"), "-b": "value", "-B": "value", "--orphan": "value" },
+  switch:   { ...bools("-f", "--force", "--discard-changes", "-q", "--quiet", "--detach", "-t", "--track", "--no-track", "-m", "--merge"), "-c": "value", "-C": "value", "--create": "value", "--force-create": "value", "--orphan": "value" },
+  restore:  { ...bools("-S", "--staged", "-W", "--worktree", "-q", "--quiet", "--ours", "--theirs"), "-s": "value", "--source": "value" },
+  stash:    { ...bools("-u", "--include-untracked", "-a", "--all", "-q", "--quiet", "-k", "--keep-index", "--index"), "-m": "value", "--message": "value" },
+  merge:    { ...bools("--no-ff", "--ff-only", "--ff", "--squash", "--abort", "--continue", "--no-edit", "--no-commit", "-q", "--quiet", "--no-verify", "--allow-unrelated-histories"), "-m": "value", "--strategy": "value", "-s": "value", "-X": "value", "--strategy-option": "value" },
+  rebase:   { ...bools("--abort", "--continue", "--skip", "-q", "--quiet", "--autostash", "--no-autostash", "--root"), "--onto": "value" },
+  reset:    { ...bools("--hard", "--soft", "--mixed", "--keep", "--merge", "-q", "--quiet") },
+  clean:    { ...bools("-f", "--force", "-d", "-x", "-X", "-n", "--dry-run", "-q", "--quiet"), "-e": "value", "--exclude": "value" },
+  rm:       { ...bools("-r", "--cached", "-f", "--force", "-q", "--quiet", "-n", "--dry-run", "--ignore-unmatch") },
+  mv:       { ...bools("-f", "--force", "-k", "-n", "--dry-run", "-v", "--verbose") },
+  "cherry-pick": { ...bools("--abort", "--continue", "--skip", "-n", "--no-commit", "-x", "--no-edit", "--allow-empty"), "-m": "value", "--mainline": "value" },
+  revert:   { ...bools("--abort", "--continue", "--skip", "-n", "--no-commit", "--no-edit"), "-m": "value", "--mainline": "value" },
+  config:   { ...bools("--global", "--local", "--get", "--get-all", "--unset", "--unset-all", "--add", "--replace-all", "-l", "--list", "--bool", "--int", "--show-origin"), "--default": "value", "--type": "value" },
+  clone:    { ...bools("-q", "--quiet", "--bare", "--single-branch", "--no-single-branch", "--no-tags", "--recurse-submodules", "--shallow-submodules", "-n", "--no-checkout", "--no-hardlinks", "-l", "--local"), "--depth": "value", "-b": "value", "--branch": "value", "--origin": "value", "-o": "value", "--filter": "value" },
+  fetch:    { ...bools("--all", "--tags", "--no-tags", "-p", "--prune", "-q", "--quiet", "--unshallow", "-f", "--force"), "--depth": "value" },
+  pull:     { ...bools("--rebase", "--no-rebase", "--ff-only", "--ff", "--no-ff", "--no-edit", "-q", "--quiet", "--all", "--tags", "--autostash", "--allow-unrelated-histories") },
+  apply:    { ...bools("--check", "--stat", "--cached", "--index", "-R", "--reverse", "-3", "--3way", "-v", "--verbose", "--whitespace=fix") },
+  fsck:     { ...bools("--unreachable", "--dangling", "--no-dangling", "--no-reflogs", "--full", "--connectivity-only", "--root", "--tags", "--cache", "--name-objects", "--lost-found") },
+  "update-ref":   { ...bools("-d", "--no-deref", "--create-reflog", "--stdin", "-z"), "-m": "value" },
+  reflog:   { ...bools("--all", "--stale-fix", "--rewrite", "--updateref", "--dry-run", "-n", "--verbose"), "--expire": "attached", "--expire-unreachable": "attached", "--date": "value" },
+  gc:       { ...bools("--aggressive", "--auto", "-q", "--quiet", "--force", "--keep-largest-pack"), "--prune": "attached" },
+  "symbolic-ref": { ...bools("-q", "--quiet", "--short", "--no-recurse", "-d", "--delete"), "-m": "value" },
+  branch:   { ...bools("-d", "-D", "--delete", "-m", "-M", "--move", "-f", "--force", "-u", "--unset-upstream"), "--format": "value", "-t": "value", "--set-upstream-to": "attached" },
+  tag:      { ...bools("-a", "--annotate", "-d", "--delete", "-f", "--force"), "--format": "value", "-n": "attached", "-m": "value", "--message": "value" },
+};
+
+const GIT_REMOTE_WRITE_FLAGS: Record<string, Record<string, FlagKind>> = {
+  push:   { ...bools("-u", "--set-upstream", "--tags", "--all", "--mirror", "-f", "--force", "--force-with-lease", "-d", "--delete", "-q", "--quiet", "--no-verify", "--follow-tags", "-n", "--dry-run") },
+  remote: { ...bools("-f", "--tags", "--no-tags") },
+};
+
+/** guard 설정을 반영한 build·ci 프로필 git 정책 */
+export function buildGitPolicy(allowRemoteWrite: boolean): CommandPolicy {
+  const base = DEFAULT_POLICIES.git!;
+  const writeFlags = allowRemoteWrite ? { ...GIT_WRITE_FLAGS, ...GIT_REMOTE_WRITE_FLAGS } : GIT_WRITE_FLAGS;
+  const remoteVerbs = ["show", "get-url", ...(allowRemoteWrite ? ["add", "set-url", "remove", "rm", "rename"] : [])];
+  return {
+    ...base,
+    subcommands:    [...new Set([...base.subcommands!, ...GIT_WRITE_SUBCOMMANDS, ...(allowRemoteWrite ? ["push"] : [])])],
+    subPositionals: { remote: "any", stash: "any" },
+    /** stash는 조회 플래그와 쓰기 플래그를 합친다. */
+    subFlags:       { ...base.subFlags, ...writeFlags, stash: { ...base.subFlags!.stash, ...writeFlags.stash } },
+    subDeniedVerbs: {},
+    subVerbs:       {
+      remote:   remoteVerbs,
+      stash:    ["push", "pop", "apply", "list", "show", "drop", "clear"],
+      worktree: ["list", "add", "remove", "prune", "move", "lock", "unlock", "repair"],
+    },
+    optionalVerbs:  ["remote", "stash"],
+    subPositionalPrefixes: { config: GIT_CONFIG_KEYS },
+  };
+}
+
+/** build 또는 ci 프로필인지 */
+export function isBuildProfile(guard: Pick<PrismGuardConfig, "profile">): boolean {
+  return guard.profile === "build" || guard.profile === "ci";
+}
+
+/** 로컬 저장소 상태를 바꾸는 git 서브커맨드. 실행 뒤 _delta를 붙인다. */
+export const GIT_MUTATING_SUBCOMMANDS = new Set([
+  "init", "add", "commit", "checkout", "switch", "restore", "stash", "merge", "rebase", "reset", "clean",
+  "rm", "mv", "cherry-pick", "revert", "pull", "apply", "branch", "tag", "update-ref", "symbolic-ref", "gc",
+]);
+
+/**
  * guard.profile이 "build"일 때 기본 정책 위에 덮어쓰는 정책.
  * 빌드·시험 실행에 필요한 서브커맨드만 더한다. 경로 위치 인자는 allowed_paths 검사를 그대로 받는다.
  */
@@ -570,10 +708,12 @@ export const BUILD_PROFILE_POLICIES: Record<string, CommandPolicy> = {
  * 결과는 프로토타입이 없는 객체라서 객체 프로토타입 키 이름의 명령은 정책을 갖지 않는다.
  */
 export function resolvePolicies(guard: PrismGuardConfig): Record<string, CommandPolicy> {
+  const build = isBuildProfile(guard);
   return Object.assign(
     Object.create(null) as Record<string, CommandPolicy>,
     DEFAULT_POLICIES,
-    guard.profile === "build" ? BUILD_PROFILE_POLICIES : {},
+    build ? BUILD_PROFILE_POLICIES : {},
+    build ? { git: buildGitPolicy(guard.allow_git_remote_write === true) } : {},
     guard.command_policies ?? {},
   );
 }
@@ -588,7 +728,7 @@ export function hasPolicy(table: Record<string, CommandPolicy> | undefined, cmd:
  */
 export function policySource(guard: PrismGuardConfig, cmd: string): PolicySource | undefined {
   if (hasPolicy(guard.command_policies, cmd))                              return "config";
-  if (guard.profile === "build" && hasPolicy(BUILD_PROFILE_POLICIES, cmd)) return "build";
+  if (isBuildProfile(guard) && (hasPolicy(BUILD_PROFILE_POLICIES, cmd) || cmd === "git")) return "build";
   if (hasPolicy(DEFAULT_POLICIES, cmd))                                    return "default";
   return undefined;
 }
@@ -605,6 +745,9 @@ const GIT_CONFIG_OVERRIDES = [
   "-c", "gpg.program=false",
   "-c", "gpg.ssh.program=false",
   "-c", "gpg.x509.program=false",
+  /** 편집기를 기다리며 멈추지 않게 한다. 메시지 없는 commit은 빈 메시지로 중단되고, merge는 기본 메시지를 쓴다. */
+  "-c", "core.editor=true",
+  "-c", "sequence.editor=true",
 ];
 
 /** 서브커맨드 뒤에 붙일 옵션. blame은 외부 diff 옵션을 받지 않으므로 textconv만 끈다. */
@@ -664,7 +807,11 @@ function rewritePsSelectAll(args: string[], flags: Record<string, FlagKind>): st
  * ps이면 유효 ps 정책의 플래그 표로 대시 옵션의 전체 선택 글자 e를 A로 바꾼다.
  */
 export function buildExecArgs(cmd: string, args: string[], guard?: PrismGuardConfig): string[] {
-  if (cmd === "npx") return [...NPX_LOCAL_ONLY, ...args];
+  /**
+   * npx(npm exec)는 패키지 이름 뒤의 `--noEmit` 같은 플래그를 npm 설정으로 읽어 버린다(실측: tsc가 --noEmit 없이 돌아
+   * .js를 썼다). 실행할 명령 앞에 `--`를 두어 그 뒤의 인자가 모두 대상 명령에 가게 한다. npx 자신의 플래그(--version)는 그대로 둔다.
+   */
+  if (cmd === "npx") return args[0]?.startsWith("-") ? [...NPX_LOCAL_ONLY, ...args] : [...NPX_LOCAL_ONLY, "--", ...args];
   if (cmd === "ps") {
     const ps = guard ? resolvePolicies(guard).ps : DEFAULT_POLICIES.ps;
     return ps ? rewritePsSelectAll(args, ps.flags) : [...args];

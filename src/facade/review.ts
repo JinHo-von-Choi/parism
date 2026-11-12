@@ -93,6 +93,19 @@ function evidenceBytes(evidence: Record<string, FieldEvidence[]>, cap: number): 
   return total;
 }
 
+/** 근거 항목 하나가 직렬화될 때 드는 최소 바이트(포인터를 뺀 값, 구간 하나, 출처 종류, 마스킹 표시) */
+const EVIDENCE_ENTRY_MIN_BYTES = 48;
+
+/**
+ * 보관본 크기의 하한. 정규 원문과, 근거를 만든다면 근거 항목마다의 최소 바이트를 더한다.
+ * 실제 크기는 이보다 작을 수 없으므로, 하한이 상한을 넘으면 계산을 더 하지 않고 거절할 수 있다.
+ */
+export function minimumStoredBytes(input: Pick<ReviewInput, "canonicalStdout" | "canonicalStderr" | "rawEvidence">): number {
+  let total = Buffer.byteLength(input.canonicalStdout, "utf8") + Buffer.byteLength(input.canonicalStderr, "utf8");
+  for (const pointer of Object.keys(input.rawEvidence)) total += pointer.length + EVIDENCE_ENTRY_MIN_BYTES;
+  return total;
+}
+
 // ── 근거 조립 ──────────────────────────────────────────────────────────────
 
 /**
@@ -216,6 +229,20 @@ export function attachReview(
      */
     deps.results.markNotRetained(input.resultId);
     return review;
+  }
+
+  /**
+   * 근거를 만들기 전에 보관본의 최소 크기를 잰다. 정규 원문 바이트에 근거 항목마다 드는 최소 바이트를 더한 값이다.
+   * 이미 결과 하나의 상한을 넘으면 근거를 만들지 않는다. 버릴 결과의 근거 맵을 끝까지 만드는 비용이 크다
+   * (1MB 출력에서 6MB 넘는 객체를 만들고 버렸다).
+   */
+  const floor = minimumStoredBytes(input);
+  if (floor > deps.results.perResultLimit) {
+    deps.results.markOversized(input.resultId);
+    return {
+      ...review, retained: false,
+      warnings: [...review.warnings, `result is at least ${floor} bytes, over the ${deps.results.perResultLimit} byte per-result limit; it was not kept and no evidence was built`],
+    };
   }
 
   const evidence = buildEvidence(input);

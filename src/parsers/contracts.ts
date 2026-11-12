@@ -95,7 +95,7 @@ export const BUILTIN_CONTRACTS: Readonly<Record<string, ParserContract>> = {
       ...values("-d", "--max-depth", "--exclude", "-t", "--threshold", "-B", "--block-size", "--time-style"),
       "--time": "attached",
     },
-    rowsKey: "entries", rowFields: ["size", "path", "modified_at"], outputFlags: { "-0": NUL_RECORDS, "--null": NUL_RECORDS },
+    rowsKey: "entries", rowFields: ["size", "size_bytes", "path", "modified_at"], outputFlags: { "-0": NUL_RECORDS, "--null": NUL_RECORDS },
   },
   df: {
     acceptedFlags: {

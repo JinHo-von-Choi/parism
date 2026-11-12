@@ -104,9 +104,17 @@ function run(arm) {
 /** 도구 결과 본문에서 Parism 응답 JSON을 꺼낸다. 응답은 `[cwd] 경로` 줄 다음에 온다. */
 function parismResult(content) {
   const text  = Array.isArray(content) ? content.map(part => part.text ?? "").join("") : String(content ?? "");
+  /**
+   * 오류 결과에는 Claude Code가 JSON 뒤에 안내 문단(`[error] tool reported failure`, 입력 스키마)을 붙인다.
+   * 3.x 응답은 JSON 한 줄이므로 그 줄을 먼저 읽고, 여러 줄 JSON(2.x)은 첫 빈 줄 앞까지 읽는다.
+   */
   const start = text.indexOf("{");
   if (start < 0) return undefined;
-  try { return JSON.parse(text.slice(start)); } catch { return undefined; }
+  const rest = text.slice(start);
+  for (const candidate of [rest.split("\n")[0], rest.split("\n\n")[0], rest]) {
+    try { return JSON.parse(candidate); } catch { /* 다음 후보 */ }
+  }
+  return undefined;
 }
 
 /** 과제 하나의 세션 기록에서 도구 호출 수와 Parism 호출 결과를 센다. */
@@ -131,9 +139,11 @@ function readSession(file) {
       if (event.type === "user" && block.type === "tool_result" && pending.has(block.tool_use_id)) {
         const result  = parismResult(block.content);
         const outcome = !result ? "invalid_input"
+          : result.task && result.task.service ? "service_started"
+          : result.task && !("ok" in result) ? "task_started"
+          : result.task ? "task_read"
           : result.ok ? "ran"
-          : result.failure ? `${result.failure.kind}/${result.failure.reason}`
-          : result.task ? "task_started" : "other";
+          : result.failure ? `${result.failure.kind}/${result.failure.reason}` : "other";
         parism[outcome] = (parism[outcome] ?? 0) + 1;
       }
     }

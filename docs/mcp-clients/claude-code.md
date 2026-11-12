@@ -31,21 +31,30 @@ Claude Code 는 전역 또는 프로젝트 로컬 JSON 파일로 MCP 서버를 �
 
 `cwd` 는 프로젝트별로 다르게 지정할 수 있다. `prism.config.json` 은 `cwd` 기준으로 로드되므로 경로를 정확히 지정해야 한다.
 
-## 완료 보고 검증 (Stop 훅)
+## 훅으로 연결하기
 
-에이전트가 작업을 끝내려 할 때, 정해 둔 명령이 현재 작업 공간 상태에서 통과했는지 확인한다.
+저장소에서 한 번 실행하면 Bash 호출과 세션 종료가 Parism을 거친다.
 
-1. 호스트 설정 `~/.parism/prism.config.json`에서 영수증을 켜고 완료 조건이 되는 명령을 적는다. 러너를 Parism으로 실행할 수 있도록 `npx`를 허용하고 build 프로필을 쓴다.
-
-```json
-{
-  "guard":    { "profile": "build", "allowed_commands": ["ls", "git", "grep", "npx"] },
-  "receipts": { "enabled": true },
-  "verify":   { "commands": [["npx", "vitest", "run"], ["npx", "tsc", "--noEmit"]] }
-}
+```bash
+npx @nerdvana/parism hook install                 # .claude/settings.json
+npx @nerdvana/parism hook install --scope user    # ~/.claude/settings.json
 ```
 
-2. `~/.claude/settings.json`(또는 프로젝트의 `.claude/settings.json`)에 Stop 훅을 등록한다.
+- `PreToolUse`(Bash): Parism 대상 명령을 `parism exec`로 바꿔 실행한다. 결과는 파싱한 JSON이나 원문 가운데 짧은 쪽이고, 시험 러너·린터는 모든 실패가 든 보고서다. 허용된 명령에 금지 인자를 쓰면(`git push`) 사유와 함께 막는다.
+- `SessionStart`: 세션 시작 시점의 작업 공간 상태를 남긴다.
+- `Stop`: 시작 이후 작업 공간이 바뀌었는데 지금 상태에서 통과한 시험·빌드 영수증이 없으면 종료를 막고 무엇을 해야 하는지 알린다.
+
+훅이 읽는 설정은 `~/.parism/hook.config.json`이다. 설치기가 build 프로필, 영수증 켜기, 리댁션 켜기, `allowed_paths`는 이 저장소로 만든다. 완료 조건을 특정 명령으로 정하려면 그 파일에 `verify.commands`를 둔다.
+
+```json
+{ "verify": { "commands": [["npx", "vitest", "run"], ["npx", "tsc", "--noEmit"]] } }
+```
+
+바꾼 명령이 모두 읽기 전용이면 묻지 않고 실행한다(`permissionDecision: "allow"`). 파일·프로세스·네트워크를 건드리는 명령은 판정을 비워 두어 Claude Code의 권한 규칙과 모드를 따른다. 같은 파일에 `"hook": { "permission": "allow" }`를 두면 모두 묻지 않고, `"ask"`를 두면 모두 묻는다.
+
+## 훅 없이 Stop 판정만 쓰기
+
+`parism receipts check`를 Stop 훅으로 직접 등록할 수도 있다. 이때 에이전트는 완료 조건이 되는 명령을 Parism의 `run`으로 실행해야 영수증이 남는다.
 
 ```json
 {
@@ -57,7 +66,7 @@ Claude Code 는 전역 또는 프로젝트 로컬 JSON 파일로 MCP 서버를 �
 }
 ```
 
-훅이 종료 코드 2로 끝나면 Claude Code는 종료를 막고 표준 오류의 내용을 에이전트에게 전달한다. 에이전트는 어느 명령이 `missing`, `failed`, `stale`인지 보고 그 명령을 Parism으로 다시 실행한다.
+훅이 종료 코드 2로 끝나면 Claude Code는 종료를 막고 표준 오류의 내용을 에이전트에게 전달한다.
 
 ```
 FAIL npx vitest run  [stale] the workspace changed after the run at 2026-11-11T09:12:03.000Z
@@ -65,11 +74,7 @@ ok   npx tsc --noEmit  [ok] passed at 2026-11-11T09:14:40.000Z
 one or more required commands lack a passing, fresh receipt
 ```
 
-에이전트는 완료 조건이 되는 명령을 셸 도구가 아니라 Parism의 `run`으로 실행해야 영수증이 남는다. `verify.commands`에 적은 인자와 같은 인자로 실행한다. `machine_format: true`로 덧붙은 인자는 달라도 같은 명령으로 본다.
-
-시험이 통과할 수 없는 상태에서는 훅이 종료를 계속 막는다. 훅 입력의 `stop_hook_active`를 보고 한 번만 막도록 감싸는 스크립트를 쓸 수 있다.
-
 ## 참고
 
 - [README.md](../../README.md) — Parism 개요
-- [SPECIFICATION.md](../../SPECIFICATION.md) — `run` / `run_paged` 도구 계약
+- [SPECIFICATION.md](../../SPECIFICATION.md) — 도구 계약

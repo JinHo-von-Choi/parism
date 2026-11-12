@@ -1,6 +1,6 @@
 {
   "name": "@nerdvana/parism",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "description": "Structured shell output wrapper for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -10,6 +10,10 @@
     "./engine": {
       "import": "./dist/facade/engine.js",
       "types": "./dist/facade/engine.d.ts"
+    },
+    "./sdk": {
+      "import": "./dist/sdk/index.js",
+      "types": "./dist/sdk/index.d.ts"
     }
   },
   "bin": {
@@ -46,7 +50,8 @@
     "vitest": "^5.0.5"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "engines": {
     "node": ">=20"
@@ -55,5 +60,8 @@
     "type": "git",
     "url": "https://github.com/JinHo-von-Choi/parism"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "minimatch": "^11.0.8"
+  }
 }

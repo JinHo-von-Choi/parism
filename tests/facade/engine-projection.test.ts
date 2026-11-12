@@ -76,13 +76,23 @@ describe("ParismEngine.run() 투영", () => {
     expect(parsed._summary).toEqual({ total: 60, matched: 60, shown: 10, truncated: true });
   });
 
-  it("알 수 없는 필드는 failure.kind=config이고 raw를 남긴다", async () => {
-    const result = await engineFor(dir).run("ls", { args: ["-l", dir], cwd: dir, format: "json-no-raw", select: ["nam"] });
+  it("알 수 없는 필드는 failure.kind=config이고 짧은 raw는 남긴다", async () => {
+    const small  = makeDir(5);
+    const result = await engineFor(small).run("ls", { args: ["-l", small], cwd: small, format: "json-no-raw", select: ["nam"] });
     expect(result.failure?.kind).toBe("config");
     expect(result.failure?.reason).toBe("unknown_field");
     expect(result.failure?.message).toContain("size_bytes");
     expect(result.stdout.parsed).toBeNull();
     expect(result.stdout.raw).toContain("f000");
+  });
+
+  it("알 수 없는 필드로 실패할 때 큰 원문은 싣지 않고 크기를 알려 준다", async () => {
+    const big = makeDir(400);
+    const result = await engineFor(big).run("ls", { args: ["-l", big], cwd: big, contract_version: "next", aggregate: { group_by: ["field"] } });
+    expect(result.failure?.reason).toBe("unknown_field");
+    expect(result.stdout.raw).toBe("");
+    expect(result.failure?.message).toMatch(/stdout of \d+ bytes omitted/);
+    expect(JSON.stringify(result).length).toBeLessThan(4096);
   });
 
   it("문법에 맞지 않는 인자는 실행하지 않고 config 실패를 돌려준다", async () => {

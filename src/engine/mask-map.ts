@@ -11,6 +11,7 @@
  * 작성일: 2026-10-05
  */
 
+import { SECRET_ASSIGNMENT_RULE, secretAssignmentRanges } from "./secret-assignment.js";
 import { findAllRanges, type RegexEngineOptions } from "./regex-engine.js";
 
 export const REDACTED_TOKEN = "[REDACTED]";
@@ -38,8 +39,7 @@ async function applyPattern(
   ranges:  MaskedRange[],
   opts?:   RegexEngineOptions,
 ): Promise<string> {
-  const found = await findAllRanges(pattern, text, "g", opts);
-  const matches = found.value;
+  const matches = pattern === SECRET_ASSIGNMENT_RULE ? secretAssignmentRanges(text) : (await findAllRanges(pattern, text, "g", opts)).value;
   if (matches.length === 0) return text;
   let out     = "";
   let last    = 0;

@@ -289,9 +289,9 @@ describe("adaptive_format_threshold", () => {
     expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
   });
 
-  it("compact 임계값만 넘으면 compact이고 raw는 유지한다", async () => {
+  it("compact 임계값만 넘으면 compact이고, include_raw를 주면 raw를 유지한다", async () => {
     const dir = makeDir(3);
-    const r   = await new ParismEngine(cfgFor(dir, 2, 100), createRegistry()).run("ls", { args: ["-l"], cwd: dir });
+    const r   = await new ParismEngine(cfgFor(dir, 2, 100), createRegistry()).run("ls", { args: ["-l"], cwd: dir, include_raw: true });
     expect(r.stdout.raw).not.toBe("");
     expect((r.stdout.parsed as { entries: { schema: string[] } }).entries.schema).toContain("name");
   });

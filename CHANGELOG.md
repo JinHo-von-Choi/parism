@@ -7,6 +7,62 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-12
+
+### Added
+
+- **명령 한 줄(`command`).** `run({ command: "ps aux | grep node | head -n 5" })`처럼 받는다. 셸을 띄우지 않는 렉서가 따옴표, 백슬래시, 따옴표 밖의 `~`와 글로브, `#` 주석, 맨 앞의 `cd <dir> &&`, `2>&1`, `2>/dev/null`을 처리한다. 명령 치환, 변수 확장, 리다이렉션, 백그라운드, `;`, `&&`, `||`, 환경 변수 대입은 실행하지 않고 `unsupported_shell_operator`와 `failure.suggestion`을 돌려준다. `cmd`에 명령줄 전체를 넣은 호출도 같이 해석한다.
+- **파이프 단계.** `grep`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`을 자식 프로세스 없이 처리한다. 파싱 결과의 행에 옮길 수 있으면 행에 적용하고(`_compiled_pipeline.mode: "rows"`), 아니면 표준 출력 줄에 적용한다(`"text"`). 정규식은 Rust 엔진으로 찾는다. 시험 러너·린터 뒤의 `head`, `tail`은 적용하지 않는다.
+- **큰 결과 미리보기.** 행이 `output.auto_retain_rows`(100)를 넘고 `limit`, `budget`이 없으면 앞의 `output.preview_rows`(50)행과 `result_id`, `_hint`를 돌려주고 전체를 보관한다.
+- **core 도구 표면.** 기본 도구는 `run`, `query_result`, `describe` 셋이다. `run`이 태스크·서비스 시작과 조회(`task_id`), 원문 페이지(`options.page`)를 맡고, `query_result`가 값의 출처(`pointer`), 다음 페이지(`cursor`), 비교(`compare_with`)를 맡고, `describe`가 실행 없는 판정(`command`)을 맡는다. 고급 옵션은 `run`의 `options` 객체로 받는다. `mcp.surface: "full"`은 이전의 9개 도구다.
+- **MCP annotations, `isError`, `structuredContent`.** 도구마다 `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`를 싣고, 가드·설정·실행 실패를 `isError: true`로 알리며, 결과 JSON을 `structuredContent`로도 보낸다.
+- **부작용 등급.** `describe()`의 `side_effects`와 `describe(cmd)`의 `side_effect`가 `read_only`, `local_state`, `process_control`, `network` 가운데 하나를 준다. `describe("git commit")`처럼 서브커맨드를 붙이면 그 서브커맨드의 플래그와 등급만 준다.
+- **실패 × 변경 귀속.** 시험·진단 실패마다 `git diff --unified=0 HEAD`와 추적되지 않는 파일에 대조한 `attribution`(`modified_line`, `modified_file`, `unmodified`), `diff_hunk_preview`, `attribution_frame`, `imports_changed`를 붙이고 보고서에 `attribution` 합계를 싣는다.
+- **build·ci 프로필의 로컬 git 쓰기.** `init`, `add`, `commit`, `checkout`, `switch`, `restore`, `stash`, `merge`, `rebase`, `reset`, `clean`, `rm`, `mv`, `cherry-pick`, `revert`, `apply`, `clone`, `fetch`, `pull`, `update-ref`, `symbolic-ref`, `gc`, `config`(허용 키). `push`와 원격 변경은 `guard.allow_git_remote_write`가 있어야 한다. 저장소를 바꾼 실행에는 `_delta`(브랜치, HEAD, 스테이징·수정·추적 안 됨 파일 수)가 붙는다. `ci` 프로필은 build와 같은 범위다.
+- **서비스.** `run(mode: "service")`가 서버를 띄우고 `ready_pattern`이나 `ready_port`로 준비를 확인한 뒤 돌려준다. `lease_ms`(최대 5분)가 지나거나 서버가 끝나면 프로세스 그룹을 SIGTERM, SIGKILL로 종료한다. `persist`(호스트 설정 `tasks.allow_persistent_services`)는 서버가 끝나도 lease까지 남긴다.
+- **훅.** `parism hook install`이 Claude Code(또는 Gemini CLI) 설정에 `PreToolUse`, `Stop`, `SessionStart` 훅을 병합한다. Bash 명령을 `parism exec`로 바꿔 가드·파싱·리댁션·영수증을 거치게 하고(읽기 전용 명령만 묻지 않고 실행하고 나머지는 클라이언트의 권한 규칙을 따른다), 허용된 명령의 금지 인자를 막고, 시작 이후 바뀐 작업 공간에 통과한 시험·빌드 영수증이 없으면 종료를 막는다.
+- **`parism exec`.** 명령 한 줄(또는 `;`, `&&`, `||`로 이은 목록)을 엔진으로 실행하고 셸처럼 출력한다. `$?`와 `${PIPESTATUS[N]}`를 앞 조각의 종료 코드로 바꾼다.
+- **영수증 해시 체인과 자동 서명 키.** 영수증마다 앞 줄의 SHA-256(`prev`)을 싣고 HMAC-SHA256으로 서명한다. `key_file`이 없으면 `~/.parism/receipts/receipts.key`를 만들어 쓴다. `parism receipts verify`가 체인과 서명을 검사하고, `receipts check`도 체인 검사에 실패하면 통과하지 않는다.
+- **`parism receipts export`.** 영수증과 사용 통계를 `markdown`, `github`(`$GITHUB_STEP_SUMMARY`와 `::error`), `sarif`, `json`으로 낸다.
+- **에이전트 스킬(`skills/parism/SKILL.md`)과 `parism skill install`.** 에이전트가 Parism 도구를 적은 호출로 쓰는 방법(명령 한 줄, 서버 쪽 행 고르기·정렬·세기, `query_result`, 시험 러너, 태스크·서비스, 거절 대처)을 담은 Claude Code 스킬을 패키지에 넣고, `.claude/skills/parism`(`--scope user`면 `~/.claude/skills/parism`)에 복사하는 명령을 더했다.
+- **`du` 바이트 크기.** 단위가 바이트인 실행(`-b`, `--bytes`, `-B1`, `--block-size=1`)은 `entries[].size_bytes`를 수로 낸다. `size`는 출력 글자 그대로라 문자열로 정렬됐다.
+- **`@nerdvana/parism/sdk`.** `sh.exec`, `sh.git.status`, `sh.ps`, `sh.vitest.run` 같은 타입 있는 함수로 명령을 실행한다.
+- **`parism stats`, `parism doctor`.** 사용 통계(`~/.parism/stats/events.jsonl`)로 아낀 토큰, 재질의, 리댁션, 가드 차단, Stop 게이트를 집계하고, 설정과 설치 상태를 점검한다.
+- **리댁션 기본 패턴.** URL의 `user:password@`, 이름이 비밀을 뜻하는 대입의 값(이름은 남긴다), JWT, PEM 개인 키 머리글을 더했다.
+- **git 조회 서브커맨드.** 모든 프로필에서 `reflog`, `worktree list`, `fsck`, `cat-file`, `rev-list`, `ls-tree`, `for-each-ref`, `show-ref`, `merge-base`, `name-rev`, `count-objects`, `stash list`·`show`를 실행한다. `reflog expire`·`delete`는 막는다.
+- **응답 크기 상한(`mcp.max_response_bytes`, 기본 40000).** `run` 응답이 상한을 넘으면 `stdout.raw`를 줄 경계에서 잘라 맞추고 `_hint`로 `options.page` 읽기를 안내한다. 100KB 가까운 원문은 클라이언트의 도구 결과 상한을 넘어 통째로 버려졌다.
+- **git 검색.** 모든 프로필에서 `git log -S`·`-G`·`--grep`과 `git grep`을 실행한다. 검색어에는 `block_patterns`를 적용하지 않는다. build·ci 프로필은 `git reflog expire`·`delete`와 `git gc`도 실행한다.
+- **`git -C <dir>`, `git --git-dir=<dir>`.** 앞쪽의 `-C`와 `--git-dir`을 작업 디렉터리로 옮겨 실행한다(`.git`이면 그 상위 디렉터리, bare 저장소면 그 디렉터리). 옮긴 디렉터리도 `allowed_paths` 검사를 받는다.
+- **설정 항목.** `output`, `mcp`, `stats`, `hook`, `guard.allow_git_remote_write`, `tasks.allow_persistent_services`, `guard.profile: "ci"`.
+
+### Changed
+
+- 리댁션을 켜면 `stdout.parsed`와 보관 결과(`query_result`, `explain_result`, 이어 읽기)도 가린다. 이름에 `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY` 등이 든 필드의 값은 통째로 가린다.
+- 파싱 결과가 손실 없이 있으면 `stdout.raw`를 싣지 않는다. `include_raw` 옵션과 `output.include_raw` 설정으로 되돌린다.
+- MCP 응답 JSON을 계약 버전과 관계없이 한 줄로 직렬화한다.
+- 결과 보관 시간 기본값을 300초로 늘렸다.
+- 서버 지침을 1.5KB 이하로 줄이고 자세한 안내는 `describe`로 옮겼다.
+- 보관할 결과가 결과 하나의 상한을 넘는다는 것이 근거를 만들기 전에 확인되면 근거를 만들지 않는다. 1MB `git status --porcelain`의 근거 보관 실행 p95가 2,079ms에서 104ms로 줄었다.
+- `ParismEngine.run`을 다섯 단계 함수(`facade/run-pipeline.ts`)로 나누고 보관 결과 연산, `run_paged`, `describe`를 각 모듈로 옮겼다.
+- `realPathOf`를 `src/utils/fs-path.ts`로, 바이트 동일성 검증을 `src/fixtures/regex-byte-identity.ts`로 옮겼다.
+- git 실행에 `core.editor=true`, `sequence.editor=true`를 붙여 편집기를 기다리며 멈추지 않게 한다. 자식 프로세스에 `GIT_TERMINAL_PROMPT=0`을 준다.
+- `echo`는 모르는 대시 낱말(`echo ---`)을 글자로 출력한다.
+- 파이프 단계(`| grep`)를 거친 결과의 `_summary`는 `total`(명령이 낸 행), `matched`(거른 뒤의 행), `shown`(돌려준 행)을 모두 싣는다. 파이프 뒤에 투영을 하면 `total`이 거른 뒤의 행 수로 바뀌던 것을 고쳤다.
+- 투영(`select`, `where`, `aggregate`)이 실패하면 원문은 2KB 이하일 때만 싣는다. 그보다 크면 빼고 `failure.message`에 크기를 적는다.
+- `wait_ms`가 30000을 넘으면 거절하지 않고 30000으로 줄인다.
+- 명령에 표준 입력을 주지 않는다(`/dev/null`). 입력을 읽는 명령이 열린 파이프를 시간 제한까지 기다렸다.
+- `git branch --contains`, `--no-contains`, `--points-at`, `--sort`를 허용한다.
+- `curl -o /dev/null`(`--output=/dev/null`)을 허용한다. 다른 출력 파일은 계속 막는다. 경로 검사는 `/dev/null`을 허용 경로 밖으로 보지 않는다.
+- `python3 -c`, `node -e`, `ruby -e`, `perl -e`의 인라인 코드 인자와 `sqlite3`(데이터베이스 파일 다음 인자), `psql -c`, `mysql -e`의 SQL 인자는 `block_patterns` 검사에서 뺀다. 셸 없이 인터프리터에 그대로 넘어가므로 코드 안의 `;`, `|`, `>`는 셸 연산자가 아니다. 인터프리터를 쓸 수 있는지는 허용 목록과 정책이 정한다.
+- 루트 `prism.config.json`에서 리댁션을 무력화하던 `output_patterns: []`를 뺐다.
+- 개발 의존성 `minimatch`를 11.0.8로 고정해 `npm audit` 경고를 없앴다.
+- CI에 `crates/parism-regex`, `crates/parism-sandbox`의 Rust 시험 잡을 더했다.
+
+### Fixed
+
+- `npx`로 부른 도구가 패키지 이름 뒤의 플래그를 받지 못하던 문제. `npx --no tsc --noEmit`에서 npx가 `--noEmit`을 npm 설정으로 읽어 tsc가 `.js`를 썼다. 실행 인자를 `npx --no -- <도구> ...`로 만든다.
+- `systeminfo` 파서가 `BIOS Version`을 `os_version`에, `OS Build Type`을 `os_build`에 넣던 문제. 키를 정확한 이름으로 읽고 `os_build`는 `OS Version`의 빌드 번호에서 읽는다.
+
 ## [2.3.0] - 2026-11-12
 
 아래 옵션, 도구, 응답 필드는 `contract_version: "next"`에서만 동작한다. 기본 계약의 응답 형태는 바뀌지 않는다.
@@ -24,6 +80,8 @@
 - **시험·진단 결과의 근거.** `tsc`, `mypy`, `cargo build`의 진단 필드와 `cargo test`, `go test`의 실패한 시험 이름이 원문 어느 구간에서 왔는지 `explain_result`로 조회한다.
 - **출처 표시 `_origin`.** 파싱 결과가 있는 응답에 외부 문자열 필드(`external`)와 고정 값 필드(`fixed`)의 경로를 싣는다. 분류표가 없는 파서는 값의 형으로 분류하고 `basis: "value_types"`로 알린다. `fixed` 필드에 형식 밖의 값이 들어오면 `schema_violation`으로 결과를 비운다. 내장 파서는 모두 분류표가 있다. 직접 등록한 파서와 명령이 낸 JSON을 그대로 읽은 결과는 값의 형으로 분류한다.
 - **실행 영수증.** 호스트 설정에서 `receipts.enabled`를 켜면 `run`이 끝날 때마다 명령, 종료 코드, 결과 요약, git 작업 공간 상태를 `~/.parism/receipts/receipts.jsonl`에 남긴다. `parism receipts check`는 `verify.commands`나 `--require`로 지정한 명령마다 통과한 최신 영수증이 있는지 판정한다(`ok`, `missing`, `failed`, `stale`, `unverifiable`, `bad_signature`). 작업 공간 상태는 작업 트리 파일의 경로와 내용으로 만들어, 통과한 내용 그대로 스테이징하거나 커밋한 뒤에도 `ok`다. `receipts.key_file`을 주면 HMAC-SHA256 서명을 붙인다.
+- **git 조회 서브커맨드.** 모든 프로필에서 `reflog`, `worktree list`, `fsck`, `cat-file`, `rev-list`, `ls-tree`, `for-each-ref`, `show-ref`, `merge-base`, `name-rev`, `count-objects`, `stash list`·`show`를 실행한다. `reflog expire`·`delete`는 막는다.
+- **`git -C <dir>`, `git --git-dir=<dir>`.** 앞쪽의 `-C`와 `--git-dir`을 작업 디렉터리로 옮겨 실행한다(`.git`이면 그 상위 디렉터리, bare 저장소면 그 디렉터리). 옮긴 디렉터리도 `allowed_paths` 검사를 받는다.
 - **설정 항목.** `tasks`, `results`, `receipts`, `verify`. `results`, `receipts`, `verify`는 호스트 설정에서만 읽고, 프로젝트 설정의 `tasks`는 줄이는 방향만 반영한다.
 - **실행 하나만 취소.** 실행기가 `AbortSignal`을 받아 그 실행의 프로세스 그룹에만 종료 신호를 보낸다. 실패 사유는 `cancelled`다.
 - **`describe`의 `next_contract`.** 새 계약에서만 동작하는 옵션, 도구, 필드의 안내를 돌려준다.

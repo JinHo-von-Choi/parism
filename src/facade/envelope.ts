@@ -39,6 +39,21 @@ export interface ExecOptions {
 /** run 옵션. select, where, sort_by, limit, array는 파싱 결과의 최상위 배열에 적용한다(engine/projection.ts). */
 export interface RunOptions extends ExecOptions, Partial<ProjectionOptions> {
   /**
+   * 명령 한 줄. `"ps aux | grep node | head -n 5"`처럼 쓴다. 셸 없이 렉서가 argv로 나누고,
+   * 파이프 뒤 단계(grep, head, tail, wc, sort, uniq, cut)는 Parism 안에서 처리한다(engine/pipe-compiler.ts).
+   * 주면 cmd와 args 대신 쓴다.
+   */
+  command?:      string;
+  /** true면 파싱에 성공해도 stdout.raw를 싣는다. 기본값은 output.include_raw(false)다. */
+  include_raw?:  boolean;
+  /** false면 시험·진단 실패에 git 변경 귀속(attribution)을 붙이지 않는다. 기본값은 붙인다. */
+  attribution?:  boolean;
+  /**
+   * 사용 통계가 전달량으로 셀 모양. envelope(기본)는 응답 봉투 전체, shell은 `parism exec`가 쓰는
+   * 셸 출력(파싱 결과 JSON과 원문 가운데 짧은 쪽)이다.
+   */
+  delivery?:     "envelope" | "shell";
+  /**
    * 응답 계약 버전. 'next' 를 주면 review 와 근거가 실린다.
    * 기본값은 'stable' 이고, 결과에 새 필드가 붙지 않아 기존 소비자는 그대로 동작한다.
    */
@@ -123,6 +138,8 @@ export type FetchResult =
     };
 
 export interface RunPagedOptions extends ExecOptions {
+  /** 명령 한 줄. run의 command와 같다. 파이프 뒤 단계는 글자 모드로 적용한 뒤 페이지를 나눈다. */
+  command?:   string;
   page?:      number;
   page_size?: number;
 }

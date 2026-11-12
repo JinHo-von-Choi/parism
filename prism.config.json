@@ -23,7 +23,6 @@
       "env_patterns": [
         "TOKEN", "SECRET", "AUTHZ", "PASSWORD", "PASSWD", "CREDENTIAL"
       ],
-      "output_patterns": [],
       "output_redaction_enabled": false
     }
   }

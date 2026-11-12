@@ -1,7 +1,8 @@
 import path from "path";
 import { lstatSync, realpathSync, statSync } from "node:fs";
+import { realPathOf, resolveRealUncached } from "../utils/fs-path.js";
 import {
-  BUILD_PROFILE_POLICIES, DEFAULT_POLICIES, effectiveFlags, flagKind, hasPolicy, policySource, resolvePolicies, tokenizeArgs,
+  BUILD_PROFILE_POLICIES, DEFAULT_POLICIES, effectiveFlags, flagKind, hasPolicy, isBuildProfile, policySource, resolvePolicies, tokenizeArgs,
   tokenizePolicyless, type CommandPolicy, type ParsedArg, type PolicySource,
 } from "./policy.js";
 import type { PrismConfig } from "../config/loader.js";
@@ -46,27 +47,11 @@ function resolveReal(absPath: string): string {
   return r;
 }
 
-function resolveRealUncached(absPath: string): string {
-  let head = absPath;
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      return path.join(realpathSync.native(head), ...tail.reverse());
-    } catch {
-      const parent = path.dirname(head);
-      if (parent === head) return absPath;
-      tail.push(path.basename(head));
-      head = parent;
-    }
-  }
-}
-
 /**
  * 경로를 절대경로로 만든 뒤 존재하는 가장 가까운 상위 경로까지 심볼릭 링크를 해석한 실경로를 돌려준다.
+ * 구현은 src/utils/fs-path.ts에 있다. 기존 import 경로를 위해 여기서 다시 내보낸다.
  */
-export function realPathOf(inputPath: string): string {
-  return resolveRealUncached(path.resolve(inputPath));
-}
+export { realPathOf };
 
 /**
  * 대상 경로가 허용 경로 집합 중 하나의 하위 경로인지 검사한다.
@@ -104,12 +89,84 @@ function commandLineHint(cmd: string, allowed: string[]): string {
 }
 
 /**
- * block_patterns 검사에서 빼는 인자의 위치를 고른다.
- * 정책이 검색어나 출력 형식이라고 표시한 값만 뺀다: textFlags의 값(`-e 값`, `--format=값`)과
- * patternPositional 명령의 첫 위치 인자(grep의 검색어). 명령은 셸 없이 실행하므로 이 값 안의 `|`, `;`, `>`는 문자 그대로 전달된다.
+ * 인터프리터가 직접 실행하는 인라인 코드 인자의 플래그. 이 인자는 셸이 아니라 인터프리터가 해석하므로
+ * 코드 안의 `;`, `|`, `>`는 셸 연산자가 아니다. 인터프리터를 쓸 수 있는지는 allowed_commands와 정책이 따로 판정한다.
  */
-function textArguments(args: string[], policy: CommandPolicy | undefined): Set<number> {
+const INLINE_CODE_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  python:  ["-c"],
+  python3: ["-c"],
+  node:    ["-e", "--eval", "-p", "--print"],
+  ruby:    ["-e"],
+  perl:    ["-e", "-E"],
+};
+
+/**
+ * 데이터베이스 클라이언트가 직접 실행하는 SQL 인자의 플래그. 플래그 값 위치와 관계없이 어디에 와도 SQL이다.
+ * sqlite3은 플래그 대신 데이터베이스 파일 다음의 위치 인자가 SQL이다(`sqlite3 app.db "select 1; select 2;"`).
+ */
+const SQL_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  psql:    ["-c", "--command"],
+  mysql:   ["-e", "--execute"],
+  sqlite3: ["-cmd"],
+};
+
+/** sqlite3의 SQL 위치 인자(데이터베이스 파일 다음의 위치 인자). 값을 받는 옵션의 값은 위치 인자로 세지 않는다. */
+const SQLITE_VALUE_OPTIONS = new Set(["-cmd", "-separator", "-newline", "-nullvalue", "-init", "-vfs", "-maxsize", "-mmap", "-pagecache", "-lookaside", "-heap"]);
+
+/**
+ * pip 요구 사항 지정자(`"cython>=3.1"`, `"pkg[extra]<2,!=1.5"`). 비교 연산자의 `>`, `<`는 셸 연산자가 아니라 버전 조건이다.
+ * pip, pip3, `python -m pip`의 install·download·wheel 뒤 위치 인자 가운데 이 형식인 것만 뺀다.
+ */
+const REQUIREMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?\s*(===|==|>=|<=|~=|!=|>|<)\s*[A-Za-z0-9.*+!_-]+(\s*,\s*(===|==|>=|<=|~=|!=|>|<)\s*[A-Za-z0-9.*+!_-]+)*$/;
+const PIP_INSTALL_VERBS = new Set(["install", "download", "wheel"]);
+
+function requirementArguments(name: string, args: readonly string[], text: Set<number>): void {
+  let start = -1;
+  if (name === "pip" || name === "pip3") start = 0;
+  else if (/^python\d?$/.test(name)) {
+    const m = args.indexOf("-m");
+    if (m >= 0 && args[m + 1] === "pip") start = m + 2;
+  }
+  if (start < 0 || !PIP_INSTALL_VERBS.has(args[start] ?? "")) return;
+  for (let i = start + 1; i < args.length; i++) if (REQUIREMENT.test(args[i]!)) text.add(i);
+}
+
+function sqlArguments(name: string, args: readonly string[], text: Set<number>): void {
+  const flags = Object.hasOwn(SQL_FLAGS, name) ? SQL_FLAGS[name]! : [];
+  for (const [index, arg] of args.entries()) {
+    if (flags.includes(arg) && index + 1 < args.length) text.add(index + 1);
+  }
+  if (name !== "sqlite3") return;
+  let positional = 0;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (SQLITE_VALUE_OPTIONS.has(arg)) { i++; continue; }
+    if (arg.startsWith("-")) continue;
+    if (positional++ > 0) text.add(i);
+  }
+}
+
+/**
+ * block_patterns 검사에서 빼는 인자의 위치를 고른다.
+ * 정책이 검색어나 출력 형식이라고 표시한 값(textFlags의 값 `-e 값`, `--format=값`)과
+ * patternPositional 명령의 첫 위치 인자(grep의 검색어), 인터프리터의 인라인 코드(`python3 -c 코드`), 데이터베이스 클라이언트의 SQL을 뺀다.
+ * 명령은 셸 없이 실행하므로 이 값 안의 `|`, `;`, `>`는 문자 그대로 전달된다.
+ */
+function textArguments(cmd: string, args: string[], policy: CommandPolicy | undefined): Set<number> {
   const text = new Set<number>();
+  /** `/opt/venv/bin/python3`처럼 경로로 부른 인터프리터와 `python3.12` 같은 버전 이름도 같은 인터프리터로 본다 */
+  const name = path.basename(cmd).replace(/^(python\d?)(\.\d+)?$/, "$1");
+  const code = Object.hasOwn(INLINE_CODE_FLAGS, name) ? INLINE_CODE_FLAGS[name]! : [];
+  /** 인라인 코드 플래그는 스크립트 이름보다 앞에만 온다. 위치 인자가 나오면 그 뒤는 스크립트의 인자다. */
+  for (const [index, arg] of args.entries()) {
+    if (code.includes(arg)) {
+      if (index + 1 < args.length) text.add(index + 1);
+      break;
+    }
+    if (!arg.startsWith("-")) break;
+  }
+  sqlArguments(name, args, text);
+  requirementArguments(name, args, text);
   if (!policy) return text;
   const textFlags = policy.textFlags ?? [];
   for (const [index, arg] of args.entries()) {
@@ -132,7 +189,7 @@ function textArguments(args: string[], policy: CommandPolicy | undefined): Set<n
  * build 프로필은 이미 저장소의 빌드 스크립트를 실행하므로, 같은 범위의 실행 파일을 실행 대상으로 받는다.
  */
 function isWorkspaceExecutable(cmd: string, cwd: string, guard: PrismConfig["guard"]): boolean {
-  if (guard.workspace_executables !== true || guard.profile !== "build") return false;
+  if (guard.workspace_executables !== true || !isBuildProfile(guard)) return false;
   if (!cmd.includes("/") || /\s/.test(cmd) || guard.allowed_paths.length === 0) return false;
   try {
     const real = realpathSync(path.resolve(cwd, cmd));
@@ -140,6 +197,15 @@ function isWorkspaceExecutable(cmd: string, cwd: string, guard: PrismConfig["gua
   } catch {
     return false;
   }
+}
+
+/**
+ * 출력 파일 플래그가 /dev/null을 가리키면 아무 파일도 쓰지 않는다(`curl -o /dev/null -w '%{http_code}'`).
+ * 출력 파일을 막는 인자 제한에서 이 경우만 뺀다.
+ */
+function discardsOutput(flag: string, arg: string, next: string | undefined): boolean {
+  if (flag !== "-o" && flag !== "--output") return false;
+  return arg === "--output=/dev/null" || ((arg === "-o" || arg === "--output") && next === "/dev/null");
 }
 
 export function checkGuard(
@@ -157,7 +223,7 @@ export function checkGuard(
     );
   }
 
-  const text = textArguments(args, resolvePolicies(guard)[cmd]);
+  const text = textArguments(cmd, args, resolvePolicies(guard)[cmd]);
   for (const pattern of guard.block_patterns) {
     for (const [index, arg] of args.entries()) {
       if (text.has(index)) continue;
@@ -173,9 +239,10 @@ export function checkGuard(
   const restrictions = guard.command_arg_restrictions;
   const restriction  = restrictions && Object.hasOwn(restrictions, cmd) ? restrictions[cmd] : undefined;
   if (restriction) {
-    for (const arg of args) {
+    for (const [index, arg] of args.entries()) {
       // --flag=value 형태에서 플래그 이름만 추출
       const normalized = arg.startsWith("--") ? arg.split("=")[0]! : arg;
+      if (discardsOutput(normalized, arg, args[index + 1])) continue;
       if (restriction.blocked_flags.includes(normalized)) {
         throw new GuardError(
           `Argument '${arg}' is not allowed for command '${cmd}'`,
@@ -214,6 +281,8 @@ export function checkGuard(
 
     for (const arg of candidates) {
       const resolvedArgPath = path.resolve(cwd, arg);
+      /** /dev/null은 읽으면 비어 있고 쓰면 버려지는 장치라 허용 경로 밖이어도 아무것도 드러내거나 바꾸지 않는다 */
+      if (resolvedArgPath === "/dev/null") continue;
       if (!isAllowedPath(resolvedArgPath, guard.allowed_paths)) {
         throw new GuardError(
           `Path argument '${arg}' resolves outside allowed paths. ` +
@@ -272,6 +341,9 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
   });
   const verbs           = sub !== undefined ? policy.subVerbs?.[sub] : undefined;
   let   verbChecked     = verbs === undefined;
+  const optionalVerb    = sub !== undefined && policy.optionalVerbs?.includes(sub) === true;
+  const prefixes        = sub !== undefined ? policy.subPositionalPrefixes?.[sub] : undefined;
+  const deniedVerbs     = sub !== undefined ? policy.subDeniedVerbs?.[sub] : undefined;
   let   positionalCount = 0;
 
   for (const t of tokens) {
@@ -281,6 +353,8 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
     }
     if (t.kind === "flag") {
       const kind = flagKind(flags, t.name);
+      /** --help와 --version은 GNU echo도 플래그로 읽어 도움말을 낸다. 글자로 보지 않는다. */
+      if (!kind && policy.unknownFlagsAreText && t.name !== "--help" && t.name !== "--version") continue;
       if (!kind && !(policy.numericFlag && /^-[0-9]+$/.test(t.name))) deny(cmd, t.name, source);
       if (t.value?.startsWith("@") && policy.fileRefFlags?.includes(t.name)) deny(cmd, `${t.name} ${t.value}`, source);
       if (t.value !== undefined && policy.deniedValues?.[t.name]?.some(d => t.value!.includes(d))) deny(cmd, `${t.name} ${t.value}`, source);
@@ -293,12 +367,16 @@ function checkPolicy(cmd: string, args: string[], policy: CommandPolicy, source:
       verbChecked = true;
       continue;
     }
+    if (prefixes && positionalCount === 0 && !prefixes.some(p => t.name === p || (p.endsWith(".") ? t.name.startsWith(p) : t.name === p))) {
+      deny(cmd, t.name, source);
+    }
+    if (deniedVerbs && positionalCount === 0 && deniedVerbs.includes(t.name)) deny(cmd, t.name, source);
     if (positionalMode === "none") deny(cmd, t.name, source);
     if (positionalMode === "url" && !/^https?:\/\//i.test(t.name)) deny(cmd, t.name, source);
     if (!isAllowedPositional(policy, t.name, ++positionalCount)) deny(cmd, t.name, source);
     operands.push(t);
   }
-  if (!verbChecked) deny(cmd, "(missing verb)", source);
+  if (!verbChecked && !optionalVerb) deny(cmd, "(missing verb)", source);
   return { tokens: operands, view: { ...policy, flags, positionals: positionalMode } };
 }
 

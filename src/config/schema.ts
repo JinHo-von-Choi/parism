@@ -42,6 +42,10 @@ const COMMAND_POLICY_SCHEMA = z.object({
   textPositionals:  z.boolean().optional(),
   textFlags:        z.array(z.string()).optional(),
   patternPositional: z.boolean().optional(),
+  unknownFlagsAreText: z.boolean().optional(),
+  optionalVerbs:    STRING_LIST.optional(),
+  subPositionalPrefixes: z.record(z.string(), STRING_LIST).optional(),
+  subDeniedVerbs:   z.record(z.string(), STRING_LIST).optional(),
 }).strict();
 
 const ARG_RESTRICTION_SCHEMA = z.object({ blocked_flags: STRING_LIST }).strict();
@@ -69,7 +73,8 @@ const GUARD_FIELDS: Record<string, FieldSpec> = {
   block_patterns:           STRING_LIST,
   command_arg_restrictions: { entries: ARG_RESTRICTION_SCHEMA },
   command_policies:         { entries: COMMAND_POLICY_SCHEMA },
-  profile:                  z.enum(["readonly", "build"]),
+  profile:                  z.enum(["readonly", "build", "ci"]),
+  allow_git_remote_write:   z.boolean(),
   workspace_executables:    z.boolean(),
   secrets:                  {
     fields: {
@@ -116,6 +121,7 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
       max_concurrency: POSITIVE_LIMIT_SCHEMA,
       timeout_ms:      LIMIT_SCHEMA,
       mcp_extension:   z.boolean(),
+      allow_persistent_services: z.boolean(),
     },
   },
   receipts:             {
@@ -133,6 +139,21 @@ const CONFIG_FIELDS: Record<string, FieldSpec> = {
     fields: {
       max_entries: POSITIVE_LIMIT_SCHEMA,
       ttl_ms:      POSITIVE_LIMIT_SCHEMA,
+    },
+  },
+  output:               {
+    fields: {
+      include_raw:      z.boolean(),
+      auto_retain_rows: LIMIT_SCHEMA,
+      preview_rows:     POSITIVE_LIMIT_SCHEMA,
+    },
+  },
+  mcp:                  { fields: { surface: z.enum(["core", "full"]), max_response_bytes: z.number().int().min(4096) } },
+  hook:                 { fields: { permission: z.enum(["allow", "ask"]) } },
+  stats:                {
+    fields: {
+      enabled:     z.boolean(),
+      max_entries: POSITIVE_LIMIT_SCHEMA,
     },
   },
 };

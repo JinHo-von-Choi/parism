@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { redact, validatePatterns, DEFAULT_OUTPUT_REDACT_PATTERNS } from "../../src/engine/redactor.js";
 
 describe("DEFAULT_OUTPUT_REDACT_PATTERNS", () => {
-  it("7개의 기본 패턴이 정의되어 있다", async () => {
-    expect(DEFAULT_OUTPUT_REDACT_PATTERNS).toHaveLength(7);
+  it("11개의 기본 패턴이 정의되어 있다", async () => {
+    expect(DEFAULT_OUTPUT_REDACT_PATTERNS).toHaveLength(11);
   });
 });
 
@@ -122,8 +122,8 @@ describe("validatePatterns()", () => {
     expect(validatePatterns([])).toEqual([]);
   });
 
-  it("기본 패턴 7개가 모두 유효하다", async () => {
+  it("기본 패턴 11개가 모두 유효하다", async () => {
     const valid = validatePatterns(DEFAULT_OUTPUT_REDACT_PATTERNS);
-    expect(valid).toHaveLength(7);
+    expect(valid).toHaveLength(11);
   });
 });

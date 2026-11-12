@@ -1,14 +1,20 @@
 import { McpServer }    from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z }            from "zod";
 import { realpathSync } from "node:fs";
 import path            from "node:path";
 import type { PrismConfig }    from "./config/loader.js";
+import { DEFAULT_MCP }         from "./config/loader.js";
 import type { ParserRegistry } from "./parsers/registry.js";
 import { createRegistry }      from "./parsers/index.js";
 import { ParismEngine }        from "./facade/engine.js";
 import { PACKAGE_VERSION }     from "./version.js";
 import { PROJECTION_SHAPE, BUDGET_SHAPE } from "./engine/projection.js";
 import { MAX_TASK_WAIT_MS }             from "./engine/tasks.js";
+import { MAX_LEASE_MS }                 from "./engine/services.js";
+import { isBuildProfile }               from "./engine/policy.js";
+import type { ResponseEnvelope }        from "./types/envelope.js";
+import type { RunOptions }              from "./facade/envelope.js";
 
 export { PACKAGE_VERSION };
 
@@ -24,65 +30,88 @@ function resolveRealPath(target: string): string {
 }
 
 /**
- * 결과 텍스트 맨 앞에 실제 작업 디렉터리를 밝히는 배너.
- *
- * 왜: 에이전트는 "어느 디렉터리에서 실행됐는지" 를 결과에서 바로 알 수 없다.
- * 결과 JSON 안에도 cwd 가 있지만, 실패 응답을 먼저 읽고 멈추는 경우가 많다.
- * 첫 줄 한 줄로 그 사실을 앞에 둔다.
- *
- * 배너 뒤에는 빈 줄 하나를 둔다. 그래야 배너와 JSON 의 경계가 눈에 보인다.
- * 배너는 `[cwd] ` 로 시작하는 한 줄이며, JSON 파싱 전에 이 줄과 빈 줄을 빼야 한다.
+ * 결과 텍스트 맨 앞에 실제 작업 디렉터리를 밝히는 배너. 배너 뒤에 빈 줄 하나를 두고 JSON이 온다.
+ * JSON은 들여쓰기 없이 한 줄로 쓴다. 들여쓰기 공백만으로 응답 토큰의 22~30%가 든다.
  */
-function withCwdBanner(cwd: string, payload: unknown, compact = false): string {
-  return `[cwd] ${resolveRealPath(cwd)}\n\n${compact ? JSON.stringify(payload) : JSON.stringify(payload, null, 2)}`;
+export function withCwdBanner(cwd: string, payload: unknown): string {
+  return `[cwd] ${resolveRealPath(cwd)}\n\n${JSON.stringify(payload)}`;
 }
 
-const MCP_INSTRUCTIONS = `Parism: Structured shell output for AI agents.
+export const MCP_INSTRUCTIONS = `Parism runs shell commands without a shell and returns parsed JSON.
 
-When to use:
-- ls/find: entries[] (name, type, size, permissions)
-- git status/log/diff: branch, modified[], commits[], hunks
-- ps/docker ps: processes[]/containers[]
-- df/netstat: filesystems[]/connections[]
-- systemctl/journalctl: units[]/entries[]
-- helm/terraform: releases[]/summary
-- apt/brew/npm/cargo: packages[]/dependencies[]/crates[]
-- Filenames with spaces, OS-specific formats, or when you need to count/filter/compare fields.
+1. run({command: "ps aux | grep node | head -5"}) takes one command line. Quotes, globs, ~ and a leading "cd dir &&" work. Pipe stages grep, head, tail, wc, sort, uniq, cut run inside Parism: on parsed rows when possible, otherwise on text. Redirection, ;, &&, || and $(...) are refused with a suggestion.
+2. Test runners, compilers and linters (vitest, jest, tsc, eslint, cargo, go test, pytest) return every failure with file and line, plus attribution: whether the failing line was changed in the working tree.
+3. Large results return the first rows, a result_id and a _hint. Read the rest with query_result(result_id, where/select/sort_by/limit/aggregate) instead of running again.
+4. On refusal, result.failure has kind, reason, message and often hint.args or suggestion: rerun as suggested. describe(cmd) lists allowed subcommands and flags; describe({command}) checks a command without running it.
 
-When NOT to use: Single-line output (pwd, echo) or commands needing pipe/redirect (Guard blocks).
+Results start with "[cwd] <path>" and a blank line, then JSON. stdout.raw is left out when parsing succeeded; pass include_raw: true to get it. Long commands: mode "task"; servers: mode "service" with ready_pattern or ready_port, then run({task_id}) to read or cancel.`;
 
-Tools:
-- describe: Show allowed commands, available parsers, guard restrictions, version. Call this first. describe(cmd) returns one command's allowed subcommands and flags, the flags and formats its parser handles, machine-readable alternatives and examples.
-- dry_run: Check if a command would pass the guard WITHOUT executing it.
-- run: Execute command, get structured JSON. format: json|compact|json-no-raw. Optional select/where/sort_by/limit filter the parsed row array on the server; the result then carries _summary {total, matched, shown} and omits stdout.raw.
-- run_paged: Paginated stdout for large output. parsed is always null.
-- query_result / task: see describe. They work on results and tasks created with contract_version "next".
+/** 실패를 MCP 도구 오류로 알릴지. 파싱 실패는 결과를 돌려준 것이므로 오류가 아니다. */
+function isToolError(result: { ok?: boolean; failure?: { kind: string } }): boolean {
+  return result.ok === false && result.failure !== undefined && result.failure.kind !== "parse";
+}
 
-Usage:
-1. Call describe first to understand what commands and parsers are available.
-2. Use describe(cmd) or dry_run before unfamiliar commands to avoid guard denials and unsupported formats.
-3. Prefer run for small output; format=compact saves tokens.
-4. Large output: run_paged(page=0) first, check page_info.total_lines, fetch needed pages.
-5. Guard blocks disallowed commands. Check result.ok. On failure, result.failure has { kind, reason, message } — kind is 'guard' | 'exec' | 'parse' | 'config'. Legacy result.guard_error is still emitted for backward compatibility.
-6. stdout.parsed has structured data; stdout.raw is fallback.
-7. failure.reason = 'unsupported_format' means the parser does not handle those args. When failure.hint = { args, reason } is present, rerun the same command with hint.args to get the same information parsed.
-8. run and run_paged results start with a '[cwd] <absolute path>' line, then a blank line, then the JSON. Strip those two lines before JSON.parse. The cwd is where the command actually ran.
-9. When a command is not installed, failure.reason = 'spawn_failed' and failure.availability says so: status is 'missing' or 'not_executable', install.command is the exact install command to run, and alternatives lists other commands that do the same job. Follow install.command or an alternative instead of retrying the same command.
-10. describe without cmd returns command_availability: the install status of every allowed command. Check it before running something that may not be installed.
-11. Test runners, compilers and linters (vitest, jest, tsc, eslint, also through npx): run with contract_version "next" and machine_format true. The result lists every failure or diagnostic and only counts what passed. For commands longer than the timeout add mode "task", then read it with task(action "status", wait_ms 30000) until it finishes.
-12. describe().next_contract explains the options and fields that exist only with contract_version "next": machine_format, mode, aggregate, query_result, _origin, receipt.
+/** 텍스트와 구조화 결과를 함께 돌려준다. 클라이언트가 구조화 결과를 읽지 못하면 텍스트를 쓴다. */
+function reply(text: string, structured: unknown, isError = false): CallToolResult {
+  return {
+    content: [{ type: "text" as const, text }],
+    ...(structured !== null && typeof structured === "object" && !Array.isArray(structured) && { structuredContent: structured as Record<string, unknown> }),
+    ...(isError && { isError: true }),
+  };
+}
 
-Notes:
-- When config.telemetry.enabled is true, responses include a telemetry field with per-stage timing (guard_ms, exec_ms, parse_ms, redact_ms, total_ms, raw_bytes).
-- When config.guard.secrets.output_redaction_enabled is true, stdout.raw, stderr.raw and failure.message are masked with [REDACTED]; stdout.parsed is untouched.
-- When config.parsers.strict_schemas is true, parser output is validated against the Zod schema — failure.reason = 'schema_violation' on mismatch.`;
+function replyEnvelope(envelope: ResponseEnvelope, maxBytes?: number): CallToolResult {
+  const fitted = maxBytes === undefined ? envelope : fitForClient(envelope, maxBytes);
+  return reply(withCwdBanner(fitted.cwd, fitted), fitted, isToolError(fitted));
+}
+
+/** 앞에서부터 maxBytes(UTF-8) 안에 드는 완전한 줄까지 남긴다. 한 줄도 들지 않으면 빈 문자열이다. */
+function headLines(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  if (maxBytes <= 0) return "";
+  const partial = Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
+  const end     = partial.lastIndexOf("\n");
+  return end >= 0 ? partial.slice(0, end + 1) : "";
+}
+
+/** JSON 직렬화 크기(바이트) */
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
 
 /**
- * Guard 검사 → 실행 → JSON 직렬화까지의 파이프라인.
- * MCP 서버와 테스트 코드가 공통으로 사용한다.
- * 내부적으로 ParismEngine에 위임한다.
- *
- * @internal 테스트 헬퍼 전용. 서버 도구 핸들러는 engine.run을 직접 호출한다.
+ * 응답이 클라이언트 상한을 넘으면 stdout.raw와 stderr.raw를 줄 경계에서 잘라 상한에 맞춘다.
+ * 상한을 넘는 도구 결과는 클라이언트가 통째로 버리므로, 앞부분이라도 받게 하고 나머지는 options.page로 읽게 한다.
+ * 리댁션과 영수증은 이미 끝난 뒤라 자르는 것은 전달 형태만 바꾼다.
+ */
+export function fitForClient(envelope: ResponseEnvelope, maxBytes: number): ResponseEnvelope {
+  if (jsonBytes(envelope) <= maxBytes) return envelope;
+  const stdoutBytes = Buffer.byteLength(envelope.stdout.raw, "utf8");
+  if (stdoutBytes === 0 && envelope.stderr.raw === "") return envelope;
+  const stderr = headLines(envelope.stderr.raw, 4096);
+  /** 원문 한 바이트가 JSON에서 차지하는 비율로 남길 원문 크기를 정하고, 그래도 넘으면 조금씩 더 줄인다 */
+  const ratio = jsonBytes(envelope.stdout.raw) / Math.max(1, stdoutBytes);
+  let limit   = Math.floor((maxBytes - 2048) / ratio);
+  let fitted  = envelope;
+  for (let round = 0; round < 4; round++) {
+    const stdout = headLines(envelope.stdout.raw, limit);
+    const shown  = Buffer.byteLength(stdout, "utf8");
+    fitted = {
+      ...envelope,
+      stdout: { ...envelope.stdout, raw: stdout },
+      stderr: { ...envelope.stderr, raw: stderr },
+      truncated: true,
+      _hint: `stdout.raw shows the first ${shown} of ${envelope.truncated === true ? "more than " : ""}${stdoutBytes} bytes to fit the client's response limit (mcp.max_response_bytes ${maxBytes}). ` +
+        "Read the rest with options: { page: 0, page_size: 200 } and the following pages, or narrow the command (head, grep, a path).",
+    };
+    const over = jsonBytes(fitted) - maxBytes;
+    if (over <= 0) return fitted;
+    limit -= Math.ceil(over / ratio) + 512;
+  }
+  return fitted;
+}
+
+/**
+ * Guard 검사 → 실행 → JSON 직렬화까지의 파이프라인. 시험 코드가 쓴다.
+ * @internal
  */
 export async function buildRunResult(
   cmd:         string,
@@ -94,16 +123,13 @@ export async function buildRunResult(
   includeDiff: boolean     = false,
 ): Promise<string> {
   const engine  = new ParismEngine(config, registry);
-  const result  = await engine.run(cmd, { args, cwd, format, includeDiff });
+  const result  = await engine.run(cmd, { args, cwd, format, includeDiff, include_raw: true });
   return JSON.stringify(result, null, 2);
 }
 
 /**
- * Guard 검사 → 실행 → 페이지 분할 → JSON 직렬화.
- * parsed는 항상 null (부분 출력은 구조화 파싱 불가).
- * 내부적으로 ParismEngine에 위임한다.
- *
- * @internal 테스트 헬퍼 전용. 서버 도구 핸들러는 engine.runPaged를 직접 호출한다.
+ * Guard 검사 → 실행 → 페이지 분할 → JSON 직렬화. parsed는 항상 null이다. 시험 코드가 쓴다.
+ * @internal
  */
 export async function buildPagedResult(
   cmd:         string,
@@ -114,7 +140,6 @@ export async function buildPagedResult(
   config:      PrismConfig,
   includeDiff: boolean = false,
 ): Promise<string> {
-  // runPaged does not invoke parsers; a fresh registry is sufficient
   const engine = new ParismEngine(config, createRegistry());
   const result = await engine.runPaged(cmd, { args, cwd, page, page_size: pageSize, includeDiff });
   return JSON.stringify(result, null, 2);
@@ -131,11 +156,135 @@ export async function loadTaskExtension(config: PrismConfig): Promise<TaskExtens
   return config.tasks?.mcp_extension === true ? import("./mcp/task-extension.js") : undefined;
 }
 
+const READ_ONLY: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
+/** run의 annotations. readonly 프로필은 조회 명령만 허용하므로 읽기 전용이다. 네트워크 명령(curl, ping)이 있어 open world다. */
+function runAnnotations(config: PrismConfig): ToolAnnotations {
+  const build = isBuildProfile(config.guard);
+  return { readOnlyHint: !build, destructiveHint: build, idempotentHint: false, openWorldHint: true };
+}
+
+/** run과 run_task가 함께 받는 명령 입력 */
+function commandShape() {
+  return {
+    command:     z.string().optional().describe("One command line, e.g. \"git log --oneline -5\" or \"ps aux | grep node\". Use this or cmd+args."),
+    cmd:         z.string().optional().describe("Executable name when passing args separately"),
+    args:        z.array(z.string()).optional().describe("Arguments for cmd, one per element"),
+    cwd:         z.string().default(process.cwd()).describe("Working directory"),
+    format:      z.enum(["json", "compact", "json-no-raw"]).default("json").describe("compact = columnar rows"),
+    include_raw: z.boolean().optional().describe("Also return stdout.raw when parsing succeeded"),
+    includeDiff: z.boolean().default(false).describe("Include filesystem diff (created/deleted/modified)"),
+    select:      PROJECTION_SHAPE.select.describe("Keep only these fields per row"),
+    where:       PROJECTION_SHAPE.where.describe("Row conditions [{field, op, value}]; op eq|ne|prefix|contains|gt|gte|lt|lte"),
+    sort_by:     PROJECTION_SHAPE.sort_by.describe("{field, order: asc|desc}"),
+    limit:       PROJECTION_SHAPE.limit.describe("Maximum rows; 0 returns only _summary"),
+    array:       PROJECTION_SHAPE.array.describe("Which array to project when there are several"),
+    aggregate:   PROJECTION_SHAPE.aggregate.describe("contract_version next: {group_by?, sum?, distinct?}"),
+    budget:      BUDGET_SHAPE.optional().describe("Token budget for the response"),
+    contract_version: z.enum(["stable", "next"]).default("stable").describe("'next' adds review, _origin, receipt"),
+    evidence:    z.enum(["none", "rows", "fields"]).default("none").describe("next: field evidence for explain"),
+    retain:      z.boolean().default(false).describe("next: keep the full result for query_result"),
+    machine_format: z.boolean().default(false).describe("next: add machine-readable flags for test runners and linters"),
+    attribution: z.boolean().optional().describe("false skips git-diff attribution of failures"),
+  };
+}
+
+/** run 도구 하나로 태스크, 서비스, 페이지까지 다루는 입력(core 표면) */
+function runShape() {
+  return {
+    ...commandShape(),
+    mode:        z.enum(["wait", "task", "service"]).default("wait")
+                 .describe("task: start and return task_id (needs contract_version next). service: start a server, wait for ready_pattern or ready_port, return task_id"),
+    ready_pattern: z.string().optional().describe("service: regex on output that means ready"),
+    ready_port:  z.number().int().min(1).max(65535).optional().describe("service: local port that means ready"),
+    lease_ms:    z.number().int().min(1000).max(MAX_LEASE_MS).optional().describe(`service: stop after this many ms (max ${MAX_LEASE_MS})`),
+    persist:     z.boolean().optional().describe("service: keep running after this server exits, until lease_ms (host must allow it)"),
+    task_id:     z.string().optional().describe("Read a task or service started earlier instead of running a command"),
+    wait_ms:     z.number().int().min(0).default(0).describe(`task_id: wait up to this long (capped at ${MAX_TASK_WAIT_MS}) for it to finish or report a new failure`),
+    cancel:      z.boolean().optional().describe("task_id: stop it"),
+    page:        z.number().int().min(0).optional().describe("Return raw stdout lines of this page (0-based) instead of parsing"),
+    page_size:   z.number().int().min(1).optional().describe("page: lines per page"),
+  };
+}
+
+type RunInput = z.infer<z.ZodObject<ReturnType<typeof runShape>>>;
+
+/** 입력에서 run 옵션을 고른다. 정의되지 않은 키는 넣지 않는다. */
+function runOptionsOf(input: Partial<RunInput>): RunOptions {
+  const keys = ["command", "args", "cwd", "format", "include_raw", "includeDiff", "select", "where", "sort_by", "limit", "array",
+    "aggregate", "budget", "contract_version", "evidence", "retain", "machine_format", "attribution"] as const;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = (input as Record<string, unknown>)[key];
+    if (value !== undefined && !(key === "machine_format" && value === false)) out[key] = value;
+  }
+  return out as RunOptions;
+}
+
+/** core 표면의 where 조건. 정확한 형 검사는 엔진의 투영 문법(engine/projection.ts)이 한다. */
+const LOOSE_WHERE = z.array(z.object({ field: z.string(), op: z.string(), value: z.unknown() }))
+  .describe("[{field, op: eq|ne|prefix|contains|gt|gte|lt|lte, value}]");
+
+/** core 표면 run의 고급 옵션. 하나의 객체로 받아 스키마를 짧게 두고, 받은 뒤 runShape로 검사한다. */
+const RUN_OPTION_KEYS = [
+  "format", "include_raw", "includeDiff", "array", "aggregate", "budget", "contract_version", "evidence", "retain",
+  "machine_format", "attribution", "ready_pattern", "ready_port", "lease_ms", "persist", "page", "page_size",
+] as const;
+
+function coreRunShape() {
+  return {
+    command: z.string().optional().describe("Whole command line, e.g. \"git log --oneline -5\" or \"ps aux | grep node | head -5\""),
+    cmd:     z.string().optional().describe("Executable, when passing args separately"),
+    args:    z.array(z.string()).optional(),
+    cwd:     z.string().optional().describe("Working directory"),
+    select:  z.array(z.string()).optional().describe("Fields to keep per row"),
+    where:   LOOSE_WHERE.optional(),
+    sort_by: z.object({ field: z.string(), order: z.enum(["asc", "desc"]).optional() }).optional(),
+    limit:   z.number().int().min(0).optional(),
+    mode:    z.enum(["wait", "task", "service"]).optional().describe("task: long command, returns task_id. service: start a server and wait until ready"),
+    task_id: z.string().optional().describe("Read (wait_ms) or stop (cancel) a task or service"),
+    wait_ms: z.number().int().min(0).optional().describe(`Capped at ${MAX_TASK_WAIT_MS}`),
+    cancel:  z.boolean().optional(),
+    options: z.record(z.string(), z.unknown()).optional()
+      .describe(`Advanced: ${RUN_OPTION_KEYS.join(", ")}. See describe().run_options`),
+  };
+}
+
+function coreQueryShape() {
+  return {
+    result_id:    z.string(),
+    select:       z.array(z.string()).optional(),
+    where:        LOOSE_WHERE.optional(),
+    sort_by:      z.object({ field: z.string(), order: z.enum(["asc", "desc"]).optional() }).optional(),
+    limit:        z.number().int().min(0).optional(),
+    aggregate:    z.object({ group_by: z.array(z.string()).optional(), sum: z.array(z.string()).optional(), distinct: z.array(z.string()).optional() }).optional(),
+    pointer:      z.string().optional().describe("JSON Pointer: where did this value come from"),
+    cursor:       z.string().optional().describe("continuation.cursor: next page"),
+    compare_with: z.string().optional().describe("Another result_id: what changed"),
+    options:      z.record(z.string(), z.unknown()).optional().describe("array, budget, keys, ignore_fields, strict"),
+  };
+}
+
+/** core 표면 입력을 run 입력으로 펼치고 엄격한 스키마로 검사한다 */
+function expandCoreRun(input: Record<string, unknown>): { ok: true; value: Partial<RunInput> } | { ok: false; message: string } {
+  const { options, ...rest } = input as { options?: Record<string, unknown> } & Record<string, unknown>;
+  const unknownKeys = Object.keys(options ?? {}).filter(k => !(RUN_OPTION_KEYS as readonly string[]).includes(k));
+  if (unknownKeys.length > 0) return { ok: false, message: `unknown option(s): ${unknownKeys.join(", ")}; allowed: ${RUN_OPTION_KEYS.join(", ")}` };
+  const parsed = z.object(runShape()).strict().safeParse({ ...rest, ...(options ?? {}) });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.map(i => `${i.path.join(".") || "input"}: ${i.message}`).join("; ") };
+  }
+  return { ok: true, value: parsed.data };
+}
+
 /**
- * MCP 서버를 생성하고 `run` 도구를 등록한다.
+ * MCP 서버를 만든다. mcp.surface가 core면 run, query_result, describe 세 도구를,
+ * full이면 이전 판의 아홉 도구(run, task, query_result, compare_results, fetch_result, explain_result, run_paged, describe, dry_run)를 등록한다.
  */
 export function createServer(config: PrismConfig, registry: ParserRegistry, taskExtension?: TaskExtensionModule): McpServer {
   const engine    = new ParismEngine(config, registry);
+  const surface   = (config.mcp ?? DEFAULT_MCP).surface;
+  const maxResponse = (config.mcp ?? DEFAULT_MCP).max_response_bytes ?? DEFAULT_MCP.max_response_bytes;
   /**
    * 태스크 확장은 tasks.mcp_extension이 켜져 있고 호출자가 어댑터 모듈을 넘겼을 때만 붙는다.
    * 어댑터는 MCP SDK의 experimental API를 쓰므로 필요할 때만 불러오게 호출자가 넘긴다(loadTaskExtension).
@@ -156,226 +305,219 @@ export function createServer(config: PrismConfig, registry: ParserRegistry, task
     },
   );
 
-  /** run 도구의 입력. run_task(MCP 태스크 확장)도 mode와 contract_version을 뺀 같은 입력을 받는다. */
-  const runInput = {
-      cmd:         z.string().describe("Command name (e.g. 'ls', 'git')"),
-      args:        z.array(z.string()).default([]).describe("Command arguments"),
-      cwd:         z.string().default(process.cwd()).describe("Working directory"),
-      format:      z.enum(["json", "compact", "json-no-raw"]).default("json")
-                   .describe("Output format. 'compact'=columnar. 'json-no-raw'=omit raw for token savings."),
-      includeDiff: z.boolean().default(false)
-                   .describe("Include filesystem diff (created/deleted/modified). false=skip snapshot, lower latency."),
-      select:      PROJECTION_SHAPE.select
-                   .describe("Keep only these fields in each row of the parsed top-level array."),
-      where:       PROJECTION_SHAPE.where
-                   .describe("Row conditions, all must hold. {field, op, value}: op eq|ne (string, number, boolean or null), prefix|contains (string, case-sensitive), gt|gte|lt|lte (number)."),
-      sort_by:     PROJECTION_SHAPE.sort_by
-                   .describe("{field, order: asc|desc}. Stable; rows without the field go last."),
-      limit:       PROJECTION_SHAPE.limit
-                   .describe("Maximum rows to return. 0 returns only _summary."),
-      array:       PROJECTION_SHAPE.array
-                   .describe("Key of the array to project when the result has several. Default: the parser's row array."),
-      contract_version: z.enum(["stable", "next"]).default("stable")
-                   .describe("Response contract version. 'next' adds a review object (completeness, content hash, warnings). Default 'stable' returns exactly the previous fields."),
-      evidence:   z.enum(["none", "rows", "fields"]).default("none")
-                   .describe("How much field evidence to compute. 'none'=none, 'rows'=per-row pointers. Field evidence is only available for parsers that record it; others say so rather than guess."),
-      retain:     z.boolean().default(false)
-                   .describe("Keep the result in this session so explain_result can revisit it. Held in memory with a TTL; not written to disk, and never re-executed automatically."),
-      budget:     BUDGET_SHAPE.optional()
-                   .describe("Token budget for the response. Shrinks what is returned to fit; does NOT reduce command time or capture. Returns a budget report and an omission list saying which stage dropped what."),
-      aggregate:  PROJECTION_SHAPE.aggregate
-                   .describe("contract_version 'next' only. {group_by?, sum?, distinct?}: group the rows that pass where and return one row per group with count, sum_<field>, distinct_<field>. sort_by, limit and select then apply to the group rows."),
-      machine_format: z.boolean().default(false)
-                   .describe("contract_version 'next' only. For test runners, compilers and linters, add the tool's machine-readable output flags before running. The response args are the arguments actually run."),
-      mode:       z.enum(["wait", "task"]).default("wait")
-                   .describe("contract_version 'next' only. 'task' starts the command, returns a task_id at once and keeps it running under the task time limit; read it with the task tool."),
-    };
-
-  /** MCP 태스크 확장. 켜져 있으면 프로토콜의 태스크 요청으로 run_task를 쓸 수 있다. */
   if (extension) {
-    const taskInput: Record<string, z.ZodTypeAny> = { ...runInput };
-    delete taskInput.mode;
-    delete taskInput.contract_version;
-    extension.module.registerRunTask(server, engine, extension.parts.taskStore, taskInput, envelope => withCwdBanner(envelope.cwd, envelope, true));
+    extension.module.registerRunTask(server, engine, extension.parts.taskStore, commandShape(), envelope => withCwdBanner(envelope.cwd, envelope));
   }
 
-  server.tool(
-    "run",
-    "Execute a shell command and receive structured output. " +
-    "All commands are filtered through an execution guard (whitelist + injection prevention). " +
-    "Use format='compact' for token-efficient columnar output. " +
-    "select/where/sort_by/limit filter the parsed row array on the server (applied in that order: where, sort_by, limit, select).",
-    runInput,
-    async ({ cmd, args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain, budget, machine_format, mode, aggregate }) => {
-      const opts = {
-        args, cwd, format, includeDiff, select, where, sort_by, limit, array, contract_version, evidence, retain,
-        ...(aggregate && { aggregate }),
-        ...(budget && { budget }), ...(machine_format && { machine_format }),
-      };
-      const next = contract_version === "next";
-      if (mode === "task") {
-        const started = engine.startTask(cmd, opts);
-        const text    = started.started
-          ? withCwdBanner(started.task.cwd, { task: started.task }, true)
-          : withCwdBanner(started.envelope.cwd, started.envelope, next);
-        return { content: [{ type: "text" as const, text }] };
+  /** 태스크·서비스 조회 결과 */
+  const taskReply = async (taskId: string, waitMs: number, cancel: boolean): Promise<CallToolResult> => {
+    const lookup = cancel ? engine.taskCancel(taskId) : await engine.taskWait(taskId, waitMs);
+    const body   = lookup.found ? { ok: true, task: lookup.task } : { ok: false, reason: lookup.reason, message: lookup.message };
+    return reply(JSON.stringify(body), body, !lookup.found);
+  };
+
+  /** run 한 번. 태스크·서비스 시작과 페이지 읽기도 여기서 고른다. */
+  const runTool = async (input: Partial<RunInput>): Promise<CallToolResult> => {
+    if (input.task_id !== undefined) return taskReply(input.task_id, input.wait_ms ?? 0, input.cancel === true);
+    const cmd  = input.cmd ?? "";
+    const opts = runOptionsOf(input);
+    if (input.command === undefined && cmd === "") {
+      const body = { ok: false, failure: { kind: "config", reason: "missing_command", message: "give command (one string) or cmd" } };
+      return reply(JSON.stringify(body), body, true);
+    }
+    if (input.page !== undefined) {
+      return replyEnvelope(await engine.runPaged(cmd, { ...opts, page: input.page, ...(input.page_size !== undefined && { page_size: input.page_size }) }), maxResponse);
+    }
+    if (input.mode === "task" || input.mode === "service") {
+      const started = input.mode === "task"
+        ? engine.startTask(cmd, opts)
+        : await engine.startService(cmd, {
+            ...opts,
+            ...(input.ready_pattern !== undefined && { ready_pattern: input.ready_pattern }),
+            ...(input.ready_port !== undefined && { ready_port: input.ready_port }),
+            ...(input.lease_ms !== undefined && { lease_ms: input.lease_ms }),
+            ...(input.persist !== undefined && { persist: input.persist }),
+          });
+      if (!started.started) return replyEnvelope(started.envelope, maxResponse);
+      return reply(withCwdBanner(started.task.cwd, { task: started.task }), { task: started.task });
+    }
+    return replyEnvelope(await engine.run(cmd, opts), maxResponse);
+  };
+
+  const runDescription =
+    "Run a command without a shell and get parsed JSON. Pass the whole line as command (pipes to grep/head/tail/wc/sort/uniq/cut work). " +
+    "Large results return a preview, result_id and _hint; continue with query_result. Commands pass an execution guard.";
+
+  if (surface === "core") {
+    server.registerTool("run", {
+      description: `${runDescription} mode starts tasks and services; task_id reads or stops them.`,
+      inputSchema: coreRunShape(),
+      annotations: runAnnotations(config),
+    }, async (input) => {
+      const expanded = expandCoreRun(input as Record<string, unknown>);
+      if (!expanded.ok) {
+        const body = { ok: false, failure: { kind: "config", reason: "invalid_input", message: expanded.message } };
+        return reply(JSON.stringify(body), body, true);
       }
-      const result = await engine.run(cmd, opts);
-      return {
-        content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result, next) }],
-      };
-    },
-  );
+      return runTool(expanded.value);
+    });
+  } else {
+    server.registerTool("run", {
+      description: `${runDescription} Also starts tasks and services (mode), reads or stops them (task_id), and pages raw output (page).`,
+      inputSchema: runShape(),
+      annotations: runAnnotations(config),
+    }, runTool);
+  }
 
-  server.tool(
-    "task",
-    "Read or cancel a task started by run(mode='task'). " +
-    "status returns state (running, completed, cancelled), elapsed time and output bytes so far; once finished it carries the full run result. " +
-    "cancel stops only that task's processes. A finished task's result is kept for a limited time and is never re-run. " +
-    "Pass wait_ms with status instead of polling in a loop: the call answers when the task finishes, when a new test failure or error appears, or when the wait runs out.",
-    {
-      task_id: z.string().describe("task_id from run(mode='task')"),
-      action:  z.enum(["status", "cancel"]).default("status").describe("'status' reads the task, 'cancel' stops it"),
-      wait_ms: z.number().int().min(0).max(MAX_TASK_WAIT_MS).default(0)
-                .describe(`status only. Wait up to this many milliseconds (at most ${MAX_TASK_WAIT_MS}) for the task to finish or a new failure to appear before answering. 0 answers at once.`),
-    },
-    async ({ task_id, action, wait_ms }) => {
-      const lookup = action === "cancel" ? engine.taskCancel(task_id) : await engine.taskWait(task_id, wait_ms);
-      return { content: [{ type: "text" as const, text: JSON.stringify(lookup.found ? { ok: true, task: lookup.task } : { ok: false, reason: lookup.reason, message: lookup.message }) }] };
-    },
-  );
-
-  server.tool(
-    "query_result",
-    "Filter, sort, limit or pick fields of a RETAINED result again WITHOUT re-running the command. " +
-    "Works on the result as parsed before any select/where/sort_by/limit of the original run. " +
-    "Use the result_id from run(contract_version='next', retain=true). An expired or unknown id returns an error and is never re-executed.",
-    {
-      result_id: z.string().describe("Result id from run(review.result_id)"),
-      select:    PROJECTION_SHAPE.select.describe("Keep only these fields in each row."),
-      where:     PROJECTION_SHAPE.where.describe("Row conditions, all must hold. Same operators as run."),
-      sort_by:   PROJECTION_SHAPE.sort_by.describe("{field, order: asc|desc}."),
-      limit:     PROJECTION_SHAPE.limit.describe("Maximum rows to return. 0 returns only _summary."),
-      array:     PROJECTION_SHAPE.array.describe("Key of the array to query when the result has several."),
-      aggregate: PROJECTION_SHAPE.aggregate.describe("{group_by?, sum?, distinct?}: one row per group with count, sum_<field>, distinct_<field>."),
-    },
-    async ({ result_id, select, where, sort_by, limit, array, aggregate }) => {
-      const query: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries({ select, where, sort_by, limit, array, aggregate })) {
-        if (value !== undefined) query[key] = value;
-      }
-      return { content: [{ type: "text" as const, text: JSON.stringify(engine.queryResult(result_id, query)) }] };
-    },
-  );
-
-  server.tool(
-    "compare_results",
-    "Compare two ALREADY-STORED results and show what actually changed. " +
-    "Never runs a command, never connects anywhere, never polls. " +
-    "Only git file status and Kubernetes resources with metadata.uid are compared; " +
-    "ps is withheld because PID alone is not identity. " +
-    "Refuses when the two results are of different subjects, and refuses a missing row in an " +
-    "incomplete result instead of calling it a deletion. " +
-    "Returns comparable plus refusal_reasons when it declines to compare.",
-    {
-      base_id:       z.string().describe("Earlier result_id from run(retain=true)"),
-      current_id:    z.string().describe("Later result_id from run(retain=true)"),
-      keys:          z.array(z.string()).optional().describe("Fields that identify a row. Default follows the domain rules (git: path; kubernetes: uid)."),
-      ignore_fields: z.array(z.string()).optional().describe("Fields to leave out of the change list. Reported back so nothing disappears quietly."),
-      strict:        z.boolean().default(false).describe("Refuse when only a weak guarantee (like tool version equality) is missing."),
-    },
-    async ({ base_id, current_id, keys, ignore_fields, strict }) => {
-      const result = engine.compare(base_id, current_id, {
-        ...(keys && { keys }), ...(ignore_fields && { ignore_fields }), strict,
+  /** query_result: 보관 결과 재질의. core 표면(coreQueryShape)에서는 이어 읽기, 비교, 근거 설명도 맡는다. */
+  const queryShape = {
+    result_id:     z.string().describe("result_id from run"),
+    select:        PROJECTION_SHAPE.select.describe("Keep only these fields per row"),
+    where:         PROJECTION_SHAPE.where.describe("Row conditions, same operators as run"),
+    sort_by:       PROJECTION_SHAPE.sort_by.describe("{field, order}"),
+    limit:         PROJECTION_SHAPE.limit.describe("Maximum rows"),
+    array:         PROJECTION_SHAPE.array.describe("Which array when there are several"),
+    aggregate:     PROJECTION_SHAPE.aggregate.describe("{group_by?, sum?, distinct?}: one row per group with count"),
+  };
+  const queryInput = (surface === "core" ? coreQueryShape() : queryShape) as z.ZodRawShape;
+  server.registerTool("query_result", {
+    description: "Read a kept result again WITHOUT re-running the command: filter, sort, limit, pick fields or aggregate the full rows" +
+      (surface === "core" ? "; or explain a value (pointer), read the next page (cursor), or compare with another result (compare_with)." : ".") +
+      " An expired or unknown id is an error and is never re-executed.",
+    inputSchema: queryInput,
+    annotations: READ_ONLY,
+  }, async (input: Record<string, unknown>) => {
+    const { options, ...given } = input as Record<string, unknown> & { options?: Record<string, unknown> };
+    const args = { ...given, ...(options ?? {}) } as Record<string, unknown> & { result_id: string };
+    if (typeof args.pointer === "string") {
+      const r = engine.explainResult(args.result_id, args.pointer);
+      return reply(JSON.stringify(r), r, !r.ok);
+    }
+    if (typeof args.cursor === "string") {
+      const r = engine.fetchResult(args.result_id, args.cursor, args.budget as { max_tokens: number; tokenizer?: string } | undefined);
+      return reply(JSON.stringify(r), r, !r.ok);
+    }
+    if (typeof args.compare_with === "string") {
+      const r = engine.compare(args.result_id, args.compare_with, {
+        ...(args.keys !== undefined && { keys: args.keys as string[] }),
+        ...(args.ignore_fields !== undefined && { ignore_fields: args.ignore_fields as string[] }),
+        strict: args.strict === true,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+      return reply(JSON.stringify(r), r, !r.ok);
+    }
+    const query: Record<string, unknown> = {};
+    for (const key of ["select", "where", "sort_by", "limit", "array", "aggregate"]) if (args[key] !== undefined) query[key] = args[key];
+    const r = engine.queryResult(args.result_id, query);
+    return reply(JSON.stringify(r), r, !r.ok);
+  });
 
-  server.tool(
-    "fetch_result",
-    "Return the next page of a retained result WITHOUT re-running the command. " +
-    "Use the continuation.cursor from a run() that had a budget. " +
-    "The cursor binds the snapshot, projection and policy, so it cannot be used on a different result. " +
-    "An expired or evicted result returns result_expired and is never re-executed automatically.",
-    {
-      result_id: z.string().describe("Result id from run()"),
-      cursor:    z.string().describe("continuation.cursor from the previous page"),
-      budget:    BUDGET_SHAPE.optional().describe("Optional budget for this page."),
+  server.registerTool("describe", {
+    description: "Without arguments: allowed commands, parsers, guard, side effects, version. With cmd: that command's allowed subcommands, flags, parser formats, side effect and examples. " +
+      "With command (or cmd+args): check whether it would pass the guard without running it.",
+    inputSchema: {
+      cmd:     z.string().optional().describe("Command name to describe, e.g. 'git'"),
+      command: z.string().optional().describe("A full command line to check without running"),
+      args:    z.array(z.string()).optional().describe("With cmd: arguments to check without running"),
+      cwd:     z.string().default(process.cwd()).describe("Working directory for the check"),
     },
-    async ({ result_id, cursor, budget }) => {
-      const result = engine.fetchResult(result_id, cursor, budget);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+    annotations: READ_ONLY,
+  }, async ({ cmd, command, args, cwd }) => {
+    if (command !== undefined || args !== undefined) {
+      const r = engine.dryRun(cmd ?? "", args ?? [], cwd, command);
+      return reply(JSON.stringify(r), r);
+    }
+    /** 허용되지 않은 명령의 설명은 도구 오류가 아니라 그 사실을 담은 결과다. */
+    const r = cmd === undefined ? engine.describe() : engine.describe(cmd);
+    return reply(JSON.stringify(r), r);
+  });
 
-  server.tool(
-    "explain_result",
-    "Show where a value in a retained result came from. " +
-    "Give result_id from run(retain=true) and a JSON Pointer such as '/processes/0/pid'. " +
-    "Returns the value plus the byte span in the masked canonical output, and says 'none' with a reason when no evidence exists. " +
-    "Evidence is a link to what the command printed at that moment, NOT proof the value is true. " +
-    "Never re-executes the command: an unknown or expired id returns an error saying so.",
-    {
-      result_id: z.string().describe("Result id from run(review.result_id)"),
-      pointer:   z.string().default("").describe("JSON Pointer into the result, e.g. '/processes/0/pid'. Empty string returns the whole result."),
-    },
-    async ({ result_id, pointer }) => {
-      const result = engine.explainResult(result_id, pointer);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    },
-  );
+  if (surface === "full") registerLegacyTools(server, engine, config);
+  return server;
+}
 
-  server.tool(
-    "run_paged",
-    "Execute a shell command and return paginated stdout. " +
-    "Use this for commands with large output (ps aux, find, grep -r). " +
-    "Returns page_info with total_lines and has_next for navigation.",
-    {
-      cmd:         z.string().describe("Command name"),
-      args:        z.array(z.string()).default([]).describe("Command arguments"),
+/** full 표면에만 있는 이전 판의 도구 */
+function registerLegacyTools(server: McpServer, engine: ParismEngine, config: PrismConfig): void {
+  server.registerTool("task", {
+    description: "Read or cancel a task or service started by run(mode='task' or 'service'). Pass wait_ms with status instead of polling.",
+    inputSchema: {
+      task_id: z.string().describe("task_id from run"),
+      action:  z.enum(["status", "cancel"]).default("status").describe("'status' reads it, 'cancel' stops it"),
+      wait_ms: z.number().int().min(0).default(0).describe(`status: wait up to this long (capped at ${MAX_TASK_WAIT_MS})`),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ task_id, action, wait_ms }) => {
+    const lookup = action === "cancel" ? engine.taskCancel(task_id) : await engine.taskWait(task_id, wait_ms);
+    const body   = lookup.found ? { ok: true, task: lookup.task } : { ok: false, reason: lookup.reason, message: lookup.message };
+    return reply(JSON.stringify(body), body, !lookup.found);
+  });
+
+  server.registerTool("compare_results", {
+    description: "Compare two kept results and show what changed. Never runs a command. Refuses incomparable results instead of guessing.",
+    inputSchema: {
+      base_id:       z.string().describe("Earlier result_id"),
+      current_id:    z.string().describe("Later result_id"),
+      keys:          z.array(z.string()).optional().describe("Row identity fields"),
+      ignore_fields: z.array(z.string()).optional().describe("Fields to leave out"),
+      strict:        z.boolean().default(false).describe("Refuse weak guarantees"),
+    },
+    annotations: READ_ONLY,
+  }, async ({ base_id, current_id, keys, ignore_fields, strict }) => {
+    const r = engine.compare(base_id, current_id, { ...(keys && { keys }), ...(ignore_fields && { ignore_fields }), strict });
+    return reply(JSON.stringify(r), r, !r.ok);
+  });
+
+  server.registerTool("fetch_result", {
+    description: "Next page of a budgeted result WITHOUT re-running. Use continuation.cursor from run.",
+    inputSchema: {
+      result_id: z.string().describe("Result id"),
+      cursor:    z.string().describe("continuation.cursor"),
+      budget:    BUDGET_SHAPE.optional().describe("Budget for this page"),
+    },
+    annotations: READ_ONLY,
+  }, async ({ result_id, cursor, budget }) => {
+    const r = engine.fetchResult(result_id, cursor, budget);
+    return reply(JSON.stringify(r), r, !r.ok);
+  });
+
+  server.registerTool("explain_result", {
+    description: "Show where a value in a kept result came from: the byte span in the masked output. Never re-executes.",
+    inputSchema: {
+      result_id: z.string().describe("Result id"),
+      pointer:   z.string().default("").describe("JSON Pointer, e.g. '/processes/0/pid'"),
+    },
+    annotations: READ_ONLY,
+  }, async ({ result_id, pointer }) => {
+    const r = engine.explainResult(result_id, pointer);
+    return reply(JSON.stringify(r), r, !r.ok);
+  });
+
+  server.registerTool("run_paged", {
+    description: "Run a command and return raw stdout lines page by page. parsed is always null.",
+    inputSchema: {
+      command:     z.string().optional().describe("One command line"),
+      cmd:         z.string().optional().describe("Command name"),
+      args:        z.array(z.string()).default([]).describe("Arguments"),
       cwd:         z.string().default(process.cwd()).describe("Working directory"),
       page:        z.number().int().min(0).default(0).describe("Page index (0-based)"),
-      page_size:   z.number().int().min(1).default(config.guard.default_page_size)
-                   .describe("Lines per page"),
-      includeDiff: z.boolean().default(false)
-                   .describe("Include filesystem diff. false=skip snapshot, lower latency."),
+      page_size:   z.number().int().min(1).default(config.guard.default_page_size).describe("Lines per page"),
+      includeDiff: z.boolean().default(false).describe("Include filesystem diff"),
     },
-    async ({ cmd, args, cwd, page, page_size, includeDiff }) => {
-      const result = await engine.runPaged(cmd, { args, cwd, page, page_size, includeDiff });
-      return { content: [{ type: "text" as const, text: withCwdBanner(result.cwd, result) }] };
-    },
-  );
+    annotations: runAnnotations(config),
+  }, async ({ command, cmd, args, cwd, page, page_size, includeDiff }) => {
+    return replyEnvelope(await engine.runPaged(cmd ?? "", { ...(command !== undefined && { command }), args, cwd, page, page_size, includeDiff }));
+  });
 
-  server.tool(
-    "describe",
-    "Describe the current Parism environment: allowed commands, available parsers, guard restrictions, and version. " +
-    "Call this first when using Parism to understand what commands are available and how the guard is configured. " +
-    "With cmd, returns that command's allowed subcommands and flags, parseable flags and formats, machine-readable alternatives and examples.",
-    {
-      cmd: z.string().optional().describe("Command name to describe in detail (e.g. 'git'). Omit for the environment summary."),
+  server.registerTool("dry_run", {
+    description: "Check whether a command would pass the guard WITHOUT running it.",
+    inputSchema: {
+      command: z.string().optional().describe("One command line"),
+      cmd:     z.string().optional().describe("Command name"),
+      args:    z.array(z.string()).default([]).describe("Arguments"),
+      cwd:     z.string().default(process.cwd()).describe("Working directory"),
     },
-    async ({ cmd }) => {
-      /** 명령별 응답은 크기를 줄이려고 들여쓰기 없이 직렬화한다. */
-      const text = cmd === undefined ? JSON.stringify(engine.describe(), null, 2) : JSON.stringify(engine.describe(cmd));
-      return { content: [{ type: "text" as const, text }] };
-    },
-  );
-
-  server.tool(
-    "dry_run",
-    "Check whether a command would pass the execution guard WITHOUT actually running it. " +
-    "Use this to pre-validate commands before calling run, especially for unfamiliar commands.",
-    {
-      cmd:  z.string().describe("Command name to test (e.g. 'git', 'rm')"),
-      args: z.array(z.string()).default([]).describe("Command arguments to test"),
-      cwd:  z.string().default(process.cwd()).describe("Working directory to test"),
-    },
-    async ({ cmd, args, cwd }) => {
-      const result = engine.dryRun(cmd, args, cwd);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    },
-  );
-
-  return server;
+    annotations: READ_ONLY,
+  }, async ({ command, cmd, args, cwd }) => {
+    const r = engine.dryRun(cmd ?? "", args, cwd, command);
+    return reply(JSON.stringify(r), r);
+  });
 }

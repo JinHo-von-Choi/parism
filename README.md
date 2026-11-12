@@ -13,62 +13,65 @@ AI 에이전트가 셸 명령을 안전하게 실행하고 결과를 JSON으로 
 ## 한눈에 보기
 
 ```json
-run({ "cmd": "ls", "args": ["-la", "src"] })
+run({ "command": "ls -la src | grep engine" })
 ```
 
 ```json
 {
   "ok": true,
+  "cmd": "ls",
+  "args": ["-la", "src"],
   "stdout": {
-    "raw": "drwxr-xr-x  2 user group 4096 Mar 06 09:23 src\n",
+    "raw": "",
     "parsed": {
       "entries": [
-        {
-          "type": "directory",
-          "name": "src",
-          "permissions": { "owner": "rwx", "group": "r-x", "other": "r-x" },
-          "size_bytes": 4096,
-          "owner": "user",
-          "group": "group",
-          "modified_at": "2026-03-06T09:23:00"
-        }
-      ]
+        { "permissions": "drwxrwxr-x", "links": 4, "owner": "user", "group": "user", "size_bytes": 4096,
+          "modified_at": "Nov 12 07:27", "name": "engine", "type": "directory", "target": null }
+      ],
+      "_summary": { "total": 15, "shown": 1 }
     }
-  }
+  },
+  "_compiled_pipeline": { "original": "ls -la src | grep engine", "mode": "rows", "stages": ["grep engine"] }
 }
 ```
 
-- `raw`에는 원본 출력이 항상 그대로 담깁니다.
-- `parsed`에는 파서가 읽어 낸 구조가 담깁니다. 파서가 없는 명령은 `null`입니다.
-- 43개 명령에 기본 파서가 있고, 직접 만든 파서를 추가할 수 있습니다.
+- 명령은 한 줄(`command`)로 줍니다. 셸을 띄우지 않고 렉서가 나누며, 파이프 뒤의 `grep`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`은 Parism 안에서 처리합니다.
+- `parsed`에는 파서가 읽어 낸 구조가 담깁니다. 61개 명령에 기본 파서가 있고, 직접 만든 파서를 추가할 수 있습니다.
+- 파싱에 성공하면 같은 내용을 두 번 싣지 않도록 `raw`를 비웁니다. 원문이 필요하면 `include_raw: true`를 줍니다.
+- 행이 많으면 앞의 50행과 `result_id`를 돌려주고, 나머지는 `query_result`로 다시 실행하지 않고 읽습니다.
 
 셸 출력은 사람이 읽도록 만들어져 있습니다. 에이전트가 이를 직접 해석하면 파일명의 공백, OS별 열 순서(`ps`), 환경마다 다른 헤더(`df`)에서 자주 틀립니다. Parism은 OS를 감지해 맞는 파서를 고르고, 해석이 끝난 결과를 돌려줍니다.
+
+같은 디렉터리(파일 202개)의 `ls -la`를 gpt-tokenizer로 센 값입니다.
+
+| 경로 | 토큰 | 원문 대비 |
+|-|-|-|
+| 원문 텍스트 | 5,448 | — |
+| Parism 2.3.0 기본 호출 | 11,217 | +106% |
+| Parism 3.0.0 기본 호출 | 2,061 | −62% |
 
 ---
 
 ## 동작 구조
 
 ```
-  Agent (MCP client)                 Node.js code
-         │  stdio                          │  createEngine()
-         ▼                                 ▼
-  ┌──────────────────────────────────────────────────┐
-  │                     Parism                       │
-  │                                                  │
-  │  1. Guard      allowlist · paths · injection     │──▶ blocked: ok=false, failure.kind="guard"
-  │       │                                          │
-  │  2. Executor   spawn (no shell), timeout, limit  │──▶ exec error: failure.kind="exec"
-  │       │                                          │
-  │  3. Redactor   mask secrets in output            │
-  │       │                                          │
-  │  4. Parser     OS-aware, 43 built-in + custom    │──▶ no parser: parsed=null, raw kept
-  │       │                                          │
-  │  5. Shaper     filter · budget · evidence        │
-  │       │                                          │
-  │       ├──▶ Result store (opt-in, in memory)      │
-  └───────┼──────────────────────────────────────────┘
+  Agent (MCP client)      Agent CLI hook          Node.js code
+         │  stdio              │  parism exec          │  createEngine() / sh
+         ▼                     ▼                       ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │                          Parism                          │
+  │                                                          │
+  │  0. Lexer      one command line → argv, pipe stages      │──▶ shell syntax: failure.kind="config"
+  │  1. Guard      allowlist · policy · paths                │──▶ blocked: failure.kind="guard"
+  │  2. Executor   spawn (no shell), timeout, limit          │──▶ exec error: failure.kind="exec"
+  │  3. Parser     OS-aware, 61 built-in + custom            │──▶ no parser: parsed=null, raw kept
+  │  4. Redactor   secrets in raw, parsed and kept results   │
+  │  5. Shaper     pipe stages · filter · preview · budget   │
+  │       ├──▶ Result store (in memory, query_result)        │
+  │       └──▶ Receipts (disk, hash chain + HMAC)            │
+  └──────────────────────────────────────────────────────────┘
           ▼
-   { ok, stdout: { raw, parsed }, failure?, review?, budget? }
+   { ok, stdout: { raw, parsed }, result_id?, failure?, review?, _delta? }
 ```
 
 명령은 셸을 거치지 않고 실행 파일을 직접 띄웁니다. 차단, 실행 실패, 파싱 실패는 예외를 던지지 않고 같은 형태의 응답으로 돌아옵니다. 에이전트는 `failure.kind` 하나로 분기하면 됩니다.
@@ -118,59 +121,79 @@ node dist/index.js
 | Codex CLI | [codex.md](docs/mcp-clients/codex.md) |
 | GitHub Copilot CLI | [copilot-cli.md](docs/mcp-clients/copilot-cli.md) |
 
+MCP 도구를 고르게 하는 대신 에이전트의 Bash 호출을 그대로 Parism으로 돌리려면 [훅](#훅으로-연결하기)을 설치합니다.
+
+```bash
+npx @nerdvana/parism hook install          # Claude Code, 이 저장소의 .claude/settings.json
+```
+
+에이전트가 Parism 도구를 적은 호출과 토큰으로 쓰게 하려면 에이전트 스킬(`skills/parism/SKILL.md`)을 설치합니다. 스킬은 명령 한 줄과 파이프, 서버 쪽 행 고르기·정렬·세기, `query_result`로 다시 읽기, 시험 실패의 변경 줄 귀속, 태스크·서비스, 거절됐을 때 고칠 방법을 담고 있습니다. Claude Code는 도구를 처음 부르기 전에 이 스킬을 읽습니다.
+
+```bash
+npx @nerdvana/parism skill install                 # 이 저장소의 .claude/skills/parism
+npx @nerdvana/parism skill install --scope user    # 모든 프로젝트: ~/.claude/skills/parism
+```
+
+Claude Code haiku에 같은 질문(`.js` 파일 수와 가장 큰 5개)을 시켰을 때, 스킬을 읽은 세션은 Parism 호출 2번으로 답했고 스킬이 없는 세션은 3~9번 걸렸습니다.
+
 ### 3. 에이전트의 첫 호출 순서
 
 ```
-describe()                    허용 명령, 파서, 가드 제한 확인
+run({command: "git status"})              실행하고 구조화된 결과 받기
    │
-dry_run(cmd, args)            가드 통과 여부만 확인 (실행 안 함)
-   │
-run(cmd, args)                실행하고 구조화된 결과 받기
-   │
-   ├─ 출력이 크면  ──▶ run_paged(page=N)  또는  run(budget) + fetch_result
-   └─ 근거가 필요하면 ──▶ run(retain, evidence) + explain_result
+   ├─ 행이 많으면       ──▶ query_result({result_id, where, select, limit})
+   ├─ 값의 출처가 궁금하면 ──▶ query_result({result_id, pointer})
+   ├─ 오래 걸리면       ──▶ run({command, mode: "task"}) → run({task_id, wait_ms})
+   └─ 거절되면          ──▶ failure.suggestion 또는 describe({cmd}) 확인
 ```
 
 ---
 
 ## 도구
 
-연결하면 9개 도구가 노출됩니다.
+기본(core 표면)으로 3개 도구가 노출됩니다. 도구 스키마는 2.3.0의 9개 도구보다 67% 적은 토큰을 씁니다(3,568 → 1,188, gpt-tokenizer).
 
 | 도구 | 명령 실행 | 용도 |
 |---|---|---|
-| `run` | O | 기본 실행. 필터, 예산, 근거 옵션 포함 |
-| `run_paged` | O | 큰 출력을 줄 단위 페이지로 읽기 |
-| `describe` | X | 환경, 허용 명령, 파서 정보 확인 |
-| `dry_run` | X | 가드 통과 여부 미리 확인 |
-| `explain_result` | X | 보관한 결과의 값이 원문 어디에서 왔는지 조회 |
-| `fetch_result` | X | 예산 때문에 잘린 결과의 다음 페이지 읽기 |
-| `compare_results` | X | 보관한 두 결과의 차이 비교 |
-| `query_result` | X | 보관한 결과에 다른 조건을 다시 걸기 |
-| `task` | X | `run(mode: "task")`로 시작한 명령의 상태 조회와 취소 |
+| `run` | O | 명령 실행. 파이프 단계, 필터, 태스크·서비스 시작과 조회, 원문 페이지 |
+| `query_result` | X | 보관한 결과 재질의, 값의 출처(`pointer`), 다음 페이지(`cursor`), 두 결과 비교(`compare_with`) |
+| `describe` | X | 허용 명령, 파서, 가드, 부작용 등급 확인. `command`를 주면 실행 없이 가드 판정 |
 
-`explain_result`, `fetch_result`, `compare_results`, `query_result`는 보관된 결과만 읽고 명령을 다시 실행하지 않습니다. 보관본은 서버 프로세스 메모리에만 있으며 한도는 결과당 2MiB, 합계 32MiB, 최대 16개, 60초입니다. 개수와 시간은 `results` 설정으로 바꿀 수 있습니다. 모르는 id, 만료, 퇴출, 보관하지 않음은 각각 다른 사유로 거절됩니다.
+설정의 `mcp.surface`를 `"full"`로 두면 2.x의 9개 도구(`run`, `run_paged`, `describe`, `dry_run`, `explain_result`, `fetch_result`, `compare_results`, `query_result`, `task`)를 그대로 씁니다.
+
+도구마다 MCP `annotations`가 붙습니다. `query_result`와 `describe`는 `readOnlyHint: true`이고, `run`은 readonly 프로필에서 `readOnlyHint: true`, build·ci 프로필에서 `destructiveHint: true`입니다. 가드·설정·실행 실패는 `isError: true`로 돌아오고, 결과 JSON은 텍스트와 `structuredContent`에 함께 실립니다.
+
+보관 결과는 서버 프로세스 메모리에만 있으며 한도는 결과당 2MiB, 합계 32MiB, 최대 16개, 300초입니다. 개수와 시간은 `results` 설정으로 바꿀 수 있습니다. 모르는 id, 만료, 퇴출, 보관하지 않음은 각각 다른 사유로 거절됩니다.
 
 ### run
 
-| 파라미터 | 기본값 | 설명 |
-|---|---|---|
-| `cmd` | — | 명령 이름 |
-| `args` | `[]` | 인자 배열 |
-| `cwd` | 현재 디렉터리 | 작업 디렉터리 |
-| `format` | `"json"` | `"json"`, `"compact"`, `"json-no-raw"` |
-| `includeDiff` | `false` | 실행 전후 파일시스템 변화 포함 |
-| `select` `where` `sort_by` `limit` `array` | — | [필터와 투영](#필터와-투영) |
-| `budget` | — | [토큰 예산](#토큰-예산) |
-| `contract_version` | `"stable"` | `"next"`면 `review` 메타데이터 추가 |
-| `evidence` | `"none"` | `"rows"`, `"fields"`. 필드별 원문 위치 계산 |
-| `retain` | `false` | 결과를 메모리에 보관해 후속 도구에서 사용 |
-| `machine_format` | `false` | 시험 러너·컴파일러·린터에 기계용 출력 형식 인자를 덧붙여 실행. [시험·빌드·린트](#시험빌드린트) |
-| `mode` | `"wait"` | `"task"`면 명령을 시작하고 식별자를 바로 반환. [장기 실행 태스크](#장기-실행-태스크) |
+| 파라미터 | 설명 |
+|---|---|
+| `command` | 명령 한 줄. `cmd` + `args` 대신 쓴다 |
+| `cmd`, `args` | 실행 파일 이름과 인자 배열 |
+| `cwd` | 작업 디렉터리(기본: 서버의 현재 디렉터리) |
+| `select` `where` `sort_by` `limit` | [필터와 투영](#필터와-투영) |
+| `mode` | `"task"`: 시작하고 `task_id`를 바로 반환. `"service"`: 서버를 띄우고 준비되면 반환 |
+| `task_id`, `wait_ms`, `cancel` | 태스크·서비스 상태 읽기와 중지 |
+| `options` | 고급 옵션 객체. 아래 표 |
 
-`contract_version`, `evidence`, `retain`, `budget`을 지정하지 않으면 응답 형태는 이전 버전과 같습니다. `machine_format`과 `mode`는 `contract_version: "next"`에서만 동작하고, 이때 응답 JSON은 들여쓰기 없이 한 줄로 옵니다.
+`options`가 받는 키는 `describe()`의 `run_options`에도 있습니다.
 
-`format: "compact"`는 목록형 결과를 `schema`와 `rows`로 접어 토큰을 줄입니다.
+| 키 | 설명 |
+|---|---|
+| `format` | `"json"`(기본), `"compact"`(열 이름과 값 배열), `"json-no-raw"` |
+| `include_raw` | 파싱에 성공해도 `stdout.raw`를 싣는다 |
+| `includeDiff` | 실행 전후 파일시스템 변화 포함 |
+| `array`, `aggregate` | 대상 배열 고르기, [집계](#집계) |
+| `budget` | [토큰 예산](#토큰-예산) |
+| `contract_version` | `"next"`면 `review`, `_origin`, `receipt` 추가 |
+| `evidence`, `retain` | [근거 조회](#근거-조회) |
+| `machine_format` | 시험 러너·린터에 기계용 출력 형식 인자를 덧붙여 실행 |
+| `attribution` | `false`면 실패의 git 변경 귀속을 붙이지 않는다 |
+| `page`, `page_size` | 파싱하지 않고 원문을 줄 단위 페이지로 읽기 |
+| `ready_pattern`, `ready_port`, `lease_ms`, `persist` | [서비스](#서비스) |
+
+`format: "compact"`는 목록형 결과를 `schema`와 `rows`로 접어 토큰을 줄입니다. 행이 50개 이상이면 자동으로 이 형식이 됩니다.
 
 ```json
 {
@@ -179,37 +202,57 @@ run(cmd, args)                실행하고 구조화된 결과 받기
 }
 ```
 
-### run_paged
+### 명령 한 줄과 파이프
 
-`ps aux`, `find`, `grep -r`처럼 출력이 큰 명령에 씁니다. `stdout.parsed`는 항상 `null`이고 원문을 줄 단위로 나눠 줍니다.
+렉서는 작은따옴표, 큰따옴표, 백슬래시, 따옴표 밖의 `~`와 글로브(`*.ts`), 낱말 맨 앞의 `#` 주석, 맨 앞의 `cd <dir> &&`를 셸과 같이 처리합니다. `2>&1`과 `2>/dev/null`도 받습니다.
 
-| 파라미터 | 기본값 | 설명 |
-|---|---|---|
-| `page` | `0` | 0부터 시작하는 페이지 번호 |
-| `page_size` | `100` | 페이지당 줄 수. 상한은 `max_page_size`(기본 1000) |
+파이프 뒤 단계는 자식 프로세스로 띄우지 않습니다. 첫 명령의 파싱 결과에 행 배열이 있고 모든 단계를 행에 옮길 수 있으면 행에 적용하고(`mode: "rows"`), 아니면 표준 출력 줄에 적용합니다(`mode: "text"`). 글자 모드의 결과는 같은 입력을 셸 도구에 넣은 결과와 같습니다.
 
-응답의 `page_info`에는 `total_lines`, `has_next`, `cache`(`{ hit, age_ms }`)가 담깁니다. 같은 명령은 30초 동안 첫 실행 결과를 재사용합니다.
+| 단계 | 받는 옵션 |
+|-|-|
+| `grep` | `-i -v -E -F -G -w -x -c -m N -e PAT` |
+| `head`, `tail` | `-n N`, `-N`, `tail -n +N` |
+| `wc` | `-l -w -c -m` 가운데 하나, 또는 없음 |
+| `sort` | `-r -n -u -f -t C -k N[,M]`, 행 모드에서는 `-k 필드이름` |
+| `uniq`, `cut` | `uniq -c -d -u`, `cut -d C -f LIST`, `cut -c LIST` (글자 모드) |
+
+시험 러너와 린터 뒤의 `| tail -n 50`, `| head`는 적용하지 않습니다. 보고서를 이미 읽어 모든 실패를 싣기 때문입니다. 정규식은 Rust 엔진(역추적 없음)으로 찾습니다.
+
+명령 치환(`$(...)`, 백틱), 변수 확장(`$HOME`), 리다이렉션, 백그라운드(`&`), `;`, `&&`, `||`, 환경 변수 대입(`FOO=1 cmd`)은 실행하지 않고 `failure.reason: "unsupported_shell_operator"`와 대안(`failure.suggestion`)을 돌려줍니다.
+
+### 큰 결과 미리보기
+
+결과 행이 `output.auto_retain_rows`(기본 100)를 넘고 `limit`과 `budget`이 없으면 앞의 `output.preview_rows`(기본 50)행만 싣고 전체를 결과 보관함에 넣습니다.
+
+```json
+{
+  "stdout": { "raw": "", "parsed": { "entries": ["...50 rows..."], "_summary": { "total": 202, "shown": 50, "truncated": true } } },
+  "result_id": "r_mwcphg33_7x1nqydw",
+  "_hint": "Showing 50 of 202 rows. Call query_result with result_id \"r_mwcphg33_7x1nqydw\" and where/select/sort_by/limit/aggregate to read the rest without re-running."
+}
+```
+
+보관함에 들어가지 않을 만큼 크면 `result_id` 없이 범위를 좁혀 다시 실행하라는 `_hint`만 옵니다.
 
 ### describe
 
-인자 없이 부르면 `version`, `allowed_commands`, `available_parsers`, `guard_summary`, `telemetry_enabled`를 돌려줍니다.
+인자 없이 부르면 `version`, `allowed_commands`, `available_parsers`, `guard_summary`, `side_effects`, `run_options`, `next_contract`를 돌려줍니다. `side_effects`는 허용 명령마다 정책이 허용하는 범위의 최대 부작용 등급(`read_only`, `local_state`, `process_control`, `network`)입니다.
 
-`describe({ cmd: "git" })`처럼 명령을 지정하면 그 명령의 정보만 2KB 이내로 돌려줍니다.
+`describe({ cmd: "git" })`처럼 명령을 지정하면 그 명령의 정보만 2KB 이내로 돌려줍니다. 서브커맨드별 플래그가 많으면 `describe({ cmd: "git commit" })`처럼 서브커맨드를 붙여 그 부분만 받습니다.
 
 - `policy`: 가드가 허용하는 서브커맨드, 플래그, 위치 인자
 - `parser`: 파서가 읽는 형식과 결과 필드
+- `side_effect`: 부작용 등급
 - `alternatives`: 지원하지 않는 인자 대신 쓸 인자
 - `examples`: 현재 가드를 통과하는 인자 예시
 
-### dry_run
-
-`cmd`, `args`, `cwd`를 받아 실행 없이 가드 판정만 돌려줍니다.
+`describe({ command: "git push origin main" })`은 실행하지 않고 판정만 돌려줍니다.
 
 ```json
-{ "would_pass": false, "reason": "command_not_allowed", "message": "Command 'rm' is not in the allowed list" }
+{ "would_pass": false, "reason": "arg_not_allowed", "message": "Argument 'push' is not allowed for command 'git' (policy: default)", "resolved": { "cmd": "git", "args": ["push", "origin", "main"], "cwd": "/work" } }
 ```
 
-차단 사유는 `command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed` 중 하나입니다.
+차단 사유는 `command_not_allowed`, `path_not_allowed`, `injection_pattern`, `arg_not_allowed`, `unsupported_shell_operator`, `unsupported_pipe_stage` 가운데 하나입니다.
 
 ---
 
@@ -221,8 +264,11 @@ result.ok === false  ──▶ result.failure.kind 로 분기
                            ├─ "guard"   가드가 차단함. 실행되지 않음
                            ├─ "exec"    실행 실패. message에 stderr
                            ├─ "parse"   파서 없음 (reason: "parser_not_found")
-                           └─ "config"  필터 인자 오류 (unknown_field, type_mismatch)
+                           └─ "config"  셸 문법(unsupported_shell_operator), 파이프 단계,
+                                        필터 인자 오류(unknown_field, type_mismatch)
 ```
+
+`stdout.parsed`가 손실 없이 만들어지면 `stdout.raw`는 빈 문자열입니다. 파서가 없거나 파싱에 실패하면 `raw`에 원문이 옵니다.
 
 ```json
 {
@@ -237,7 +283,7 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 하위 호환을 위해 `guard_error` 필드도 함께 오지만, 분기는 `failure`로 합니다.
 
-파서가 실행됐지만 결과를 만들지 못하면 `stdout.parse_error`에 이유가 남고 `raw`는 그대로 옵니다.
+파서가 실행됐지만 결과를 만들지 못하면 `stdout.parse_error`에 이유가 남고 `raw`에 원문이 옵니다.
 
 | `parse_error.reason` | 의미 |
 |---|---|
@@ -320,8 +366,25 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 1. **명령 허용 목록**: `allowed_commands`에 없는 명령은 프로세스를 만들지 않고 거절합니다.
 2. **경로 제한**: `allowed_paths`를 설정하면 `cwd`와 경로로 보이는 인자(`/`가 들어 있거나 `.`, `~`로 시작하거나 실제로 존재하는 항목, 심볼릭 링크 포함)를 검사합니다. 비워 두면 경로 제한이 없습니다.
-3. **인젝션 패턴**: 인자 하나하나에 셸 메타문자가 있으면 거절합니다. 검색어와 출력 형식 값은 검사하지 않습니다: `grep`의 검색어(첫 위치 인자, `-e`), `find`의 `-regex`, `git`의 `--format`과 `--pretty`. 그래서 `grep -E "BEGIN|END"`가 통과합니다.
+3. **인젝션 패턴**: 인자 하나하나에 셸 메타문자가 있으면 거절합니다. 검색어와 출력 형식 값, 인터프리터의 인라인 코드는 검사하지 않습니다: `grep`의 검색어(첫 위치 인자, `-e`), `find`의 `-regex`, `git`의 `--format`과 `--pretty`, `python3 -c`·`node -e`·`ruby -e`·`perl -e`의 코드, `sqlite3`·`psql -c`·`mysql -e`의 SQL. 그래서 `grep -E "BEGIN|END"`와 `python3 -c "import sys; print(1)"`이 통과합니다. 인터프리터를 쓸 수 있는지는 1번 허용 목록과 4번 인자 제한이 정합니다.
 4. **명령별 인자 제한**: `node -e`, `node --eval`, `node --input-type`, `npx --yes`는 기본으로 막힙니다.
+
+명령 정책은 `guard.profile`에 따라 다릅니다.
+
+| 프로필 | git | 그 밖 |
+|-|-|-|
+| `readonly`(기본) | 조회 서브커맨드만(`status`, `log`, `diff`, `show`, `branch`, `tag`, `reflog`, `worktree list`, `fsck`, `ls-tree`, `cat-file`, `rev-list`, …) | 조회 명령 |
+| `build`, `ci` | 위에 더해 로컬 쓰기: `init`, `add`, `commit`, `checkout`, `switch`, `restore`, `stash`, `merge`, `rebase`, `reset`, `clean`, `rm`, `mv`, `cherry-pick`, `revert`, `apply`, `clone`, `fetch`, `pull`, `update-ref`, `symbolic-ref`, `config`(허용 키만) | `npm run`·`test`, `cargo build`·`test`, `npx`, 작업 공간 안의 실행 파일(`workspace_executables`) |
+
+- `git push`와 `git remote add`·`set-url`·`remove`는 `guard.allow_git_remote_write: true`일 때만 열립니다. 프로젝트 설정으로는 켤 수 없습니다.
+- `git -C <dir> ...`과 `git --git-dir=<dir> ...`은 그 디렉터리를 작업 디렉터리로 옮겨 실행합니다(`--git-dir`이 `.git`이면 그 상위 디렉터리). 옮긴 디렉터리도 `allowed_paths` 검사를 받습니다.
+- 외부 프로그램을 지정하는 옵션(`-c` 설정 덮어쓰기, `--upload-pack`, `--exec`, `clone -u`, `--template`)과 대화형 실행(`add -p`, `rebase -i`)은 어느 프로필에서도 막힙니다. `git config`는 `user.*`, `init.defaultBranch`, `safe.directory` 같은 허용 키만 바꿉니다.
+- 모든 git 실행에 `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `core.editor=true`를 붙입니다. 저장소의 훅이 실행되지 않고, 메시지 없는 `commit`은 편집기를 기다리지 않고 끝납니다.
+- 저장소를 바꾼 git 실행의 응답에는 `_delta`가 붙습니다. 확인용 `git status`를 다시 부를 필요가 없습니다.
+
+```json
+{ "_delta": { "branch": "main", "head": "4f1c2a9b0d3e", "staged_count": 0, "modified_count": 1, "untracked_count": 0 } }
+```
 
 가드는 프로세스 수준의 방어선이며 커널 샌드박스가 아닙니다. 신뢰할 수 없는 환경에서 쓸 때의 격리 방법은 [SECURITY.md](SECURITY.md)에 있습니다.
 
@@ -329,7 +392,7 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 
 ## 지원 명령
 
-60개 명령에 기본 파서가 있습니다. 명령별 결과 필드는 `describe({ cmd: "…" })`로 확인합니다.
+61개 명령에 기본 파서가 있습니다. 명령별 결과 필드는 `describe({ cmd: "…" })`로 확인합니다.
 
 | 분류 | 명령 | 기본 허용 |
 |---|---|---|
@@ -351,11 +414,13 @@ result.ok === false  ──▶ result.failure.kind 로 분기
 | Windows | `dir` `tasklist` `ipconfig` `systeminfo` | 직접 허용 필요 |
 
 - **직접 허용 필요**: `guard.allowed_commands`에 명령을 넣어야 합니다.
-- **build 프로필**: `guard.profile`을 `"build"`로 바꿔야 합니다. `cargo`와 `yarn`은 조회 명령이어도 저장소가 지정한 래퍼나 스크립트를 실행할 수 있어서 이 프로필에서만 열립니다.
+- **build 프로필**: `guard.profile`을 `"build"`(또는 같은 범위의 `"ci"`)로 바꿔야 합니다. `cargo`와 `yarn`은 조회 명령이어도 저장소가 지정한 래퍼나 스크립트를 실행할 수 있어서 이 프로필에서만 열립니다.
 
 ---
 
 ## 고급 기능
+
+이 절의 예시는 도구 이름으로 적었습니다. core 표면에서는 `explain_result(id, pointer)`가 `query_result({ result_id, pointer })`, `fetch_result(id, cursor)`가 `query_result({ result_id, cursor })`, `compare_results(base, current)`가 `query_result({ result_id: base, compare_with: current })`, `task(...)`가 `run({ task_id, ... })`입니다.
 
 ### 필터와 투영
 
@@ -519,8 +584,29 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 - 실패 항목은 `max_items`로 자르지 않습니다. 진단 목록은 `max_items`에서 자르지만 개수 필드는 전체 기준이고, 잘린 수는 `diagnostics_omitted`에 옵니다.
 - 파일 경로에서 작업 디렉터리 접두사는 뺍니다.
 - `npm test`, `npm run <스크립트>`는 어떤 러너가 어떤 형식으로 출력할지 정해져 있지 않아 파싱하지 않습니다. 러너를 직접 부르십시오.
+- `npx`로 부른 도구에는 `npx --no -- <도구> ...` 형태로 실행합니다. `--`가 없으면 npx가 `--noEmit` 같은 플래그를 npm 설정으로 읽어 도구에 넘기지 않습니다.
 - `pytest`는 표준 출력에 기계용 형식이 없어서 `machine_format: true`로 실행해야 결과가 나옵니다.
 - `evidence: "fields"`와 `retain: true`를 함께 주면 `tsc`, `mypy`, `cargo build`의 진단 필드와 `cargo test`, `go test`의 실패한 시험 이름이 원문 어느 구간에서 왔는지 `explain_result`로 조회할 수 있습니다. JSON 문서 하나를 내는 러너(`vitest`, `jest`, `eslint`, `ruff`)와 보고서 파일을 쓰는 `pytest`는 근거를 내지 않습니다.
+
+#### 실패 × 변경 귀속
+
+작업 공간이 git 저장소이면 실패와 진단마다 HEAD 이후 바뀐 줄과 대조한 결과를 붙입니다(`git diff --unified=0 HEAD`와 추적되지 않는 파일). 끄려면 `attribution: false`를 줍니다.
+
+| `attribution` | 뜻 |
+|-|-|
+| `modified_line` | 바뀐 헝크의 줄 범위 안에서 났다. `diff_hunk_preview`에 그 헝크의 바뀐 줄 앞부분(최대 3줄)이 온다 |
+| `modified_file` | 바뀐 파일의 다른 줄에서 났다 |
+| `unmodified` | 작업 트리에서 건드리지 않은 파일에서 났다 |
+
+실패 위치가 바뀌지 않은 파일이어도 메시지의 스택 프레임(`경로:줄`)이 바뀐 줄을 가리키면 `modified_line`이고 그 프레임을 `attribution_frame`에 적습니다. 실패한 파일이 상대 경로로 가져오는 파일 가운데 바뀐 것은 `imports_changed`에 적습니다. 시험 파일의 assert에서 났지만 원인이 시험이 부르는 코드에 있는 경우입니다.
+
+```json
+{
+  "failures": [{ "file": "tests/math.test.ts", "line": 5, "message": "AssertionError: expected -1 to be 5",
+                 "attribution": "unmodified", "imports_changed": ["src/math.ts"] }],
+  "attribution": { "modified_line": 0, "modified_file": 0, "unmodified": 1, "changed_files": 1 }
+}
+```
 
 실제 러너 출력 11개(`tests/parsers/devloop-fixtures`)로 잰 토큰 수입니다. 재현: `npm run build && node experiments/devloop-tokens.mjs`.
 
@@ -546,13 +632,15 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 `guard.timeout_ms`(기본 10초)보다 오래 걸리는 시험과 빌드는 태스크로 실행합니다.
 
 ```
- run(cmd, { contract_version: "next", mode: "task" }) ─▶ { task: { task_id, state: "running" } }
+ run({ command, mode: "task", options: { contract_version: "next" } }) ─▶ { task: { task_id, state: "running" } }
                                                               │
- task({ task_id, wait_ms: 30000 })    ─▶ state, elapsed_ms, stdout_bytes, progress
- task({ task_id, action: "cancel" })  ─▶ 그 태스크의 프로세스만 종료
+ run({ task_id, wait_ms: 30000 })   ─▶ state, elapsed_ms, stdout_bytes, progress
+ run({ task_id, cancel: true })     ─▶ 그 태스크의 프로세스만 종료
                                                               │
                               끝나면 task.result에 run과 같은 결과가 실립니다
 ```
+
+full 표면에서는 같은 일을 `task({ task_id, wait_ms })`, `task({ task_id, action: "cancel" })`로 합니다.
 
 - 태스크는 `tasks.timeout_ms`(기본 10분)까지 실행되고, 동시에 `tasks.max_concurrency`(기본 2)개까지 실행됩니다.
 - `wait_ms`를 주면 상태 조회가 바로 답하지 않고, 태스크가 끝나거나 새 실패가 나오거나 그 시간이 지날 때 답합니다. 최대 30초입니다. 짧은 간격으로 반복 조회하는 대신 이 값을 쓰십시오. 생략하면 바로 답합니다.
@@ -570,6 +658,22 @@ JSON은 같은 내용의 원문보다 큽니다. `ls -la` 200행 기준으로 �
 | 태스크, 시간 제한 10초 | 5/5 | 13.0초 | 5회 |
 
 재현과 한계: [experiments/README.md](experiments/README.md) 부록 S.
+
+### 서비스
+
+검증하려면 서버를 띄워 두고 요청을 보내야 하는 작업은 `mode: "service"`로 띄웁니다.
+
+```
+ run({ command: "python3 -m http.server 8000", mode: "service", options: { ready_port: 8000 } })
+   ─▶ { task: { task_id: "svc_…", state: "running", service: { ready: true, ready_reason: "port 8000 accepts connections", lease_until, output_tail } } }
+ run({ command: "curl -s http://127.0.0.1:8000/" })   ─▶ 띄운 서버에 요청
+ run({ task_id: "svc_…", cancel: true })                ─▶ 프로세스 그룹 종료
+```
+
+- 준비 판정은 `ready_pattern`(출력의 정규식) 또는 `ready_port`(127.0.0.1이나 ::1의 포트가 연결을 받음)입니다. 둘 다 없으면 1초 동안 끝나지 않은 것을 준비로 봅니다. 최대 30초 기다립니다.
+- `lease_ms`(기본·최대 5분)가 지나거나 서버가 끝나면 프로세스 그룹에 SIGTERM, 2초 뒤 SIGKILL을 보냅니다.
+- `persist: true`는 서버가 끝나도 `lease_ms`까지 남깁니다. 출력은 `~/.parism/services/`의 파일로 받고, 별도 감시 프로세스가 lease 끝에 그룹을 종료합니다. 호스트 설정의 `tasks.allow_persistent_services: true`가 있어야 받습니다.
+- 서비스 수는 `tasks.max_concurrency`를 따르고, 리댁션이 켜져 있으면 `output_tail`도 가립니다.
 
 #### MCP 태스크 요청으로 쓰기
 
@@ -703,20 +807,96 @@ parism receipts list
 | `unverifiable` | git 저장소가 아니어서 작업 공간 상태를 비교할 수 없습니다 |
 | `bad_signature` | 서명 키가 있는데 서명이 맞지 않습니다 |
 
-판정할 명령이 하나도 없으면 통과가 아니라 종료 코드 2입니다.
+판정할 명령이 하나도 없으면 통과가 아니라 종료 코드 2입니다. 영수증 파일의 체인 검사에 실패해도 통과하지 않습니다.
 
 작업 공간 상태(`state_digest`)는 작업 트리에 있는 파일의 경로와 내용으로 만듭니다. 추적되지 않는 파일도 들어갑니다. HEAD와 스테이징 여부는 들어가지 않으므로, 시험이 통과한 내용 그대로 스테이징하거나 커밋해도 `ok`입니다. `.gitignore`로 제외된 파일, 서브모듈 안의 변경, 실행 권한 비트, 저장소 밖의 변화는 들어가지 않습니다. 추적되지 않는 파일이 `untracked_max_files`(2,000개)나 `untracked_max_bytes`(64MiB)를 넘으면 내용 해시를 빼고 `covers`에서 `untracked_content`를 뺍니다. 이때는 추적되지 않는 파일을 이름으로만 비교하므로, 그 파일을 스테이징하면 내용이 같아도 `stale`이 됩니다.
+
+#### 해시 체인과 서명
+
+영수증마다 바로 앞 줄의 SHA-256을 `prev`에 싣습니다(파일의 첫 영수증은 `"genesis"`). 그리고 `prev`까지 포함해 HMAC-SHA256으로 서명(`sig`)합니다. 키는 `receipts.key_file`을 쓰고, 정하지 않으면 `~/.parism/receipts/receipts.key`를 처음 쓸 때 32바이트 난수로 만듭니다(권한 0600). 체인과 서명은 키가 없는 쪽이 줄을 고치거나 지우거나 끼워 넣은 것을 찾아냅니다. 반면 같은 사용자 계정으로 도는 프로세스는 자동 키를 읽을 수 있습니다. 에이전트가 직접 셸을 쓰는 환경에서 영수증을 근거로 삼으려면 `receipts.key_file`을 에이전트가 읽지 못하는 곳(CI 비밀값 등)에 둡니다.
+
+```bash
+parism receipts verify        # 줄 고침, 중간 줄 삭제·끼워 넣기, 서명 없거나 틀린 줄을 찾는다
+```
+
+| 바꾼 것 | 찾는 방법 |
+|-|-|
+| 줄 하나의 내용을 고침 | 그 줄의 서명이 틀리고 다음 줄의 `prev`가 맞지 않는다 |
+| 가운데 줄을 지움 | 다음 줄의 `prev`가 맞지 않는다 |
+| 키 없이 줄을 덧붙임 | 서명이 없거나 틀린다 |
+
+보관 한도로 앞 줄을 지운 뒤에도 남은 체인은 맞습니다. 첫 줄의 `prev`는 검사하지 않습니다. 키는 환경 변수로 받지 않고 자식 프로세스에 넘기지 않습니다. 키 파일이 `guard.allowed_paths` 안에 있으면 Parism 명령으로 읽을 수 있으므로 서명하지 않고 경고합니다. 서명은 Parism을 거치지 않고는 키 파일을 읽을 수 없는 환경(샌드박스, 별도 계정)에서만 위조를 막습니다.
+
+#### PR과 CI 보고
+
+```bash
+parism receipts export --format markdown          # PR 코멘트용 표
+parism receipts export --format github            # $GITHUB_STEP_SUMMARY에 쓰고 실패를 ::error 주석으로 낸다
+parism receipts export --format sarif > parism.sarif
+parism receipts export --format json --since 24h
+```
+
+명령별 실행 수와 마지막 결과, 시험·진단 합계, 마지막 실행이 실패한 명령(과 기간 안의 실패한 실행 수), 마지막 영수증이 지금 작업 공간과 같은지, 체인·서명 검사, 가드가 막은 횟수, 아낀 토큰을 냅니다. 마지막 실행이 실패한 명령이 있거나 체인 검사에 실패하면 종료 코드 1입니다.
 
 영수증이 말하지 않는 것은 다음과 같습니다.
 
 - 시험이 요구를 제대로 검사하는지는 말하지 않습니다.
-- 영수증 파일을 직접 고칠 수 있는 환경에서는 위조를 막지 못합니다. 기본 영수증은 실행 누락과 착오를 잡는 용도입니다.
-
-서명이 필요하면 `receipts.key_file`에 16바이트 이상의 키 파일 경로를 줍니다. 영수증에 HMAC-SHA256 서명(`sig`)이 붙고 `check`가 서명을 확인합니다. 키는 환경 변수로 받지 않고 자식 프로세스에 넘기지 않습니다. 키 파일이 `guard.allowed_paths` 안에 있으면 Parism 명령으로 읽을 수 있으므로 서명을 켜지 않고 경고합니다. 서명은 Parism을 거치지 않고는 키 파일을 읽을 수 없는 환경(샌드박스, 별도 계정)에서만 위조를 막습니다.
+- 에이전트가 키 파일을 읽을 수 있는 환경에서는 서명으로 위조를 막지 못합니다. 체인은 그래도 고친 흔적을 남깁니다.
 
 예제 프로젝트에서 세션 15개(시험 실행, 수정, 스테이징, 커밋의 조합)를 실제로 실행해 판정을 확인했습니다. 보고하면 안 되는 세션 8개는 모두 막았고, 보고해도 되는 세션 7개는 하나도 막지 않았습니다. 재현: `npm run build && node experiments/receipts-check.mjs`.
 
-Claude Code의 Stop 훅에 연결하는 방법은 [docs/mcp-clients/claude-code.md](docs/mcp-clients/claude-code.md)에 있습니다.
+---
+
+## 훅으로 연결하기
+
+에이전트가 MCP 도구를 고르기를 기다리지 않고, 에이전트 CLI의 셸 호출과 세션 종료를 Parism에 연결합니다.
+
+```bash
+npx @nerdvana/parism hook install                      # Claude Code, 이 저장소의 .claude/settings.json
+npx @nerdvana/parism hook install --scope user         # ~/.claude/settings.json
+npx @nerdvana/parism hook install --client gemini      # .gemini/settings.json
+```
+
+설치기는 설정 파일의 다른 키와 다른 훅을 그대로 두고 `PreToolUse`(Bash), `Stop`, `SessionStart` 훅을 더합니다. 다시 실행해도 중복되지 않습니다. 훅 전용 설정 `~/.parism/hook.config.json`이 없으면 build 프로필, 영수증 켜기, 리댁션 켜기, `allowed_paths`는 설치한 저장소, 허용 명령에 `npx`·`node`·`vitest`·`tsc`·`pytest`·`go`·`make` 등을 더한 설정으로 만듭니다.
+
+| 훅 | 하는 일 |
+|-|-|
+| `PreToolUse` | Bash 명령이 Parism 대상(파서가 있는 명령, 시험 러너·린터, 파이프 단계)이면 `parism exec`로 바꿔 실행하게 한다. 허용된 명령에 허용되지 않은 인자를 쓰면(`git push`, `curl -d`) 사유와 함께 막는다 |
+| `SessionStart` | 세션 시작 시점의 HEAD와 `state_digest`를 `~/.parism/sessions/`에 남긴다 |
+| `Stop` | 시작 이후 작업 공간이 바뀌었는데 지금 상태에서 통과한 시험·빌드 영수증이 없으면 종료를 막고, 무엇을 해야 하는지 알린다 |
+
+- 바뀐 명령은 셸에서 실행한 것처럼 보입니다. 종료 코드는 그대로이고, 파싱 결과 JSON과 원문 가운데 짧은 쪽을 내며, 시험 러너·린터는 파싱한 보고서를 냅니다.
+- `;`, `&&`, `||`로 이은 명령은 조각마다 판정합니다. 모든 조각을 렉서와 가드가 받으면 셸 규칙대로 차례로 실행하고, `$?`와 `${PIPESTATUS[N]}`는 앞 조각의 종료 코드로 바꿉니다. `cd <dir>` 조각은 다음 조각의 작업 디렉터리를 바꿉니다.
+- 렉서가 받지 않는 셸 문법(리다이렉션, `$VAR`, `$(...)`), 허용 목록 밖의 명령, 작업 공간 밖 경로를 쓰는 명령은 바꾸지 않고 원래 셸에 맡깁니다. 이렇게 실행한 명령은 영수증을 남기지 않습니다.
+- 바꾼 명령이 모두 읽기 전용(`git status`, `ls`, `ps` 등)이면 `permissionDecision: "allow"`를 줘서 묻지 않고 실행합니다. 파일·프로세스·네트워크를 건드리는 명령(`npm test`, `git add` 등)은 판정을 비워 두므로, 바뀐 명령에 Claude Code의 권한 규칙과 모드가 그대로 적용됩니다. 훅 설정의 `"hook": { "permission": "allow" }`는 모든 바뀐 명령을 묻지 않고 실행하고, `"ask"`는 모두 묻습니다.
+- `verify.commands`가 있으면 Stop 판정은 그 명령들의 영수증으로 합니다. 없으면 지금 작업 공간 상태에서 끝난 시험·빌드 실행(시험 러너·린터, `npm test`, `npm run test|build|lint|check…`, `make`, `cargo test|build|check`, `go test|build|vet`) 가운데 가장 최근 것으로 합니다.
+
+Claude Code(`haiku`)의 실제 세션 7개로 확인한 결과입니다.
+
+| 세션 | Stop 판정 |
+|-|-|
+| 질문에만 답하고 파일을 바꾸지 않음 | 통과 |
+| 고치고 시험을 돌려 통과(`npm test 2>&1 \| tail -n 30`) | 통과 |
+| 함수와 시험을 더하고 `npm test`로 확인 | 통과 |
+| 고친 뒤 "시험을 돌리지 말라"는 지시대로 끝내려 함 | 9번 모두 막음 |
+| 시험을 돌린 뒤 다시 고치고 끝내려 함 | 9번 모두 막음 |
+| 시험이 실패한 채 끝내려 함 | 막음. 에이전트가 실패를 고치고 다시 돌린 뒤 통과 |
+| 고친 뒤 시험을 `;`로 이은 셸 명령으로 돌림 | 통과 |
+
+Claude Code는 같은 Stop 훅이 9번 연속 막으면 종료를 진행합니다.
+
+### parism stats
+
+```bash
+parism stats --since 7d
+parism stats --json --price 3
+```
+
+run마다 `~/.parism/stats/events.jsonl`에 명령 이름, 결과 분류, 원문·응답 바이트와 토큰 추정치, 가린 구간 수를 남기고, 이 명령이 모아 보여 줍니다. 인자와 출력 본문은 남기지 않습니다. 원문을 그대로 냈을 때보다 줄어든 토큰과 그 추정 비용, 자동 보관한 결과 수, 재실행 없이 보관 결과를 다시 읽은 횟수, 리댁션 횟수, 가드가 막은 명령, 거절한 셸 문법, 훅이 바꾸거나 막은 명령, Stop 게이트 판정을 냅니다. 끄려면 호스트 설정에 `"stats": { "enabled": false }`를 둡니다.
+
+### parism doctor
+
+설정과 설치 상태를 점검하고 고칠 점을 알립니다. 리댁션이 꺼져 있는지, `output_patterns: []`처럼 리댁션을 무력화하는 설정이 있는지, 경로 제한이 없는지, 영수증 서명 키를 쓸 수 있는지, 네이티브 정규식 엔진이 있는지, 허용 명령 가운데 설치되지 않은 것, 훅 설치 상태, 최근 30일 동안 자주 막힌 명령과 셸 문법을 봅니다. `FAIL` 항목이 있으면 종료 코드 1입니다.
 
 ---
 
@@ -766,32 +946,42 @@ Claude Code의 Stop 훅에 연결하는 방법은 [docs/mcp-clients/claude-code.
     "enabled": false
   },
   "tasks":    { "max_concurrency": 2, "timeout_ms": 600000 },
-  "results":  { "max_entries": 16, "ttl_ms": 60000 },
+  "results":  { "max_entries": 16, "ttl_ms": 300000 },
   "receipts": { "enabled": false, "max_entries": 500, "max_age_days": 30 },
-  "verify":   { "commands": [] }
+  "verify":   { "commands": [] },
+  "output":   { "include_raw": false, "auto_retain_rows": 100, "preview_rows": 50 },
+  "mcp":      { "surface": "core" },
+  "stats":    { "enabled": true, "max_entries": 20000 }
 }
 ```
 
 | 키 | 설명 |
 |---|---|
 | `guard.allowed_paths` | 비어 있으면 경로 제한이 없습니다 |
-| `guard.profile` | `"readonly"`(기본)는 조회 서브커맨드만 허용합니다. `"build"`는 `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 같은 빌드·시험 명령을 추가합니다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 켜십시오 |
+| `guard.profile` | `"readonly"`(기본)는 조회 서브커맨드만 허용합니다. `"build"`와 `"ci"`는 `npm run`, `npm test`, `cargo build`, `terraform plan`, `docker compose ps` 같은 빌드·시험 명령과 로컬 git 쓰기를 추가합니다. 프로젝트 코드를 실행하므로 신뢰하는 저장소에서만 켜십시오 |
+| `guard.allow_git_remote_write` | `true`면 build·ci 프로필에서 `git push`와 `git remote add`·`set-url`·`remove`를 허용합니다. 신뢰하지 않는 프로젝트 설정으로는 켤 수 없습니다 |
 | `guard.workspace_executables` | `true`이면 경로로 지정한 실행 파일(`./configure`, `/work/build/app`)을 `allowed_commands`에 없어도 실행합니다. build 프로필에서만 동작하고, 심볼릭 링크를 따라간 실제 파일이 `allowed_paths` 안에 있어야 합니다. 기본값은 `false`이고, 신뢰하지 않는 프로젝트 설정으로는 켤 수 없습니다 |
 | `guard.command_arg_restrictions` | 기본값과 병합됩니다. 일부 명령만 바꿔도 나머지 기본 제한은 남습니다 |
 | `guard.command_policies` | 명령별 서브커맨드·플래그 규칙을 덮어씁니다 |
 | `guard.secrets.env_patterns` | 이름이 일치하는 환경 변수를 자식 프로세스에서 제거합니다 |
-| `guard.secrets.output_redaction_enabled` | `true`면 출력에서 `output_patterns`에 걸리는 값을 `[REDACTED]`로 바꿉니다 |
-| `guard.secrets.output_patterns` | 생략하면 기본 패턴(GitHub, GitLab, AWS, Slack 토큰 등)을 씁니다. 끄려면 `[]` |
+| `guard.secrets.output_redaction_enabled` | `true`면 `stdout.raw`, `stderr.raw`, `stdout.parsed`, 실패 메시지, 보관 결과(`query_result`, `explain_result`, 이어 읽기), 서비스 출력에서 `output_patterns`에 걸리는 값을 `[REDACTED]`로 바꿉니다. 파싱 결과에서는 이름에 `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY` 등이 든 필드의 값도 가립니다 |
+| `guard.secrets.output_patterns` | 생략하면 기본 패턴을 씁니다: OpenAI·Anthropic·GitHub·GitLab·AWS·Slack 토큰, `Bearer` 헤더, URL의 `user:password@`, 이름이 비밀을 뜻하는 대입(`DB_PASSWORD=…`, `"api_key": "…"`)의 값, JWT, PEM 개인 키 머리글. 끄려면 `[]` |
 | `parsers.strict_schemas` | `true`면 파싱 결과를 Zod 스키마로 검증합니다 |
 | `telemetry.enabled` | `true`면 응답에 단계별 소요 시간을 붙이고 `describe`에 명령별 통계를 보여 줍니다. 외부로 전송하지 않습니다 |
 | `tasks` | 태스크의 동시 실행 수(`max_concurrency`)와 최대 실행 시간(`timeout_ms`). 프로젝트 설정은 줄일 수만 있습니다. `mcp_extension`은 [MCP 태스크 요청](#mcp-태스크-요청으로-쓰기)을 켭니다 |
 | `results` | 결과 보관함의 최대 개수와 보관 시간. 호스트 설정에서만 읽습니다 |
+| `output.include_raw` | `true`면 파싱에 성공해도 `stdout.raw`를 싣습니다 |
+| `output.auto_retain_rows`, `output.preview_rows` | 행이 `auto_retain_rows`를 넘으면 앞의 `preview_rows`행과 `result_id`를 돌려줍니다. `0`이면 끕니다 |
+| `mcp.surface` | `"core"`(기본)는 `run`, `query_result`, `describe` 세 도구, `"full"`은 2.x의 9개 도구입니다 |
+| `mcp.max_response_bytes` | `run` 응답 JSON 한 건의 상한입니다(기본 40000). 넘으면 `stdout.raw`를 줄 경계에서 잘라 맞추고 `_hint`로 `options.page` 읽기를 안내합니다. MCP 클라이언트는 이보다 큰 도구 결과를 받지 못합니다(Claude Code 기본 25,000토큰) |
+| `stats` | 사용 통계 기록(`parism stats`). 호스트 설정에서만 읽습니다 |
+| `tasks.allow_persistent_services` | `true`면 `mode: "service"`의 `persist`를 받습니다. 호스트 설정에서만 켤 수 있습니다 |
 | `receipts` | 실행 영수증. `enabled`, `max_entries`, `max_age_days`, `untracked_max_files`, `untracked_max_bytes`, `key_file`. 호스트 설정에서만 읽습니다 |
 | `verify.commands` | `parism receipts check`가 기준으로 삼는 명령 목록. 각 항목은 `[명령, 인자...]`입니다. 호스트 설정에서만 읽습니다 |
 
-호스트 설정은 전역 설정 파일과 환경 변수입니다. 프로젝트 설정(`<cwd>/prism.config.json`)의 `results`, `receipts`, `verify`는 `trust_project_config`와 관계없이 버리고 경고합니다. 저장소가 자기 완료 조건을 정하지 못하게 하기 위해서입니다.
+호스트 설정은 전역 설정 파일과 환경 변수입니다. 프로젝트 설정(`<cwd>/prism.config.json`)의 `results`, `receipts`, `verify`, `stats`, `hook`은 `trust_project_config`와 관계없이 버리고 경고합니다. 저장소가 자기 완료 조건을 정하지 못하게 하기 위해서입니다.
 
-`node`, `npx`, `yarn`은 `allowed_commands`에 직접 넣어야 하고 build 프로필에서만 동작합니다. `npx`에는 `--no`가 자동으로 붙습니다.
+`node`, `npx`, `yarn`은 `allowed_commands`에 직접 넣어야 하고 build 프로필에서만 동작합니다. `npx`에는 `--no --`가 자동으로 붙어, 설치되지 않은 패키지를 내려받지 않고 뒤의 플래그를 모두 대상 도구에 넘깁니다.
 
 ### 환경 변수
 
@@ -864,8 +1054,36 @@ console.log(result.stdout.parsed);
 ```
 
 - `createEngine()`은 MCP 서버와 같은 설정 레이어를 읽고, 등록된 외부 파서를 붙입니다. 특정 파일만 쓰려면 `createEngine({ configPath: "…" })`.
-- `run` 옵션: `args`, `cwd`, `format`, `includeDiff`, `select`, `where`, `sort_by`, `limit`, `array`, `page`, `page_size`.
+- `run` 옵션은 MCP `run`과 같습니다(`command`, `args`, `cwd`, `select`, `where`, `include_raw`, `contract_version`, …).
 - `engine.describe("git")`로 명령 하나의 정보를 볼 수 있습니다.
+
+### 코드로 명령을 조합하는 에이전트: `@nerdvana/parism/sdk`
+
+도구 호출을 여러 번 주고받는 대신 짧은 스크립트 안에서 명령을 실행하고 타입이 붙은 값을 바로 씁니다.
+
+```typescript
+import { sh } from "@nerdvana/parism/sdk";
+
+const status = await sh.git.status();                       // ShResult<GitStatus>
+console.log(status.data?.modified);
+
+const busy = await sh.ps({ where: [{ field: "cpu", op: "gt", value: 5 }], select: ["pid", "command"] });
+const tests = await sh.vitest.run();                        // 실패마다 attribution이 붙은 보고서
+for (const f of tests.data?.failures ?? []) console.log(f.file, f.line, f.attribution);
+
+const count = await sh.exec<{ count: number }>("git log --oneline | wc -l");
+```
+
+| 함수 | 결과 타입 |
+|-|-|
+| `sh.exec(command)`, `sh.run(cmd, args)` | 지정한 타입(기본 `unknown`) |
+| `sh.git.status()`, `log({ n })`, `diff({ staged })`, `branch()` | `GitStatus`, `{ commits: GitCommit[] }`, `GitDiffResult`, `{ branches }` |
+| `sh.ps(query)`, `sh.ls(dir, query)`, `sh.df(query)`, `sh.docker.ps(query)` | 행 배열 결과 |
+| `sh.vitest.run()`, `sh.jest.run()`, `sh.cargo.test()` | `AttributedTestReport` |
+| `sh.tsc.check()`, `sh.eslint.lint(paths)`, `sh.cargo.build()` | `AttributedDiagnosticReport` |
+| `sh.query(result_id, query)` | 보관 결과 재질의 |
+
+`ShResult`는 `{ ok, exitCode, data, stdout, stderr, failure?, result_id?, envelope }`입니다. 가드 거절과 실행 실패는 예외가 아니라 `ok: false` 결과입니다. 설정 파일과 기본 작업 디렉터리는 `createShell({ configPath, cwd })`로 정합니다.
 
 ---
 
@@ -1040,10 +1258,35 @@ node scripts/build-sandbox-guest.mjs   # 시험용 게스트 컴포넌트
 | `parism eval [scenario]` | 호스트 동작을 세 층으로 판정 |
 | `parism receipts check` | 필요한 명령마다 통과한 최신 영수증이 있는지 판정. 없으면 종료 코드 1 |
 | `parism receipts list` | 최근 영수증 목록 |
+| `parism receipts verify` | 영수증 파일의 해시 체인과 서명 검사 |
+| `parism receipts export` | PR·CI용 요약(`--format markdown\|github\|sarif\|json`) |
+| `parism exec -- "<command>"` | 명령 한 줄을 Parism 엔진으로 실행하고 셸처럼 출력 |
+| `parism hook install\|pre-tool-use\|session-start\|stop` | [훅으로 연결하기](#훅으로-연결하기) |
+| `parism skill install [--scope project\|user]` | 에이전트 스킬을 `.claude/skills/parism`에 복사합니다 |
+| `parism stats` | 아낀 토큰, 재질의, 리댁션, 가드 차단, Stop 게이트 집계 |
+| `parism doctor` | 설정과 설치 상태 점검 |
 
-`parism inspect ls -l /path`처럼 인자를 나눠 주면 그대로 전달됩니다. `parism inspect "ls -l /path"`처럼 문자열 하나로 주면 공백으로 나누므로 따옴표와 연속 공백이 보존되지 않습니다.
+`parism inspect ls -l /path`처럼 인자를 나눠 주면 그대로 전달됩니다. `parism inspect "ls -l /path"`처럼 문자열 하나로 주면 렉서로 나누므로 따옴표와 백슬래시가 셸과 같이 처리됩니다.
 
 ---
+
+## 2.x에서 3.0.0으로 올릴 때
+
+| 대상 | 2.x | 3.0.0 |
+|---|---|---|
+| MCP 도구 목록 | 9개 | `run`, `query_result`, `describe` 3개. 이전 도구가 필요하면 `"mcp": { "surface": "full" }` |
+| `stdout.raw` | 항상 있음 | 파싱에 성공하면 빈 문자열. 필요하면 `include_raw: true` 또는 `"output": { "include_raw": true }` |
+| 큰 결과 | `max_items`(500)까지 전부 | 100행을 넘으면 앞 50행과 `result_id`, `_hint`. `limit`을 주거나 `"output": { "auto_retain_rows": 0 }`이면 이전처럼 |
+| MCP 응답 JSON | 기본 계약은 들여쓰기 2칸 | 한 줄 |
+| `run`의 고급 옵션(core 표면) | 최상위 인자 | `options` 객체 안(`format`, `include_raw`, `contract_version`, `retain`, `evidence`, `budget`, …) |
+| 태스크 조회(core 표면) | `task({ task_id })` | `run({ task_id, wait_ms })`, 취소는 `run({ task_id, cancel: true })` |
+| `output_redaction_enabled` | `raw`, `stderr`, 실패 메시지만 | 파싱 결과와 보관 결과까지. 기본 패턴 11개 |
+| 결과 보관 시간 | 60초 | 300초 |
+| 영수증 | 서명은 `key_file`이 있을 때만 | 해시 체인(`prev`)과 자동 키 서명. 서명 없는 이전 영수증은 `bad_signature`로 판정 |
+| 사용 통계 | 없음 | `~/.parism/stats/events.jsonl`에 기록. 끄려면 `"stats": { "enabled": false }` |
+| git 실행 인자 | | `-c core.editor=true -c sequence.editor=true`가 붙음 |
+| `npx` 실행 인자 | `npx --no <도구> ...` | `npx --no -- <도구> ...` |
+| `systeminfo` 파서 | `BIOS Version`이 `os_version`을 덮어씀, `OS Build Type`이 `os_build`에 들어감 | 정확한 키로 읽고 `os_build`는 `OS Version`의 빌드 번호 |
 
 ## 2.0.x에서 2.1.0으로 올릴 때
 

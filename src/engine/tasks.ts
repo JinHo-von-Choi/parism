@@ -45,6 +45,19 @@ export interface TaskSnapshot {
   stderr_bytes: number;
   /** 실행 중 출력으로 센 진행 상태. 진행 중 파싱을 지원하는 러너의 태스크가 실행 중일 때만 있다. */
   progress?:    unknown;
+  /** run(mode: "service")로 띄운 서비스일 때만 있다 */
+  service?: {
+    /** 준비 조건을 만족했는지 */
+    ready:         boolean;
+    ready_reason?: string;
+    /** 이 시각이 지나면 프로세스 그룹을 종료한다 */
+    lease_until:   string;
+    /** 서버가 끝나도 lease까지 남는지 */
+    persist:       boolean;
+    pid?:          number;
+    /** 최근 출력(표준 출력과 표준 오류를 섞은 끝부분) */
+    output_tail:   string;
+  };
   result?:      ResponseEnvelope;
 }
 

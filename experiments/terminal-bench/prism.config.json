@@ -113,12 +113,21 @@
    "java",
    "javac",
    "perl",
-   "ruby"
+   "ruby",
+   "od",
+   "whoami",
+   "usermod",
+   "apt-cache",
+   "ldd"
   ],
   "allowed_paths": [
    "/"
   ],
   "timeout_ms": 60000,
-  "workspace_executables": true
+  "workspace_executables": true,
+  "allow_git_remote_write": true
+ },
+ "tasks": {
+  "allow_persistent_services": true
  }
 }

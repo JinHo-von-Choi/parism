@@ -184,6 +184,15 @@ export class ResultStore {
     this.misses.set(resultId, { reason: "not_retained", at: Date.now() });
   }
 
+  /**
+   * 크기를 다 재기 전에 결과 하나의 상한을 넘는다고 판정한 결과를 표시한다.
+   * put이 상한 초과로 거절한 결과와 같은 사유(evicted)로 조회된다.
+   */
+  markOversized(resultId: string): void {
+    this.drop(resultId);
+    this.misses.set(resultId, { reason: "evicted", at: Date.now() });
+  }
+
   private dropOldest(): void {
     const oldest = this.entries.keys().next();
     if (oldest.done) return;

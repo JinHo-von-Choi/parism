@@ -35,6 +35,10 @@ export interface FailureInfo {
    * 않고 구조적으로 읽게 한다. reason=spawn_failed 일 때만 존재한다.
    */
   errorCode?:   string;
+  /** 명령 문자열을 거절했을 때 같은 일을 하는 다른 방법 */
+  suggestion?:  string;
+  /** 명령 문자열에서 거절한 셸 연산자 */
+  operator?:    string;
 }
 
 /**
@@ -162,6 +166,25 @@ export interface ResponseEnvelope {
   _origin?:    { external: string[]; fixed: string[]; basis: "table" | "value_types" };
   /** 실행 영수증. contract_version='next' 이고 receipts.enabled 일 때만 채워진다. 같은 내용이 디스크에도 남는다. */
   receipt?:    import("../engine/receipts.js").Receipt;
+  /**
+   * 결과 보관함의 식별자. 행이 많아 앞부분만 실었을 때(자동 보관)와 retain을 요청했을 때 있다.
+   * query_result에 주면 재실행 없이 나머지를 읽는다.
+   */
+  result_id?:  string;
+  /** 응답을 줄였을 때 나머지를 읽는 방법 */
+  _hint?:      string;
+  /** 로컬 저장소를 바꾼 git 실행 뒤의 상태 요약 */
+  _delta?:     import("../engine/git-delta.js").GitDelta;
+  /** 명령 문자열의 파이프 뒤 단계를 어떻게 처리했는지 */
+  _compiled_pipeline?: {
+    original:         string;
+    mode:             "rows" | "text";
+    stages:           string[];
+    promoted_stages?: import("../engine/pipe-compiler.js").ProjectionStage[];
+    notes?:           string[];
+  };
+  /** 명령 문자열을 해석하며 바꾼 것(cd 접두, 글로브 펼침) */
+  _command_notes?: string[];
   /**
    * @deprecated v0.6 부터는 `failure` 필드를 사용한다. 하위 호환을 위해 유지된다. v2.0.0 제거 예정.
    * Guard 차단 시에만 존재한다.

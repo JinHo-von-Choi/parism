@@ -136,6 +136,17 @@ describe("parseDu() 변형", () => {
     expect((parseDu("du", ["--max-depth", "0", "x"], "8\tx\n") as Rows).entries).toEqual([{ size: "8", path: "x" }]);
   });
 
+  it("단위가 바이트인 실행만 size_bytes를 수로 낸다", () => {
+    const sizes = (args: string[]) => (parseDu("du", args, "9963\ta.js\n98\tb.js\n") as Rows).entries.map(e => e.size_bytes);
+    expect(sizes(["-ab", "d"])).toEqual([9963, 98]);
+    expect(sizes(["--bytes"])).toEqual([9963, 98]);
+    expect(sizes(["-B1"])).toEqual([9963, 98]);
+    expect(sizes(["--block-size=1"])).toEqual([9963, 98]);
+    expect(sizes(["-a"])).toEqual([undefined, undefined]);
+    expect(sizes(["-b", "-h"])).toEqual([undefined, undefined]);
+    expect(sizes(["-B", "1K"])).toEqual([undefined, undefined]);
+  });
+
   it("--time이 없으면 두 번째 탭 뒤도 경로다", () => {
     expect((parseDu("du", [], "4\ta\tb\n") as Rows).entries[0]).toEqual({ size: "4", path: "a\tb" });
   });

@@ -44,6 +44,20 @@ export type FieldOrigin = "external" | "number" | "boolean" | readonly string[];
  */
 export type OriginTable = Readonly<Record<string, FieldOrigin>>;
 
+/** 실패 × 변경 교차 귀속(engine/attribution.ts)이 붙이는 필드 */
+function ATTRIBUTION(key: "failures" | "diagnostics"): OriginTable {
+  return {
+    [`${key}[].attribution`]:       ["modified_line", "modified_file", "unmodified"],
+    [`${key}[].diff_hunk_preview`]: "external",
+    [`${key}[].attribution_frame`]: "external",
+    [`${key}[].imports_changed[]`]: "external",
+    "attribution.modified_line":    "number",
+    "attribution.modified_file":    "number",
+    "attribution.unmodified":       "number",
+    "attribution.changed_files":    "number",
+  };
+}
+
 const TEST_REPORT: OriginTable = {
   "kind":                     ["test"],
   "tool":                     ["vitest", "jest", "cargo", "pytest", "go"],
@@ -61,6 +75,7 @@ const TEST_REPORT: OriginTable = {
   "failures[].column":        "number",
   "failures[].message":       "external",
   "failures[].message_chars": "number",
+  ...ATTRIBUTION("failures"),
 };
 
 const DIAGNOSTIC_REPORT: OriginTable = {
@@ -79,6 +94,7 @@ const DIAGNOSTIC_REPORT: OriginTable = {
   "diagnostics[].severity": ["error", "warning", "info"],
   "diagnostics[].code":     "external",
   "diagnostics[].message":  "external",
+  ...ATTRIBUTION("diagnostics"),
 };
 
 /**
@@ -197,7 +213,7 @@ const DF: OriginTable = Object.fromEntries([
     .map(f => [`filesystems[].${f}`, "external"]),
 ]) as OriginTable;
 
-const DU: OriginTable = { "entries[].size": "external", "entries[].path": "external", "entries[].modified_at": "external" };
+const DU: OriginTable = { "entries[].size": "external", "entries[].size_bytes": "number", "entries[].path": "external", "entries[].modified_at": "external" };
 
 /** 줄이나 경로 목록만 내는 파서. 내용이 전부 출력 그대로다. */
 const LINES: OriginTable = { "lines[]": "external" };

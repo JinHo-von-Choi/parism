@@ -23,7 +23,7 @@ async function startMcpServer(): Promise<void> {
       ? config.guard.secrets.output_patterns
       : DEFAULT_OUTPUT_REDACT_PATTERNS;
     const validatedCount  = validatePatterns(rawPatterns).length;
-    process.stderr.write(`[parism] output redaction enabled (${validatedCount} patterns, raw/stderr only)\n`);
+    process.stderr.write(`[parism] output redaction enabled (${validatedCount} patterns: stdout, stderr, parsed results, kept results)\n`);
   }
 
   const server    = createServer(config, registry, await loadTaskExtension(config));

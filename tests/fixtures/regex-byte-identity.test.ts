@@ -36,7 +36,7 @@ import {
   compareArtifacts,
   SECRET_CANARY_BLOCK,
   type ByteIdentityReport,
-} from "../../src/engine/regex-byte-identity.js";
+} from "../../src/fixtures/regex-byte-identity.js";
 import { resolveNativeBinary }                      from "../../src/engine/regex-native.js";
 
 /** Rust 바이너리가 있어야 Rust 경로를 검증할 수 있다. */

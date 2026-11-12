@@ -1,5 +1,6 @@
 /**
- * MCP 도구 입력 스키마 시험. 메모리 전송으로 서버에 연결해 도구를 호출한다.
+ * MCP 도구 입력 스키마 시험(full 표면). 메모리 전송으로 서버에 연결해 도구를 호출한다.
+ * core 표면은 tests/server-core.test.ts가 다룬다.
  *
  * 작성자: 최진호
  * 작성일: 2026-10-03
@@ -18,6 +19,7 @@ let client: Client;
 beforeAll(async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.guard.allowed_paths = [process.cwd()];
+  config.mcp = { surface: "full" };
   const server = createServer(config, createRegistry());
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: "test", version: "1" });
@@ -115,12 +117,12 @@ describe("새 계약의 도구", () => {
     expect(names).toEqual(["compare_results", "describe", "dry_run", "explain_result", "fetch_result", "query_result", "run", "run_paged", "task"]);
   });
 
-  it("새 계약의 run 결과는 들여쓰기 없이 한 줄로 직렬화한다", async () => {
+  it("run 결과는 계약 버전과 관계없이 들여쓰기 없이 한 줄로 직렬화한다", async () => {
     const next   = stripBanner((await call("run", { cmd: "ls", args: ["-l", "."], contract_version: "next" })).text);
     const stable = stripBanner((await call("run", { cmd: "ls", args: ["-l", "."] })).text);
 
     expect(next).not.toContain("\n");
-    expect(stable).toContain("\n  \"ok\"");
+    expect(stable).not.toContain("\n");
     expect(JSON.parse(next).review.result_id).toBeTypeOf("string");
   });
 

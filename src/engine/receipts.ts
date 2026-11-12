@@ -7,8 +7,9 @@
  * 영수증이 말하지 않는 것:
  * - 시험이 요구를 제대로 검사하는지
  * - .gitignore로 제외된 파일과 저장소 밖의 변화
- * 영수증 파일을 직접 고칠 수 있는 환경에서는 위조를 막지 못한다. 서명(key_file)은
- * Parism을 거치지 않고는 키 파일을 읽을 수 없는 환경에서만 위조를 막는다.
+ * 영수증마다 바로 앞 줄의 SHA-256(prev)을 싣는다. 줄을 고치거나 중간 줄을 지우면 체인이 끊긴다.
+ * 서명 키가 있으면 prev까지 포함해 HMAC-SHA256으로 서명한다. 키는 key_file을 쓰고, 없으면
+ * Parism 홈에 만든 키를 쓴다. 서명은 Parism을 거치지 않고는 키 파일을 읽을 수 없는 환경에서만 위조를 막는다.
  *
  * 작성자: 최진호
  * 작성일: 2026-11-11
@@ -19,7 +20,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { appendFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import path                                             from "node:path";
 import { buildExecArgs }                                from "./policy.js";
-import { realPathOf }                                   from "./guard.js";
+import { realPathOf }                                   from "../utils/fs-path.js";
 
 /** 영수증에 싣는 결과 요약. 파서가 시험·진단 보고서를 낸 실행에만 있다. */
 export type ReceiptSummary =
@@ -58,7 +59,9 @@ export interface Receipt {
   /** 실행 실패 사유(timeout, cancelled, spawn_failed 등). 정상 종료와 0이 아닌 종료 코드에는 없다. */
   failure_reason?: string;
   workspace?:      WorkspaceState;
-  /** HMAC-SHA256 서명. 서명 키를 설정했을 때만 있다. */
+  /** 바로 앞 영수증 줄의 SHA-256. 파일의 첫 영수증은 "genesis"다. */
+  prev?:           string;
+  /** HMAC-SHA256 서명. 서명 키가 있을 때만 있다. */
   sig?:            string;
 }
 
@@ -308,8 +311,10 @@ export function signatureValid(receipt: Receipt, key: Buffer): boolean {
  * 서명 키를 읽는다. 키 파일이 가드가 읽기를 허용한 경로 안에 있으면 쓰지 않는다.
  * 그 위치의 키는 Parism 명령으로 읽을 수 있어 서명이 의미를 잃는다.
  */
-export function loadSigningKey(keyFile: string | undefined, allowedPaths: readonly string[]): { key?: Buffer; warning?: string } {
-  if (!keyFile) return {};
+export function loadSigningKey(
+  keyFile: string | undefined, allowedPaths: readonly string[], autoKeyFile?: string,
+): { key?: Buffer; warning?: string; file?: string; created?: boolean } {
+  if (!keyFile) return autoKeyFile ? loadAutoKey(autoKeyFile, allowedPaths) : {};
   let real: string;
   try {
     real = realPathOf(keyFile);
@@ -332,12 +337,48 @@ export function loadSigningKey(keyFile: string | undefined, allowedPaths: readon
   }
 }
 
+/** 경로가 허용 경로 안에 있는지. 허용 경로가 비어 있으면(제한 없음) 안에 있는 것으로 본다. */
+function insideAllowed(file: string, allowedPaths: readonly string[]): boolean {
+  if (allowedPaths.length === 0) return true;
+  const real = realPathOf(file);
+  return allowedPaths.some(root => {
+    const base = realPathOf(root);
+    return real === base || real.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+  });
+}
+
+/**
+ * key_file을 정하지 않았을 때 쓰는 서명 키. 없으면 32바이트 난수로 만들고(권한 0600) 그 뒤로는 같은 키를 쓴다.
+ * 키 파일이 가드가 읽기를 허용한 경로 안에 놓이면 쓰지 않는다.
+ */
+function loadAutoKey(file: string, allowedPaths: readonly string[]): { key?: Buffer; warning?: string; file?: string; created?: boolean } {
+  if (insideAllowed(file, allowedPaths)) {
+    return { warning: `the receipt signing key ${file} would be inside guard.allowed_paths, so commands could read it; receipts are not signed. Set receipts.key_file outside allowed_paths` };
+  }
+  try {
+    if (existsSync(file)) {
+      const key = readFileSync(file);
+      return key.length >= 16 ? { key, file } : { warning: `${file} is shorter than 16 bytes; receipts are not signed` };
+    }
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const key = randomBytes(32);
+    writeFileSync(file, key, { mode: 0o600, flag: "wx" });
+    return { key, file, created: true };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return loadAutoKey(file, allowedPaths);
+    return { warning: `the receipt signing key ${file} cannot be used (${(err as Error).message}); receipts are not signed` };
+  }
+}
+
 // ── 보관 ───────────────────────────────────────────────────────────────────
 
 export interface ReceiptRetention {
   maxEntries: number;
   maxAgeDays: number;
 }
+
+/** 체인의 첫 영수증이 prev에 싣는 값 */
+export const CHAIN_GENESIS = "genesis";
 
 /** 줄 단위 JSON 파일에 영수증을 남긴다. 결과 본문은 남기지 않는다. */
 export class ReceiptStore {
@@ -347,37 +388,102 @@ export class ReceiptStore {
     this.file = path.join(dir, "receipts.jsonl");
   }
 
-  append(receipt: Receipt): void {
+  /**
+   * 영수증을 남긴다. 바로 앞 줄의 해시를 prev에 넣은 뒤 서명 함수가 있으면 서명한다.
+   * 실제로 남긴 영수증(prev와 sig 포함)을 돌려준다.
+   */
+  append(receipt: Receipt, sign?: (r: Receipt) => Receipt): Receipt {
     mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    appendFileSync(this.file, JSON.stringify(receipt) + "\n", { mode: 0o600 });
+    const last    = this.rawLines().at(-1);
+    const chained: Receipt = { ...receipt, prev: last === undefined ? CHAIN_GENESIS : sha256(last) };
+    const final   = sign ? sign(chained) : chained;
+    appendFileSync(this.file, JSON.stringify(final) + "\n", { mode: 0o600 });
     this.prune();
+    return final;
+  }
+
+  /** 파일의 줄을 그대로 읽는다. 빈 줄은 뺀다. */
+  rawLines(): string[] {
+    if (!existsSync(this.file)) return [];
+    return readFileSync(this.file, "utf8").split("\n").filter(line => line.trim() !== "");
   }
 
   /** 기록된 영수증을 오래된 순서로 읽는다. 읽을 수 없는 줄은 건너뛴다. */
   list(): Receipt[] {
-    if (!existsSync(this.file)) return [];
     const out: Receipt[] = [];
-    for (const line of readFileSync(this.file, "utf8").split("\n")) {
-      if (line.trim() === "") continue;
-      try {
-        const value = JSON.parse(line) as Receipt;
-        if (typeof value.id === "string" && typeof value.cmd === "string" && Array.isArray(value.args)) out.push(value);
-      } catch {
-        /** 깨진 줄은 영수증이 아니다. */
-      }
+    for (const line of this.rawLines()) {
+      const value = parseReceiptLine(line);
+      if (value) out.push(value);
     }
     return out;
   }
 
-  /** 보관 기간이 지났거나 개수를 넘은 영수증을 오래된 것부터 지운다. */
+  /**
+   * 보관 기간이 지났거나 개수를 넘은 영수증을 오래된 것부터 지운다.
+   * 줄은 다시 직렬화하지 않고 원래 글자 그대로 남긴다. 남은 첫 줄의 prev는 지운 줄을 가리키므로
+   * 체인 검사는 첫 줄의 prev를 검사하지 않는다.
+   */
   private prune(): void {
-    const all    = this.list();
+    const lines  = this.rawLines();
     const cutoff = Date.now() - this.retention.maxAgeDays * 86_400_000;
-    const fresh  = all.filter(r => !(Date.parse(r.started_at) < cutoff));
+    const fresh  = lines.filter(line => !(Date.parse(parseReceiptLine(line)?.started_at ?? "") < cutoff));
     const kept   = fresh.slice(Math.max(0, fresh.length - this.retention.maxEntries));
-    if (kept.length === all.length) return;
-    writeFileSync(this.file, kept.map(r => JSON.stringify(r)).join("\n") + (kept.length > 0 ? "\n" : ""), { mode: 0o600 });
+    if (kept.length === lines.length) return;
+    writeFileSync(this.file, kept.join("\n") + (kept.length > 0 ? "\n" : ""), { mode: 0o600 });
   }
+}
+
+function parseReceiptLine(line: string): Receipt | undefined {
+  try {
+    const value = JSON.parse(line) as Receipt;
+    return typeof value.id === "string" && typeof value.cmd === "string" && Array.isArray(value.args) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 체인과 서명 검사에서 찾은 문제 하나 */
+export interface ChainProblem {
+  /** 파일 안의 줄 번호(1부터) */
+  line:    number;
+  id?:     string;
+  reason:  "unreadable" | "chain_broken" | "unsigned" | "bad_signature";
+  detail:  string;
+}
+
+export interface ChainReport {
+  ok:       boolean;
+  entries:  number;
+  signed:   boolean;
+  problems: ChainProblem[];
+}
+
+/**
+ * 영수증 파일의 체인과 서명을 검사한다.
+ * 줄을 고치면 그 줄의 서명과 다음 줄의 prev가 맞지 않는다. 중간 줄을 지우면 다음 줄의 prev가 맞지 않는다.
+ * 첫 줄의 prev는 검사하지 않는다(보관 한도로 앞 줄이 지워졌을 수 있다).
+ * 키를 주면 서명 없는 영수증과 서명이 틀린 영수증도 문제로 센다.
+ */
+export function verifyChain(lines: readonly string[], key?: Buffer): ChainReport {
+  const problems: ChainProblem[] = [];
+  lines.forEach((line, index) => {
+    const receipt = parseReceiptLine(line);
+    if (!receipt) {
+      problems.push({ line: index + 1, reason: "unreadable", detail: "the line is not a receipt" });
+      return;
+    }
+    if (index > 0 && receipt.prev !== undefined && receipt.prev !== sha256(lines[index - 1]!)) {
+      problems.push({ line: index + 1, id: receipt.id, reason: "chain_broken", detail: "prev does not match the line before it: a line was edited, removed or inserted" });
+    }
+    if (index > 0 && receipt.prev === undefined && parseReceiptLine(lines[index - 1]!)?.prev !== undefined) {
+      problems.push({ line: index + 1, id: receipt.id, reason: "chain_broken", detail: "the receipt has no prev after a chained receipt" });
+    }
+    if (key) {
+      if (typeof receipt.sig !== "string") problems.push({ line: index + 1, id: receipt.id, reason: "unsigned", detail: "the receipt has no signature" });
+      else if (!signatureValid(receipt, key)) problems.push({ line: index + 1, id: receipt.id, reason: "bad_signature", detail: "the signature does not match the signing key" });
+    }
+  });
+  return { ok: problems.length === 0, entries: lines.length, signed: key !== undefined, problems };
 }
 
 // ── 검증 ───────────────────────────────────────────────────────────────────
@@ -395,6 +501,8 @@ export interface CheckReport {
   ok:    boolean;
   cwd:   string;
   items: CheckItem[];
+  /** 영수증 파일의 체인·서명 검사. 문제가 있으면 ok는 false다. */
+  chain?: ChainReport;
 }
 
 function sameArgs(a: readonly string[], b: readonly string[]): boolean {

@@ -10,22 +10,24 @@ import { execFileSync }                    from "node:child_process";
 import { mkdtempSync, writeFileSync }      from "node:fs";
 import { tmpdir }                          from "node:os";
 import path                                from "node:path";
-import { formatCheck, parseRequire, receiptsCheck, receiptsList } from "../../src/cli/receipts.js";
-import { ReceiptStore, workspaceState, type Receipt } from "../../src/engine/receipts.js";
+import { autoKeyFile, formatCheck, parseRequire, receiptsCheck, receiptsList } from "../../src/cli/receipts.js";
+import { ReceiptStore, loadSigningKey, signReceipt, workspaceState, type Receipt } from "../../src/engine/receipts.js";
 
 let repo:      string;
 let home:      string;
 let hostConfig: string;
 let savedHome: string | undefined;
 
+/** 엔진이 쓰는 것과 같은 자동 서명 키로 서명해 남긴다. 키가 없으면 만든다. */
 async function addReceipt(patch: Partial<Receipt> = {}): Promise<void> {
   const workspace = await workspaceState(repo, { untrackedMaxFiles: 2000, untrackedMaxBytes: 64 * 1024 * 1024 });
+  const signing   = loadSigningKey(undefined, [repo], autoKeyFile());
   new ReceiptStore(path.join(home, "receipts"), { maxEntries: 500, maxAgeDays: 30 }).append({
     id: `rcp_${Math.random().toString(36).slice(2)}`, cmd: "npx", args: ["vitest", "run"], cwd: repo, exit_code: 0,
     started_at: new Date().toISOString(), duration_ms: 5, output_sha256: "0".repeat(64),
     summary: { kind: "test", passed: 4, failed: 0, skipped: 0, files_failed: 0 },
     ...(workspace && { workspace }), ...patch,
-  });
+  }, signing.key ? r => signReceipt(r, signing.key!) : undefined);
 }
 
 beforeAll(async () => {
