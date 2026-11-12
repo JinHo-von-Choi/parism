@@ -41,7 +41,7 @@ import type { ResultStore }                                         from "../eng
 import type { RawEvidence }                                         from "../engine/evidence.js";
 import { mintResultId }                                             from "../engine/review.js";
 import { maskWithRanges, type MaskedRange }                         from "../engine/mask-map.js";
-import { expandGlobs, lexCommand, quoteArg, type StderrMode }       from "../engine/command-lexer.js";
+import { expandGlobs, lexCommand, quoteArg, SAFE_ENV_NAMES, type StderrMode } from "../engine/command-lexer.js";
 import { applyStages, applyTextFilters, parsePipeline, toProjectionStages, type FilterSpec, type ProjectionStage } from "../engine/pipe-compiler.js";
 import { attributeReport }                                          from "../engine/attribution.js";
 import { gitDelta, isMutatingGit }                                  from "../engine/git-delta.js";
@@ -86,6 +86,8 @@ interface RunState {
   args:          string[];
   requestedArgs: string[];
   cwd:           string;
+  /** 명령 앞 대입으로 넘길 환경 변수 */
+  env?:          Record<string, string>;
   opts:          RunOptions;
   format:        OutputFormat;
   includeDiff:   boolean;
@@ -158,7 +160,7 @@ export function looksLikeCommandLine(cmd: string, args: readonly string[] | unde
 
 /** 명령 문자열을 해석한 결과 */
 export type ResolvedCommand =
-  | { ok: true; cmd: string; args: string[]; cwd: string; pipeline?: PipelinePlan; notes: string[] }
+  | { ok: true; cmd: string; args: string[]; cwd: string; pipeline?: PipelinePlan; notes: string[]; env?: Record<string, string> }
   | { ok: false; failure: FailureInfo };
 
 /**
@@ -167,7 +169,38 @@ export type ResolvedCommand =
  */
 export function resolveCommand(cmd: string, opts: { command?: string; args?: string[]; cwd?: string }): ResolvedCommand {
   const resolved = resolveCommandLine(cmd, opts);
-  return resolved.ok ? foldGitDirectory(resolved) : resolved;
+  if (!resolved.ok) return resolved;
+  const folded = foldEnvCommand(resolved);
+  return folded.ok ? foldGitDirectory(folded) : folded;
+}
+
+/**
+ * `env NAME=값 명령 ...`을 명령 앞 대입과 같게 다룬다. 이름은 SAFE_ENV_NAMES 안의 것만 받는다.
+ * 대입 뒤에 명령이 없거나(`env A=1`) env의 옵션(`env -i`)을 쓰면 env 명령으로 그대로 둔다.
+ */
+function foldEnvCommand(resolved: Extract<ResolvedCommand, { ok: true }>): ResolvedCommand {
+  if (resolved.cmd !== "env") return resolved;
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
+  let i = 0;
+  while (i < resolved.args.length && assignment.test(resolved.args[i]!)) i++;
+  if (i === 0 || i >= resolved.args.length || resolved.args[i]!.startsWith("-")) return resolved;
+  const env: Record<string, string> = { ...(resolved.env ?? {}) };
+  for (const word of resolved.args.slice(0, i)) {
+    const eq   = word.indexOf("=");
+    const name = word.slice(0, eq);
+    if (!SAFE_ENV_NAMES.has(name)) {
+      return { ok: false, failure: {
+        kind: "config", reason: "unsupported_shell_operator", operator: "=",
+        message: `command was not run: environment variable '${name}' is not applied`,
+        suggestion: `only these variables can be set before a command: ${[...SAFE_ENV_NAMES].join(", ")}`,
+      } };
+    }
+    env[name] = word.slice(eq + 1);
+  }
+  return {
+    ...resolved, cmd: resolved.args[i]!, args: resolved.args.slice(i + 1), env,
+    notes: [...resolved.notes, `environment set for the command: ${Object.keys(env).join(", ")}`],
+  };
 }
 
 /**
@@ -232,7 +265,7 @@ function resolveCommandLine(cmd: string, opts: { command?: string; args?: string
       ...(expanded.stderr && { stderr: expanded.stderr }), notes: [],
     };
   }
-  return { ok: true, cmd: expanded.cmd, args: expanded.args, cwd, ...(pipeline && { pipeline }), notes: expanded.notes };
+  return { ok: true, cmd: expanded.cmd, args: expanded.args, cwd, ...(pipeline && { pipeline }), notes: expanded.notes, ...(expanded.env && { env: expanded.env }) };
 }
 
 /** 실행 전에 거절할 계약·예산 오류. 없으면 undefined다. */
@@ -284,6 +317,7 @@ function initialState(
   const maskingOn   = deps.config.guard.secrets?.output_redaction_enabled === true;
   return {
     cmd: resolved.cmd, args, requestedArgs: resolved.args, cwd: resolved.cwd, opts,
+    ...(resolved.env && { env: resolved.env }),
     format:       (opts.format ?? "json") as OutputFormat,
     includeDiff:  opts.includeDiff ?? false,
     wantReview,
@@ -364,7 +398,7 @@ async function stageGuardAndExec(deps: RunDeps, state: RunState, control: RunCon
     /** 파이프 뒤 단계는 전체 출력을 봐야 셸과 같은 결과가 된다. 수집 상한은 실행기의 버퍼 상한만 쓴다. */
     state.parseWhole || state.pipeline ? 0 : config.guard.max_output_bytes,
     state.includeDiff,
-    control?.exec,
+    state.env ? { ...(control?.exec ?? {}), env: state.env } : control?.exec,
   );
   try {
     state.executed   = control ? await launch() : await deps.execSlots.run(launch);

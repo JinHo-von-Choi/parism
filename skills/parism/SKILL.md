@@ -1,7 +1,7 @@
 ---
 name: parism
 description: How to call the Parism MCP tools (mcp__parism__run, query_result, describe) with the fewest calls and tokens. Load this BEFORE your first mcp__parism__ call in a session, whenever those tools are available. Covers one-line commands with pipes, picking fields, filtering, sorting and counting rows on the server, reading large results with query_result instead of re-running, test/build/lint failures with changed-line attribution, long tasks and dev servers, and what to do when a call is refused. Triggers - parism, mcp__parism__run, query_result, result_id, list or count files, largest files, git status/log/diff, ps, ports, docker, df, systemctl, journalctl, vitest, jest, pytest, tsc, eslint, cargo test, go test, npm test.
-version: 3.0.0
+version: 3.0.2
 models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5]
 model: claude-sonnet-5-5
 freedom: medium
@@ -23,7 +23,8 @@ Pass the whole command line in `command`. Do not split it yourself.
 
 - Quotes, globs, `~`, `#` comments, a leading `cd dir &&`, `2>&1` and `2>/dev/null` work.
 - `grep`, `head`, `tail`, `wc`, `sort`, `uniq` and `cut` after a pipe run inside Parism. When the left side parses into rows, the stage filters rows (`_compiled_pipeline.mode: "rows"`), so `ls -la | grep log` returns matching `entries`, not lines.
-- Not run: `;`, `&&` (except a leading `cd`), `||`, `$(...)`, backticks, `$VAR`, `> file`, `&`, `VAR=1 cmd`. You get `failure.reason: "unsupported_shell_operator"` and a `suggestion`. Make one call per command instead. To write a file, use your file-writing tool.
+- Not run: `;`, `&&` (except a leading `cd`), `||`, `$(...)`, backticks, `$VAR`, `> file`, `&`. You get `failure.reason: "unsupported_shell_operator"` and a `suggestion`. Make one call per command instead. To write a file, use your file-writing tool.
+- `CI=1 npm test` or `env CFLAGS=-O0 make` sets build, colour and logging variables for that command. `PATH`, `LD_*`, `NODE_OPTIONS` and similar are refused; the message lists the accepted names.
 - `cwd` sets the working directory. `git -C dir` and `git --git-dir=dir` are moved into it, and the directory must be inside the allowed paths.
 
 ## 2. Getting less output

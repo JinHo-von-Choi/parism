@@ -135,7 +135,7 @@ export class ServiceManager {
   }
 
   /** 서비스를 띄우고 준비되거나 끝나거나 준비 대기 시간이 지날 때까지 기다린다 */
-  async start(meta: { cmd: string; args: string[]; cwd: string }, config: PrismConfig, opts: ServiceOptions): Promise<ServiceStart> {
+  async start(meta: { cmd: string; args: string[]; cwd: string; env?: Record<string, string> }, config: PrismConfig, opts: ServiceOptions): Promise<ServiceStart> {
     this.prune();
     if (this.running >= this.limits.maxConcurrency) {
       return { ok: false, reason: "service_slots_full", message: `${this.running} service(s) are running and the limit is ${this.limits.maxConcurrency}; stop one with task(action='cancel')` };
@@ -149,7 +149,8 @@ export class ServiceManager {
     let readyRe: RegExp | undefined;
     if (opts.ready_pattern !== undefined) {
       try {
-        readyRe = new RegExp(opts.ready_pattern);
+        /** 출력의 끝부분 전체에 맞추므로 ^와 $가 줄마다 맞게 한다(`^Listening on`) */
+        readyRe = new RegExp(opts.ready_pattern, "m");
       } catch (err) {
         return { ok: false, reason: "invalid_service", message: `ready_pattern is not a valid regular expression: ${(err as Error).message}` };
       }
@@ -158,7 +159,7 @@ export class ServiceManager {
     const waitMs  = Math.min(Math.max(0, opts.ready_timeout_ms ?? MAX_READY_WAIT_MS), MAX_READY_WAIT_MS);
     const id      = `svc_${randomBytes(9).toString("base64url")}`;
     const persist = opts.persist === true;
-    const env     = { ...buildSanitizedEnv(config.guard.secrets?.env_patterns ?? []), GIT_TERMINAL_PROMPT: "0" };
+    const env     = { ...buildSanitizedEnv(config.guard.secrets?.env_patterns ?? []), ...(meta.env ?? {}), GIT_TERMINAL_PROMPT: "0" };
 
     let logFile: string | undefined;
     let logFd:   number | undefined;

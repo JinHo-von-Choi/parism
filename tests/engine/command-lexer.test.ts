@@ -56,6 +56,15 @@ describe("lexCommand 셸 연산자", () => {
     expect(r.hint.length).toBeGreaterThan(10);
   });
 
+  it("명령 앞의 허용된 대입은 그 명령의 환경 변수로 넘기고, 그 밖의 이름은 거절한다", () => {
+    const r = ok("CI=1 CFLAGS='-O0 -g' make -j4");
+    expect(r).toMatchObject({ cmd: "make", args: ["-j4"], env: { CI: "1", CFLAGS: "-O0 -g" } });
+    const path = lexCommand("PATH=/tmp ls");
+    expect(path.ok).toBe(false);
+    if (!path.ok) expect(path.hint).toMatch(/CFLAGS/);
+    expect(lexCommand("ls | CI=1 grep x").ok).toBe(false);
+  });
+
   it("파이프는 단계로 나눈다", () => {
     const r = ok("ps aux | grep node | head -n 5");
     expect([r.cmd, ...r.args]).toEqual(["ps", "aux"]);

@@ -52,6 +52,8 @@ export interface LexedCommand {
   stderr?:  StderrMode;
   /** 렉서가 바꾼 것(글로브 펼침, 무시한 리다이렉션 등) */
   notes:    string[];
+  /** 명령 앞의 `NAME=값` 대입. 이름은 SAFE_ENV_NAMES 안의 것만 받는다. */
+  env?:     Record<string, string>;
   /**
    * 첫 단계 인자마다 따옴표 밖의 글로브 패턴. 글로브가 없는 인자는 undefined다.
    * cwd가 정해진 뒤 expandGlobs가 펼치고 이 필드를 지운다.
@@ -350,12 +352,24 @@ export function lexCommand(input: string): LexResult {
     return reject("unsupported_shell_operator", "|", "a pipe has no command after it", "add the filter after '|', or remove the trailing '|'");
   }
 
+  /** 첫 단계 앞의 대입은 허용 이름이면 그 명령의 환경 변수로 넘긴다. 파이프 뒤 단계의 대입은 받지 않는다. */
+  const env: Record<string, string> = {};
+  while (stages[0]!.length > 1 && stages[0]![0]!.assignment) {
+    const word = stages[0]!.shift()!;
+    const eq   = word.value.indexOf("=");
+    const name = word.value.slice(0, eq);
+    if (!SAFE_ENV_NAMES.has(name)) {
+      return reject("unsupported_shell_operator", "=", `environment variable '${name}' is not applied`, envHint());
+    }
+    env[name] = word.value.slice(eq + 1);
+  }
   for (const stage of stages) {
     const first = stage[0]!;
     if (first.assignment) {
       return reject("unsupported_shell_operator", "=", `environment assignment '${first.value}' is not applied`, HINTS["="]!);
     }
   }
+  if (Object.keys(env).length > 0) notes.push(`environment set for the command: ${Object.keys(env).join(", ")}`);
 
   const [head, ...pipeline] = stages.map(stage => stage.map(expandTilde));
   return {
@@ -366,8 +380,28 @@ export function lexCommand(input: string): LexResult {
     pipeline: pipeline.map(stage => stage.map(w => w.value)),
     ...(stderr && { stderr }),
     notes,
+    ...(Object.keys(env).length > 0 && { env }),
     ...(head!.slice(1).some(w => w.glob !== undefined) && { globs: head!.slice(1).map(w => w.glob) }),
   };
+}
+
+/**
+ * 명령 앞 대입(`CFLAGS=-O0 make`, `env CI=1 npm test`)으로 넘길 수 있는 환경 변수.
+ * 빌드 플래그, 색·로그·버퍼 설정처럼 그 명령의 동작만 바꾸는 이름이다.
+ * 어떤 프로그램을 실행하거나 무엇을 불러올지 바꾸는 이름(PATH, LD_*, NODE_OPTIONS, PYTHONPATH, CC, GIT_SSH_COMMAND, EDITOR, HOME)은 넣지 않는다.
+ * 파서는 C 로캘 출력을 읽으므로 LANG, LC_*도 넣지 않는다.
+ */
+export const SAFE_ENV_NAMES: ReadonlySet<string> = new Set([
+  "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "LDLIBS",
+  "CI", "NODE_ENV", "DEBIAN_FRONTEND", "TZ", "NO_COLOR", "FORCE_COLOR", "TERM", "COLUMNS",
+  "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "PYTHONHASHSEED", "PYTHONWARNINGS",
+  "PIP_NO_INPUT", "PIP_DISABLE_PIP_VERSION_CHECK",
+  "RUST_BACKTRACE", "RUST_LOG", "CARGO_TERM_COLOR", "CGO_ENABLED", "GOOS", "GOARCH",
+  "DEBUG", "LOG_LEVEL", "VERBOSE",
+]);
+
+function envHint(): string {
+  return `only these variables can be set before a command: ${[...SAFE_ENV_NAMES].join(", ")}`;
 }
 
 /** 글로브 펼침 한 번에 돌려주는 최대 경로 수 */

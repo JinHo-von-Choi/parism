@@ -23,6 +23,8 @@ const port = Number(process.argv[2]);
 setTimeout(() => http.createServer((q, s) => s.end("pong")).listen(port, "127.0.0.1", () => console.log("Listening on " + port)), 300);
 `);
 
+writeFileSync(path.join(dir, "env.js"), `console.log("booting"); console.log("env " + process.env.NODE_ENV); setTimeout(() => {}, 20000);`);
+
 const config = structuredClone(DEFAULT_CONFIG);
 config.guard.allowed_paths    = [dir];
 config.guard.profile          = "build";
@@ -58,6 +60,14 @@ describe("run(mode: service)", () => {
     const after = await engine.taskWait(started.task.task_id, 5_000);
     expect(after.found && after.task.state).toBe("cancelled");
     await expect(get(PORT)).rejects.toThrow();
+  });
+
+  it("명령 앞 대입은 서버의 환경 변수가 되고, ready_pattern의 ^와 $는 줄마다 맞는다", async () => {
+    const started = await engine.startService("", { command: "NODE_ENV=staging node env.js", cwd: dir, ready_pattern: "^env staging$", lease_ms: 20_000 });
+    expect(started.started).toBe(true);
+    if (!started.started) return;
+    expect(started.task.service).toMatchObject({ ready: true });
+    engine.taskCancel(started.task.task_id);
   });
 
   it("ready_port가 열리면 준비로 본다", async () => {

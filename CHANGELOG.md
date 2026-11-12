@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-11-12
+
+### Added
+
+- 명령 앞 대입(`CI=1 npm test`)과 `env NAME=값 명령`을 받는다. 빌드 플래그, 색, 로그, 버퍼처럼 그 명령의 동작만 바꾸는 변수만 받고(`CFLAGS`, `LDFLAGS`, `CI`, `NODE_ENV`, `DEBIAN_FRONTEND`, `NO_COLOR`, `RUST_LOG` 등), 실행할 프로그램이나 불러올 코드를 바꾸는 변수(`PATH`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `CC`, `GIT_SSH_COMMAND`)는 거절한다. 서비스와 훅에도 적용된다.
+
+### Fixed
+
+- 서비스의 `ready_pattern`에서 `^`와 `$`가 출력 끝부분 전체가 아니라 줄마다 맞는다(`^Listening on`).
+
 ## [3.0.1] - 2026-11-12
 
 ### Changed

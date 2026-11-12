@@ -78,7 +78,9 @@ Requires Node.js 20 or later.
 
 Quotes, backslashes, `~`, globs, `#` comments, a leading `cd <dir> &&`, `2>&1` and `2>/dev/null` work as in a shell. `git -C <dir>` runs in that directory.
 
-`$(...)`, `$VAR`, redirection, `&`, `;`, `&&`, `||` and `VAR=1 cmd` are not run. The result is `unsupported_shell_operator` with an alternative in `failure.suggestion`. Send one command per call.
+`$(...)`, `$VAR`, redirection, `&`, `;`, `&&` and `||` are not run. The result is `unsupported_shell_operator` with an alternative in `failure.suggestion`. Send one command per call.
+
+Assignments before a command (`CI=1 npm test`, `env CFLAGS=-O0 make`) accept only variables that change that command's own behaviour: build flags, colour, logging (`CFLAGS`, `LDFLAGS`, `CI`, `NODE_ENV`, `DEBIAN_FRONTEND`, `NO_COLOR`, `RUST_LOG` and others). Variables that change which program runs or what code it loads (`PATH`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`) are refused.
 
 ### Picking rows
 

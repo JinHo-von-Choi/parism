@@ -58,6 +58,8 @@ interface ProcessOutcome {
  */
 export interface ExecControl {
   signal?:     AbortSignal;
+  /** 이 실행에만 더하는 환경 변수(명령 앞 대입). 강제하는 LC_ALL, LANG, GIT_TERMINAL_PROMPT가 우선한다. */
+  env?:        Record<string, string>;
   onProgress?: (bytes: { stdout: number; stderr: number }) => void;
   onStdout?:   (chunk: Buffer) => void;
 }
@@ -322,7 +324,7 @@ export async function execute(
   const start   = Date.now();
   const before  = includeDiff ? await takeSnapshot(cwd) : null;
   /** git이 자격 증명을 물으며 멈추지 않게 한다. 표준 입력은 터미널이 아니라 대답할 수 없다. */
-  const env     = { ...buildSanitizedEnv(secretPatterns), LC_ALL: "C", LANG: "C", GIT_TERMINAL_PROMPT: "0" };
+  const env     = { ...buildSanitizedEnv(secretPatterns), ...(control.env ?? {}), LC_ALL: "C", LANG: "C", GIT_TERMINAL_PROMPT: "0" };
   const result  = await runProcess(cmd, args, cwd, env, timeoutMs, control);
   const after   = includeDiff ? await takeSnapshot(cwd) : null;
   const failure = classifyFailure(cmd, args, result, timeoutMs);

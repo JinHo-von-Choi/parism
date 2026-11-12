@@ -187,7 +187,7 @@ export class ParismEngine {
       this.statsLog?.record({ kind: "guard_block", cmd, outcome: err.reason });
       return { started: false, envelope: buildGuardErrorEnvelope(cmd, args, cwd, err) };
     }
-    const started = await this.services.start({ cmd, args, cwd }, this.config, opts);
+    const started = await this.services.start({ cmd, args, cwd, ...(resolved.env && { env: resolved.env }) }, this.config, opts);
     if (!started.ok) {
       return { started: false, envelope: buildRejectedEnvelope(cmd, args, cwd, { kind: "config", reason: started.reason, message: started.message }) };
     }

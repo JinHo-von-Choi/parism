@@ -78,7 +78,9 @@ Node.js 20 이상이 필요합니다.
 
 따옴표, 백슬래시, `~`, 글로브, `#` 주석, 맨 앞의 `cd <dir> &&`, `2>&1`, `2>/dev/null`을 셸처럼 처리합니다. `git -C <dir>`은 그 디렉터리에서 실행합니다.
 
-`$(...)`, `$VAR`, 리다이렉션, `&`, `;`, `&&`, `||`, `VAR=1 명령`은 실행하지 않고 `unsupported_shell_operator`와 대안(`failure.suggestion`)을 돌려줍니다. 명령은 호출 하나에 하나씩 줍니다.
+`$(...)`, `$VAR`, 리다이렉션, `&`, `;`, `&&`, `||`는 실행하지 않고 `unsupported_shell_operator`와 대안(`failure.suggestion`)을 돌려줍니다. 명령은 호출 하나에 하나씩 줍니다.
+
+명령 앞 대입(`CI=1 npm test`, `env CFLAGS=-O0 make`)은 빌드 플래그, 색, 로그처럼 그 명령의 동작만 바꾸는 변수만 받습니다(`CFLAGS`, `LDFLAGS`, `CI`, `NODE_ENV`, `DEBIAN_FRONTEND`, `NO_COLOR`, `RUST_LOG` 등). `PATH`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`처럼 실행할 프로그램이나 불러올 코드를 바꾸는 변수는 거절합니다.
 
 ### 행 고르기
 
