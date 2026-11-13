@@ -26,7 +26,12 @@ describe("checkGuard()", () => {
   it("cmd에 명령줄 전체가 오면 인자를 args로 옮기라고 안내한다", () => {
     expect(() => checkGuard("ls -la src", [], cwdOk, cfg))
       .toThrow(/cmd: "ls", args: \["-la","src"\]/);
-    expect(() => checkGuard("rm -rf /", [], cwdOk, cfg)).not.toThrow(/args/);
+    /** 허용되지 않은 명령은 그대로 거절하고, 인자를 옮기라는 안내를 붙이지 않는다. */
+    expect(() => checkGuard("rm -rf /", [], cwdOk, cfg)).toThrow(GuardError);
+    try { checkGuard("rm -rf /", [], cwdOk, cfg); } catch (e) {
+      expect((e as GuardError).reason).toBe("command_not_allowed");
+      expect((e as GuardError).message).not.toMatch(/args/);
+    }
   });
 
   it("검색어와 출력 형식 값의 |, <, >는 차단 패턴으로 보지 않는다", () => {
