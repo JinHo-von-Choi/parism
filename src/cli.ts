@@ -366,11 +366,11 @@ export function createCli(): Command {
       .command(event)
       .description(`Handle the ${event} hook: read the hook JSON from stdin and answer on stdout`)
       .option("--config <file>", "Config file (default: ~/.parism/hook.config.json)")
-      .option("--client <client>", "claude (default) or gemini")
+      .option("--client <client>", "claude (default), gemini or agy")
       .action(async (options: { config?: string; client?: string }) => {
         const { runHook } = await import("./cli/hook.js");
         try {
-          const out = await runHook(event, { ...(options.config && { config: options.config }), ...(options.client === "gemini" && { client: "gemini" as const }) });
+          const out = await runHook(event, { ...(options.config && { config: options.config }), ...((options.client === "gemini" || options.client === "agy") && { client: options.client }) });
           if (out !== undefined) process.stdout.write(out + "\n");
         } catch (err) {
           /** 훅이 실패해도 에이전트 작업을 막지 않는다. 종료 코드 1은 비차단 오류다. */
@@ -383,16 +383,16 @@ export function createCli(): Command {
   hook
     .command("install")
     .description("Add the PreToolUse, Stop and SessionStart hooks to the client settings and create ~/.parism/hook.config.json")
-    .option("--client <client>", "claude (default) or gemini", "claude")
-    .option("--scope <scope>", "project (.claude/settings.json, default) or user (~/.claude/settings.json)", "project")
+    .option("--client <client>", "claude (default), gemini or agy (Antigravity CLI)", "claude")
+    .option("--scope <scope>", "project (default: .claude/settings.json, .gemini/settings.json, .agents/hooks.json) or user (under the home directory)", "project")
     .action(async (options: { client: string; scope: string }) => {
       const { installHooks } = await import("./cli/hook.js");
-      if (!["claude", "gemini"].includes(options.client) || !["project", "user"].includes(options.scope)) {
-        console.error("[parism hook install] --client claude|gemini, --scope project|user");
+      if (!["claude", "gemini", "agy"].includes(options.client) || !["project", "user"].includes(options.scope)) {
+        console.error("[parism hook install] --client claude|gemini|agy, --scope project|user");
         process.exitCode = 2;
         return;
       }
-      const result = installHooks({ client: options.client as "claude" | "gemini", scope: options.scope as "project" | "user" });
+      const result = installHooks({ client: options.client as "claude" | "gemini" | "agy", scope: options.scope as "project" | "user" });
       console.log(`hooks written to ${result.settings}`);
       console.log(result.created_hook_config
         ? `hook config created at ${result.hook_config} (profile build, receipts on, redaction on, allowed_paths: this directory)`

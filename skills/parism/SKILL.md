@@ -1,7 +1,7 @@
 ---
 name: parism
 description: How to call the Parism MCP tools (mcp__parism__run, query_result, describe) with the fewest calls and tokens. Load this BEFORE your first mcp__parism__ call in a session, whenever those tools are available. Covers one-line commands with pipes, picking fields, filtering, sorting and counting rows on the server, reading large results with query_result instead of re-running, test/build/lint failures with changed-line attribution, long tasks and dev servers, and what to do when a call is refused. Triggers - parism, mcp__parism__run, query_result, result_id, list or count files, largest files, git status/log/diff, ps, ports, docker, df, systemctl, journalctl, vitest, jest, pytest, tsc, eslint, cargo test, go test, npm test.
-version: 3.0.2
+version: 3.0.3
 models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5]
 model: claude-sonnet-5-5
 freedom: medium

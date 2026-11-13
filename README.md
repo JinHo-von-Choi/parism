@@ -178,6 +178,7 @@ Node.js 20 이상이 필요합니다.
 npx @nerdvana/parism hook install                    # Claude Code, .claude/settings.json
 npx @nerdvana/parism hook install --scope user       # ~/.claude/settings.json
 npx @nerdvana/parism hook install --client gemini    # .gemini/settings.json
+npx @nerdvana/parism hook install --client agy       # Antigravity CLI, .agents/hooks.json
 ```
 
 | 훅 | 하는 일 |

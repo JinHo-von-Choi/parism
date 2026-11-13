@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-11-14
+
+### Added
+
+- `parism hook install --client agy`가 Antigravity CLI의 `.agents/hooks.json`(`--scope user`면 `~/.gemini/config/hooks.json`)에 `parism` 이름으로 `PreToolUse`, `Stop`, `SessionStart` 훅을 쓴다. `run_command` 명령을 `overwrite.CommandLine`으로 바꾸고, 금지 인자는 `deny`로 막고, 확인되지 않은 변경이 있으면 `Stop`에서 `continue`로 종료를 미룬다.
+
 ## [3.0.2] - 2026-11-12
 
 ### Added

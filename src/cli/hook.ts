@@ -268,12 +268,15 @@ export async function decideStop(input: Record<string, unknown>, config: PrismCo
 
 // ── install ───────────────────────────────────────────────────────────────
 
-export type HookClient = "claude" | "gemini";
+export type HookClient = "claude" | "gemini" | "agy";
 
 interface HookEntry { type: "command"; command: string; timeout?: number }
 interface MatcherGroup { matcher?: string; hooks: HookEntry[] }
 
-/** 클라이언트별 훅 이벤트 이름, 셸 도구 이름, 설정 파일 위치. timeout 단위는 Claude Code가 초, Gemini CLI가 밀리초다. */
+/**
+ * 클라이언트별 훅 이벤트 이름, 셸 도구 이름, 설정 파일 위치. timeout 단위는 Claude Code와 agy가 초, Gemini CLI가 밀리초다.
+ * agy는 hooks.json 한 파일에 이름 붙은 훅을 두므로 parism 훅을 "parism" 키 아래에 쓴다.
+ */
 const CLIENTS: Record<HookClient, { pre: string; stop: string; start: string; tool: string; timeoutUnit: number; settings: (scope: "project" | "user", cwd: string, home: string) => string }> = {
   claude: {
     pre: "PreToolUse", stop: "Stop", start: "SessionStart", tool: "Bash", timeoutUnit: 1,
@@ -283,7 +286,14 @@ const CLIENTS: Record<HookClient, { pre: string; stop: string; start: string; to
     pre: "BeforeTool", stop: "AfterAgent", start: "SessionStart", tool: "run_shell_command", timeoutUnit: 1000,
     settings: (scope, cwd, home) => scope === "user" ? path.join(home, ".gemini", "settings.json") : path.join(cwd, ".gemini", "settings.json"),
   },
+  agy: {
+    pre: "PreToolUse", stop: "Stop", start: "SessionStart", tool: "run_command", timeoutUnit: 1,
+    settings: (scope, cwd, home) => scope === "user" ? path.join(home, ".gemini", "config", "hooks.json") : path.join(cwd, ".agents", "hooks.json"),
+  },
 };
+
+/** agy hooks.json에서 parism 훅이 들어가는 이름 */
+const AGY_HOOK_NAME = "parism";
 
 function hookCommand(event: "pre-tool-use" | "stop" | "session-start", client: HookClient): string {
   const entry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "index.js");
@@ -314,15 +324,29 @@ export function installHooks(options: { client?: HookClient; scope?: "project" |
   const spec     = CLIENTS[client];
   const settings = spec.settings(scope, cwd, home);
   const current  = existsSync(settings) ? JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown> : {};
-  const hooks    = { ...((current.hooks as Record<string, MatcherGroup[]> | undefined) ?? {}) };
-  const marker   = " hook ";
   const t = spec.timeoutUnit;
-  hooks[spec.pre]   = mergeGroup(hooks[spec.pre],   { matcher: spec.tool, hooks: [{ type: "command", command: hookCommand("pre-tool-use", client), timeout: 30 * t }] }, `index.js${marker}pre-tool-use`);
-  hooks[spec.stop]  = mergeGroup(hooks[spec.stop],  { hooks: [{ type: "command", command: hookCommand("stop", client), timeout: 60 * t }] }, `index.js${marker}stop`);
-  hooks[spec.start] = mergeGroup(hooks[spec.start], { hooks: [{ type: "command", command: hookCommand("session-start", client), timeout: 60 * t }] }, `index.js${marker}session-start`);
+  let next: Record<string, unknown>;
+  if (client === "agy") {
+    /** agy의 SessionStart와 Stop은 matcher 묶음 없이 처리기 목록을 바로 둔다. parism 이름의 훅만 새로 쓴다. */
+    next = {
+      ...current,
+      [AGY_HOOK_NAME]: {
+        [spec.pre]:   [{ matcher: spec.tool, hooks: [{ type: "command", command: hookCommand("pre-tool-use", client), timeout: 30 * t }] }],
+        [spec.stop]:  [{ type: "command", command: hookCommand("stop", client), timeout: 60 * t }],
+        [spec.start]: [{ type: "command", command: hookCommand("session-start", client), timeout: 60 * t }],
+      },
+    };
+  } else {
+    const hooks  = { ...((current.hooks as Record<string, MatcherGroup[]> | undefined) ?? {}) };
+    const marker = " hook ";
+    hooks[spec.pre]   = mergeGroup(hooks[spec.pre],   { matcher: spec.tool, hooks: [{ type: "command", command: hookCommand("pre-tool-use", client), timeout: 30 * t }] }, `index.js${marker}pre-tool-use`);
+    hooks[spec.stop]  = mergeGroup(hooks[spec.stop],  { hooks: [{ type: "command", command: hookCommand("stop", client), timeout: 60 * t }] }, `index.js${marker}stop`);
+    hooks[spec.start] = mergeGroup(hooks[spec.start], { hooks: [{ type: "command", command: hookCommand("session-start", client), timeout: 60 * t }] }, `index.js${marker}session-start`);
+    next = { ...current, hooks };
+  }
   mkdirSync(path.dirname(settings), { recursive: true });
   const tmp = `${settings}.parism-tmp`;
-  writeFileSync(tmp, JSON.stringify({ ...current, hooks }, null, 2) + "\n");
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
   renameSync(tmp, settings);
 
   const hookConfigPath = hookConfigFile();
@@ -358,8 +382,12 @@ export function installedHooks(cwd: string, home: string): { client: HookClient;
       const file = CLIENTS[client].settings(scope, cwd, home);
       if (!existsSync(file)) continue;
       try {
-        const hooks = (JSON.parse(readFileSync(file, "utf8")) as { hooks?: Record<string, MatcherGroup[]> }).hooks ?? {};
-        const events = Object.entries(hooks).filter(([, groups]) => groups.some(g => g.hooks?.some(h => / hook (pre-tool-use|stop|session-start)/.test(h.command ?? "")))).map(([e]) => e);
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+        const hooks  = (client === "agy" ? parsed[AGY_HOOK_NAME] : parsed.hooks) as Record<string, (MatcherGroup | HookEntry)[]> | undefined ?? {};
+        const isParism = (h: Partial<HookEntry> | undefined) => / hook (pre-tool-use|stop|session-start)/.test(h?.command ?? "");
+        const events = Object.entries(hooks)
+          .filter(([, groups]) => Array.isArray(groups) && groups.some(g => "hooks" in g ? g.hooks?.some(isParism) : isParism(g)))
+          .map(([e]) => e);
         if (events.length > 0) found.push({ client, scope, settings: file, events });
       } catch {
         /** 읽을 수 없는 설정 파일은 훅이 없는 것으로 본다. */
@@ -380,16 +408,38 @@ async function readStdin(): Promise<Record<string, unknown>> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/**
+ * Antigravity CLI(agy) 훅 입력을 Claude Code 형식으로 맞춘다. agy는 셸 도구가 run_command이고
+ * 명령은 toolCall.args.CommandLine, 실행 디렉터리는 args.Cwd(없으면 cwd), 세션 식별자는 conversationId다.
+ */
+export function fromAgy(input: Record<string, unknown>): Record<string, unknown> {
+  const call = input.toolCall as { name?: unknown; args?: Record<string, unknown> } | undefined;
+  const args = call?.args ?? {};
+  const cwd  = typeof args.Cwd === "string" && args.Cwd !== "" ? args.Cwd : input.cwd;
+  return {
+    ...input,
+    ...(typeof input.conversationId === "string" && { session_id: input.conversationId }),
+    ...(typeof cwd === "string" && { cwd }),
+    ...(call?.name === "run_command" && typeof args.CommandLine === "string" && {
+      tool_name: "Bash", tool_input: { ...args, command: args.CommandLine },
+    }),
+  };
+}
+
 /** 훅 이벤트 하나를 처리하고 표준 출력에 쓸 JSON(없으면 undefined)을 돌려준다 */
 export async function runHook(event: string, options: { config?: string; client?: HookClient } = {}): Promise<string | undefined> {
-  const input  = await readStdin();
+  const raw    = await readStdin();
+  const agy    = options.client === "agy";
+  const input  = agy ? fromAgy(raw) : raw;
   const config = await hookConfig(options.config);
   const log    = statsLog(config);
   if (event === "pre-tool-use") {
     const decision = decidePreToolUse(input, config);
+    /** 관여하지 않을 때는 아무것도 출력하지 않는다. agy는 decision이 빈 JSON({})을 받으면 도구 호출을 막기 때문이다. */
     if (decision.action === "pass") return undefined;
     const resolved = shellCommandOf(input)?.trim().split(/\s+/)[0];
     log?.record({ kind: decision.action === "rewrite" ? "hook_rewrite" : "hook_block", ...(resolved && { cmd: resolved }) });
+    if (agy) return JSON.stringify(toAgy(decision));
     return JSON.stringify(options.client === "gemini" ? toGemini(decision) : decision.output);
   }
   if (event === "session-start") {
@@ -400,9 +450,24 @@ export async function runHook(event: string, options: { config?: string; client?
     const verdict = await decideStop(input, config);
     log?.record({ kind: verdict.block ? "stop_block" : "stop_pass" });
     if (!verdict.block) return undefined;
-    return JSON.stringify({ decision: "block", reason: verdict.reason });
+    /** agy의 Stop 훅은 decision "continue"일 때 종료를 막고 reason을 시스템 메시지로 넣는다. */
+    return JSON.stringify(agy ? { decision: "continue", reason: verdict.reason } : { decision: "block", reason: verdict.reason });
   }
   throw new Error(`unknown hook event '${event}': use pre-tool-use, session-start or stop`);
+}
+
+/**
+ * agy PreToolUse 출력. 차단은 decision "deny", 명령 바꾸기는 overwrite.CommandLine이다.
+ * 읽기 전용 명령만 allow로 묻지 않고 실행하고, 나머지는 ask로 클라이언트의 권한 규칙을 따른다.
+ */
+function toAgy(decision: Exclude<PreToolDecision, { action: "pass" }>): Record<string, unknown> {
+  if (decision.action === "block") return { decision: "deny", reason: decision.reason };
+  const output = decision.output.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string };
+  return {
+    decision: output.permissionDecision ?? "ask",
+    ...(output.permissionDecisionReason && { reason: output.permissionDecisionReason }),
+    overwrite: { CommandLine: decision.command },
+  };
 }
 
 /**

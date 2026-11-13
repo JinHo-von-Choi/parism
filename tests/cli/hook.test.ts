@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { decidePreToolUse, decideStop, installHooks, isVerificationRun, recordSessionStart, HOOK_ALLOWED_COMMANDS } from "../../src/cli/hook.js";
+import { decidePreToolUse, decideStop, fromAgy, installHooks, isVerificationRun, recordSessionStart, HOOK_ALLOWED_COMMANDS } from "../../src/cli/hook.js";
 import { execCommand } from "../../src/cli/exec.js";
 import { DEFAULT_CONFIG, type PrismConfig } from "../../src/config/loader.js";
 
@@ -77,6 +77,15 @@ describe("PreToolUse", () => {
     if (d.action !== "block") return;
     expect(d.output).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(d.reason).toMatch(/push/);
+  });
+
+  it("agy 입력은 CommandLine을 명령으로, args.Cwd를 작업 디렉터리로, conversationId를 세션으로 읽는다", () => {
+    const input = fromAgy({
+      conversationId: "c1", cwd: "/elsewhere", hookEventName: "PreToolUse",
+      toolCall: { id: "t1", name: "run_command", args: { CommandLine: "git status", Cwd: repo } },
+    });
+    expect(input).toMatchObject({ session_id: "c1", cwd: repo, tool_name: "Bash", tool_input: { command: "git status" } });
+    expect(decidePreToolUse(input, config, PREFIX)).toMatchObject({ action: "rewrite", command: `${PREFIX} -- 'git status'` });
   });
 
   it("Parism 대상이 아니거나 셸 문법이 필요한 명령은 건드리지 않는다", () => {
@@ -180,6 +189,20 @@ describe("install", () => {
     expect(settings.hooks.BeforeTool[0]).toMatchObject({ matcher: "run_shell_command", hooks: [{ timeout: 30_000 }] });
     expect(settings.hooks.BeforeTool[0].hooks[0].command).toMatch(/hook pre-tool-use --client gemini$/);
     expect(settings.hooks.AfterAgent[0].hooks[0]).toMatchObject({ timeout: 60_000 });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("agy는 .agents/hooks.json의 parism 이름 아래에 쓰고 다른 이름의 훅은 그대로 둔다", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "parism-install-a-"));
+    mkdirSync(path.join(dir, ".agents"));
+    writeFileSync(path.join(dir, ".agents", "hooks.json"), JSON.stringify({ lint: { PostToolUse: [{ matcher: "*", hooks: [{ command: "lint.sh" }] }] } }));
+    installHooks({ client: "agy", cwd: dir, home: dir });
+    installHooks({ client: "agy", cwd: dir, home: dir });
+    const hooks = JSON.parse(readFileSync(path.join(dir, ".agents", "hooks.json"), "utf8"));
+    expect(hooks.lint.PostToolUse[0].hooks[0].command).toBe("lint.sh");
+    expect(hooks.parism.PreToolUse).toEqual([{ matcher: "run_command", hooks: [expect.objectContaining({ timeout: 30 })] }]);
+    expect(hooks.parism.Stop).toEqual([expect.objectContaining({ type: "command", timeout: 60 })]);
+    expect(hooks.parism.Stop[0].command).toMatch(/hook stop --client agy$/);
     rmSync(dir, { recursive: true, force: true });
   });
 });

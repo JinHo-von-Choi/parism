@@ -178,6 +178,7 @@ Checked in order before running:
 npx @nerdvana/parism hook install                    # Claude Code, .claude/settings.json
 npx @nerdvana/parism hook install --scope user       # ~/.claude/settings.json
 npx @nerdvana/parism hook install --client gemini    # .gemini/settings.json
+npx @nerdvana/parism hook install --client agy       # Antigravity CLI, .agents/hooks.json
 ```
 
 | Hook | What it does |
